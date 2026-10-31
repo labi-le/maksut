@@ -2,11 +2,14 @@ use crate::*;
 use serde_json::json;
 
 const READ_URL_CALLS_PER_REPLY: usize = 3;
+const INSPECT_CODE_CALLS_PER_REPLY: usize = 3;
+const REMEMBER_SELF_CALLS_PER_REPLY: usize = 2;
 const SEARCH_CALLS_PER_REPLY: usize = 6;
 const RESEARCH_MAX_PER_REPLY: usize = 1;
 
 pub(crate) struct ToolContext<'a> {
     pub(crate) chat: &'a ChatConfig,
+    pub(crate) pool: &'a SqlitePool,
     pub(crate) stickers: &'a StickerReplies,
     pub(crate) catalog: &'a StickerCatalog,
     pub(crate) proposal: Option<&'a FeatureProposal>,
@@ -28,6 +31,9 @@ pub(crate) struct ToolState {
     pub(crate) research_calls: usize,
     pub(crate) search_calls: usize,
     pub(crate) read_url_calls: usize,
+    pub(crate) inspect_calls: usize,
+    pub(crate) remember_calls: usize,
+    pub(crate) discovered_urls: Vec<Url>,
     pub(crate) allow_sticker: bool,
     pub(crate) allow_feature: bool,
 }
@@ -44,6 +50,9 @@ impl ToolState {
             research_calls: 0,
             search_calls: 0,
             read_url_calls: 0,
+            inspect_calls: 0,
+            remember_calls: 0,
+            discovered_urls: Vec::new(),
             allow_sticker,
             allow_feature,
         }
@@ -83,51 +92,53 @@ pub(crate) async fn run_tool_call(
             json!({"error": "доступно только владельцу"}).to_string()
         }
         None => "Инструмент недоступен.".to_string(),
-        Some(ToolKind::ProposeFeature) => match ctx.proposal {
-            None => "инструмент недоступен".to_string(),
-            Some(proposal) => {
-                let goal = args
-                    .get("goal")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
-                let refines = args
-                    .get("refines")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned);
-                let dir = proposal.dir.clone();
-                let owner_id = proposal.owner_id;
-                let source_chat_id = ctx.chat_id.0;
-                let proposed_by = ctx.user_id;
-                let proposer = ctx.sender_name.to_owned();
-                let message_id = ctx.message_id;
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::self_improve::queue_feature_refined(
-                        crate::self_improve::RefineProposal {
-                            dir: &dir,
-                            owner: owner_id,
-                            source_chat_id,
-                            proposed_by,
-                            proposer: &proposer,
-                            message_id,
-                            goal: &goal,
-                            refines: refines.as_deref(),
-                        },
-                    )
-                })
-                .await
-                .unwrap_or_else(|_| Err("не удалось поставить идею в очередь".to_string()));
-                match result {
+        Some(ToolKind::ProposeFeature) => {
+            match ctx.proposal {
+                None => "инструмент недоступен".to_string(),
+                Some(proposal) => {
+                    let goal = args
+                        .get("goal")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned();
+                    let refines = args
+                        .get("refines")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned);
+                    let dir = proposal.dir.clone();
+                    let owner_id = proposal.owner_id;
+                    let source_chat_id = ctx.chat_id.0;
+                    let proposed_by = ctx.user_id;
+                    let proposer = ctx.sender_name.to_owned();
+                    let message_id = ctx.message_id;
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::self_improve::queue_feature_refined(
+                            crate::self_improve::RefineProposal {
+                                dir: &dir,
+                                owner: owner_id,
+                                source_chat_id,
+                                proposed_by,
+                                proposer: &proposer,
+                                message_id,
+                                goal: &goal,
+                                refines: refines.as_deref(),
+                            },
+                        )
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("не удалось поставить идею в очередь".to_string()));
+                    match result {
                     Ok(id) if ctx.owner => {
-                        format!("план #{id} поставлен в очередь; пришлю ссылку, когда будет готов")
+                        format!("хотелка #{id} записана; после аппрува создадим issue на GitHub")
                     }
-                    Ok(id) => format!("заявка #{id} передана владельцу"),
+                    Ok(id) => format!("хотелка #{id} передана владельцу; после аппрува появится issue на GitHub"),
                     Err(reason) => reason,
                 }
+                }
             }
-        },
+        }
         Some(ToolKind::FeatureStatus) => match ctx.proposal {
             None => "инструмент недоступен".to_string(),
             Some(proposal) => {
@@ -194,29 +205,74 @@ pub(crate) async fn run_tool_call(
             }
         },
         Some(ToolKind::InspectCode) => {
-            let query = args.get("query").and_then(Value::as_str).unwrap_or("");
-            let path = args.get("path").and_then(Value::as_str);
-            let base = ctx.chat.code_dir.clone();
-            let query = query.to_owned();
-            let path = path.map(str::to_owned);
-            tokio::task::spawn_blocking(move || {
-                crate::code_inspect::inspect(&base, &query, path.as_deref())
-            })
-            .await
-            .unwrap_or_else(|_| "Снимок кода недоступен.".to_owned())
+            if state.inspect_calls >= INSPECT_CODE_CALLS_PER_REPLY {
+                "лимит проверок кода на ответ".to_string()
+            } else {
+                state.inspect_calls += 1;
+                let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+                let path = args.get("path").and_then(Value::as_str);
+                let base = ctx.chat.code_dir.clone();
+                let query = query.to_owned();
+                let path = path.map(str::to_owned);
+                tokio::task::spawn_blocking(move || {
+                    crate::code_inspect::inspect(&base, &query, path.as_deref())
+                })
+                .await
+                .unwrap_or_else(|_| "Снимок кода недоступен.".to_owned())
+            }
+        }
+        Some(ToolKind::RememberSelf) => {
+            if state.remember_calls >= REMEMBER_SELF_CALLS_PER_REPLY {
+                "лимит записи в память на ответ".to_string()
+            } else if state.inspect_calls == 0 {
+                "сначала проверь код через inspect_code, потом сохраняй факт".to_string()
+            } else {
+                state.remember_calls += 1;
+                let topic = args.get("topic").and_then(Value::as_str).unwrap_or("");
+                let fact = args.get("fact").and_then(Value::as_str).unwrap_or("");
+                let source_url = args.get("source_url").and_then(Value::as_str).unwrap_or("");
+                match crate::code_inspect::record_self_fact(
+                    ctx.pool,
+                    &ctx.chat.code_dir,
+                    topic,
+                    fact,
+                    source_url,
+                )
+                .await
+                {
+                    Ok(()) => "запомнил в глобальную память о себе".to_string(),
+                    Err(reason) => reason,
+                }
+            }
         }
         Some(ToolKind::ReadUrl) => {
             let target = args.get("url").and_then(Value::as_str).unwrap_or("");
+            let mut allowed = ctx.read_url_targets.to_vec();
+            for url in &state.discovered_urls {
+                if !allowed.contains(url) {
+                    allowed.push(url.clone());
+                }
+            }
             if target.trim().is_empty() {
                 "укажи url".to_string()
-            } else if !crate::read_url::allowed_target(target, ctx.read_url_targets) {
-                "можно читать только ссылку из текущего сообщения".to_string()
+            } else if !crate::read_url::allowed_target(target, &allowed, ctx.owner) {
+                "можно читать только ссылку из текущего сообщения или найденную в поиске/на странице"
+                    .to_string()
             } else if state.read_url_calls >= READ_URL_CALLS_PER_REPLY {
                 "лимит чтения ссылок на ответ".to_string()
             } else {
                 state.read_url_calls += 1;
                 match crate::read_url::read(target).await {
-                    Ok(page) => page.text,
+                    Ok(page) => {
+                        for url in page.links {
+                            if state.discovered_urls.len() < 64
+                                && !state.discovered_urls.contains(&url)
+                            {
+                                state.discovered_urls.push(url);
+                            }
+                        }
+                        page.text
+                    }
                     Err(error) => format!("read_url: {}", error.message()),
                 }
             }
@@ -228,7 +284,13 @@ pub(crate) async fn run_tool_call(
                 "лимит поиска на ответ".to_string()
             } else {
                 state.search_calls += 1;
-                ctx.chat.web_search(query).await
+                let output = ctx.chat.web_search(query).await;
+                for url in crate::read_url::prompt_urls(&output) {
+                    if state.discovered_urls.len() < 64 && !state.discovered_urls.contains(&url) {
+                        state.discovered_urls.push(url);
+                    }
+                }
+                output
             }
         }
         Some(ToolKind::Research) => {

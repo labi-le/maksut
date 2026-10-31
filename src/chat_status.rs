@@ -4,10 +4,9 @@ use serde_json::Value;
 fn status_label(status: &str) -> &'static str {
     match status {
         "queued" => "в очереди",
-        "planning" => "планируется",
+        "proposed" => "ждёт решения владельца",
+        "issue_created" => "issue создана",
         "planned" => "план готов",
-        "running" => "делается",
-        "proposed" => "ждёт деплоя",
         "deployed" => "задеплоено",
         "failed" => "провалено",
         "rejected" => "отклонено",
@@ -18,9 +17,13 @@ fn status_label(status: &str) -> &'static str {
 fn task_status_label(task: &Value) -> String {
     let status = task.get("status").and_then(Value::as_str).unwrap_or("");
     let approved = task.get("already_decided").and_then(Value::as_str) == Some("approve");
-    match (status, approved) {
-        ("planned", true) => "план одобрен, ждёт реализации".to_owned(),
-        ("proposed", true) => "деплой одобрен, ждёт выполнения".to_owned(),
+    let has_issue = task
+        .get("issue_url")
+        .and_then(Value::as_str)
+        .is_some_and(|url| !url.trim().is_empty());
+    match (status, approved, has_issue) {
+        ("proposed", true, _) => "одобрена, создаётся issue".to_owned(),
+        ("planned", _, true) => "issue создана".to_owned(),
         _ => status_label(status).to_owned(),
     }
 }
@@ -68,10 +71,7 @@ fn status_details_answer(tasks: &[Value], overview: Option<&Value>) -> String {
         let Some(status) = task.get("status").and_then(Value::as_str) else {
             continue;
         };
-        if !matches!(
-            status,
-            "queued" | "planning" | "planned" | "running" | "proposed"
-        ) {
+        if !matches!(status, "queued" | "proposed") {
             continue;
         }
         let id = task.get("id").and_then(Value::as_str).unwrap_or("без id");
@@ -99,10 +99,7 @@ fn status_summary_answer(tasks: &[Value], overview: Option<&Value>) -> String {
         let Some(status) = task.get("status").and_then(Value::as_str) else {
             continue;
         };
-        if !matches!(
-            status,
-            "queued" | "planning" | "planned" | "running" | "proposed"
-        ) {
+        if !matches!(status, "queued" | "proposed") {
             continue;
         }
         let id = task.get("id").and_then(Value::as_str).unwrap_or("без id");
@@ -126,7 +123,7 @@ fn status_links_answer(tasks: &[Value]) -> String {
         let Some(status) = task.get("status").and_then(Value::as_str) else {
             continue;
         };
-        if !matches!(status, "planned" | "proposed" | "running") {
+        if !matches!(status, "issue_created" | "planned" | "proposed") {
             continue;
         }
         let Some(url) = task_issue_url(task) else {
@@ -150,6 +147,8 @@ fn status_links_answer(tasks: &[Value]) -> String {
 fn status_totals(lines: &mut Vec<String>, tasks: &[Value], overview: Option<&Value>) {
     let mut totals = Vec::new();
     for (status, label) in [
+        ("issue_created", "В issue"),
+        ("planned", "План готов"),
         ("deployed", "Задеплоено"),
         ("failed", "Провалено"),
         ("rejected", "Отклонено"),
@@ -161,7 +160,19 @@ fn status_totals(lines: &mut Vec<String>, tasks: &[Value], overview: Option<&Val
             .unwrap_or_else(|| {
                 tasks
                     .iter()
-                    .filter(|task| task.get("status").and_then(Value::as_str) == Some(status))
+                    .filter(|task| {
+                        let raw = task.get("status").and_then(Value::as_str).unwrap_or("");
+                        let has_issue = task
+                            .get("issue_url")
+                            .and_then(Value::as_str)
+                            .is_some_and(|url| !url.trim().is_empty());
+                        let effective = if raw == "planned" && has_issue {
+                            "issue_created"
+                        } else {
+                            raw
+                        };
+                        effective == status
+                    })
                     .count() as u64
             });
         if count > 0 {
@@ -213,17 +224,19 @@ fn status_claims(line: &str) -> Vec<&'static str> {
         ("провал", "failed"),
         ("отклон", "rejected"),
         ("в очереди", "queued"),
+        ("issue создана", "issue_created"),
+        ("ишью создана", "issue_created"),
         ("план готов", "planned"),
-        ("план одобрен", "planned"),
-        ("делается", "running"),
-        ("ждёт деплоя", "proposed"),
-        ("ждет деплоя", "proposed"),
+        ("ждёт решения", "proposed"),
+        ("ждет решения", "proposed"),
+        ("создаётся issue", "proposed"),
+        ("создается issue", "proposed"),
         ("deployed", "deployed"),
         ("failed", "failed"),
         ("rejected", "rejected"),
         ("queued", "queued"),
+        ("issue_created", "issue_created"),
         ("planned", "planned"),
-        ("running", "running"),
         ("proposed", "proposed"),
     ] {
         let Some(index) = lower.find(needle) else {
@@ -336,7 +349,18 @@ pub(crate) fn status_answer_grounded(text: &str, snapshot: Option<&Value>, view:
         }
         let actual: Vec<&str> = matched
             .iter()
-            .filter_map(|task| task.get("status").and_then(Value::as_str))
+            .filter_map(|task| {
+                let raw = task.get("status").and_then(Value::as_str)?;
+                let has_issue = task
+                    .get("issue_url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| !url.trim().is_empty());
+                Some(if raw == "planned" && has_issue {
+                    "issue_created"
+                } else {
+                    raw
+                })
+            })
             .collect();
         if actual.is_empty() || actual.iter().any(|status| *status != actual[0]) {
             return false;
@@ -369,4 +393,51 @@ pub(crate) fn style_status_reply(text: &str) -> String {
         lines.pop();
     }
     lines.join("\n")
+}
+
+pub(crate) async fn resolve_status_reply(
+    ctx: &crate::ToolContext<'_>,
+    state: &mut crate::ToolState,
+    messages: &mut Vec<Value>,
+    max_tokens: u32,
+    content: &str,
+) -> Option<String> {
+    let fallback = state.status_fallback.take()?;
+    let snapshot = state.status_snapshot.as_ref();
+    let view = state.status_view.as_str();
+    if status_answer_grounded(content, snapshot, view) {
+        return Some(style_status_reply(&crate::self_improve::redact_secret(
+            content,
+            &ctx.chat.api_key,
+        )));
+    }
+    // Let the model correct itself once with the snapshot in context. If it
+    // still contradicts the data, deliver the deterministic fallback.
+    let repair = format!(
+        "Твой предыдущий ответ не сходится с данными feature_status. \
+         Ответь ещё раз по этим данным; если данных не хватает, задай один \
+         короткий уточняющий вопрос. Данные: {}",
+        snapshot.map(Value::to_string).unwrap_or_default(),
+    );
+    messages.push(serde_json::json!({"role": "system", "content": repair}));
+    let repair_request = crate::CompletionRequest::new(messages, ctx.owner, max_tokens)
+        .feature_tools(ctx.proposal.is_some());
+    let repaired = ctx
+        .chat
+        .complete_with(&repair_request, false, false)
+        .await
+        .ok()
+        .and_then(|reply| {
+            reply
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .map(str::to_owned)
+        });
+    Some(match repaired {
+        Some(repaired) if status_answer_grounded(&repaired, snapshot, view) => style_status_reply(
+            &crate::self_improve::redact_secret(&repaired, &ctx.chat.api_key),
+        ),
+        _ => fallback,
+    })
 }

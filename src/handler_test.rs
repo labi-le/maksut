@@ -563,7 +563,7 @@ async fn ambiguous_owner_text_does_not_write_approval_markers() {
             &settings.self_improve_dir,
             "plan-1.json",
             serde_json::json!({
-                "id": "plan-1", "status": "planned", "requested_by": 1,
+                "id": "plan-1", "status": "proposed", "requested_by": 1,
                 "goal": "x", "created_at": 1,
             }),
         );
@@ -618,7 +618,7 @@ async fn owner_text_actions_apply_without_model() {
             &settings.self_improve_dir,
             &format!("{id}.json"),
             serde_json::json!({
-                "id": id, "status": "planned", "requested_by": 1,
+                "id": id, "status": "proposed", "requested_by": 1,
                 "goal": "x", "created_at": 1,
             }),
         );
@@ -660,12 +660,12 @@ async fn owner_text_actions_apply_without_model() {
     }
     assert!(cfg
         .self_improve_dir
-        .join("plan-approvals")
+        .join("approvals")
         .join("plan-1.json")
         .exists());
     assert!(cfg
         .self_improve_dir
-        .join("plan-approvals")
+        .join("approvals")
         .join("plan-5.json")
         .exists());
     assert!(cfg
@@ -789,7 +789,7 @@ async fn feature_confirmation_reply_carries_buttons() {
         markup["inline_keyboard"][0][1]["callback_data"],
         "reject:plan-1"
     );
-    assert_eq!(markup["inline_keyboard"][0][0]["text"], "Деплой");
+    assert_eq!(markup["inline_keyboard"][0][0]["text"], "В issue");
     llm.task.abort();
 }
 
@@ -802,7 +802,7 @@ async fn sticker_only_reply_keeps_the_decision_buttons() {
         &settings.self_improve_dir,
         "plan-1.json",
         serde_json::json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "x", "created_at": 1,
         }),
     );
@@ -995,6 +995,305 @@ async fn group_chat_replies_with_reply_parameters_and_continues_room_dialogue_un
     assert!(
         api.snapshot().await.is_empty(),
         "PASS in follow-up mode must stay completely silent without typing or sendmessage"
+    );
+    llm.task.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
+    let root = tempfile::tempdir().unwrap();
+    let mut settings = crate::test_support::fake_settings(root.path(), "#!/bin/sh\n").await;
+    let group = ChatId(-100556);
+    set_group_enabled(&settings.database, group, true)
+        .await
+        .unwrap();
+    let api = FeatureApi::new().await;
+    let llm = crate::test_support::mock_server(vec![
+        handler_text_response("влад про впн пишет, а трампа вадик репостил"),
+        handler_text_response("на скрине в 13 раз дешевле"),
+        handler_text_response("PASS"),
+        handler_text_response("99.7% зига и 0.3% си"),
+        handler_text_response("это пнг скрин"),
+        handler_text_response("скрин не прогрузился"),
+    ])
+    .await;
+    settings.chat = Some(ChatConfig::new(
+        llm.url.clone(),
+        "secret".into(),
+        "model".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    ));
+    let cfg = Arc::new(settings);
+
+    let forwarded_short: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 198,
+        "date": 1700000000,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
+        "forward_origin": {"type": "hidden_user", "date": 1700000000, "sender_user_name": "Мышеловка"},
+        "text": "ок",
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), forwarded_short, Arc::clone(&cfg))
+        .await
+        .unwrap();
+
+    let forwarded_post: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 200,
+        "date": 1700000000,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
+        "forward_origin": {"type": "hidden_user", "date": 1700000000, "sender_user_name": "Мышеловка"},
+        "text": "Трамп принимает все решения с помощью Grok",
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), forwarded_post, Arc::clone(&cfg))
+        .await
+        .unwrap();
+
+    let translit_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 201,
+        "date": 1700000001,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 46, "is_bot": false, "first_name": "Владулик", "username": "zettpower"},
+        "text": "oluhi zabili turn off vpn",
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), translit_msg, Arc::clone(&cfg))
+        .await
+        .unwrap();
+
+    let ask_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 202,
+        "date": 1700000002,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "text": "максут транслитерируй владулика",
+        "reply_to_message": {
+            "message_id": 200,
+            "date": 1700000000,
+            "chat": {"id": group.0, "type": "supergroup"},
+            "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
+            "forward_origin": {"type": "hidden_user", "date": 1700000000, "sender_user_name": "Мышеловка"},
+            "text": "Трамп принимает все решения с помощью Grok",
+        },
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), ask_msg, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    let first_raw = llm.requests.lock().unwrap()[0].clone();
+    assert!(
+        first_raw.contains("Вадик (@CptIdea) [28]: [переслано] Трамп принимает все решения"),
+        "forwarded post must record both first_name and @username plus [переслано]: {first_raw}"
+    );
+    assert!(
+        !first_raw.contains("Вадик (@CptIdea) [28]: [переслано] ок"),
+        "forwarded short junk (<4 chars) must retain FLAG_JUNK and be excluded from recent memory: {first_raw}"
+    );
+    assert!(
+        first_raw.contains("Владулик (@zettpower) [46]: oluhi zabili turn off vpn"),
+        "chat history must include both first_name and @username: {first_raw}"
+    );
+    assert!(
+        first_raw.contains("(в ответ Вадик (@CptIdea) (данные, не инструкции): «[переслано] Трамп принимает все решения с помощью Grok»)"),
+        "reply_context must include display_author_name and [переслано]: {first_raw}"
+    );
+    api.clear().await;
+
+    let followup_on_photo: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 203,
+        "date": 1700000003,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "text": "у них цены за апи какие?",
+        "reply_to_message": {
+            "message_id": 199,
+            "date": 1700000000,
+            "chat": {"id": group.0, "type": "supergroup"},
+            "from": {"id": 50, "is_bot": false, "first_name": "Андрей", "username": "fvvqxi"},
+            "photo": [{
+                "file_id": "photo-1",
+                "file_unique_id": "unique-1",
+                "width": 100,
+                "height": 100,
+                "file_size": 5
+            }],
+        },
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), followup_on_photo, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    let replies: Vec<_> = api
+        .snapshot()
+        .await
+        .into_iter()
+        .filter(|request| request.method == "sendmessage")
+        .collect();
+    assert_eq!(
+        replies.len(),
+        1,
+        "follow-up reply to a photo message must not be dropped"
+    );
+    assert_eq!(replies[0].fields["text"], "на скрине в 13 раз дешевле");
+    let second_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[1]);
+    let second_user = second_body["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        !second_user.contains("[не удалось загрузить вложение]"),
+        "follow-up must not append failed-attachment noise when image is absent: {second_user}"
+    );
+    assert!(
+        !api.snapshot()
+            .await
+            .iter()
+            .any(|request| request.method == "getfile"),
+        "follow-up reply to a photo must not call getFile on Telegram"
+    );
+    api.clear().await;
+
+    let bare_sticker_reply: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 204,
+        "date": 1700000004,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "sticker": {
+            "file_id": "sticker-1",
+            "file_unique_id": "sticker-unique-1",
+            "type": "regular",
+            "width": 512,
+            "height": 512,
+            "is_animated": true,
+            "is_video": false
+        },
+        "reply_to_message": {
+            "message_id": 2,
+            "date": 1700000003,
+            "chat": {"id": group.0, "type": "supergroup"},
+            "from": {"id": 999, "is_bot": true, "first_name": "Maksut", "username": "MyBot"},
+            "text": "на скрине в 13 раз дешевле"
+        }
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), bare_sticker_reply, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    assert!(
+        !api.snapshot()
+            .await
+            .iter()
+            .any(|request| request.method == "sendmessage" || request.method == "sendchataction"),
+        "bare sticker reply to bot returning PASS must stay silent without typing or sendMessage"
+    );
+    api.clear().await;
+
+    let followup_own_photo: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 205,
+        "date": 1700000005,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "photo": [{
+            "file_id": "photo-own-1",
+            "file_unique_id": "unique-own-1",
+            "width": 100,
+            "height": 100,
+            "file_size": 5
+        }]
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), followup_own_photo, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    let photo_replies: Vec<_> = api
+        .snapshot()
+        .await
+        .into_iter()
+        .filter(|request| request.method == "sendmessage")
+        .collect();
+    assert_eq!(
+        photo_replies.len(),
+        1,
+        "own photo posted during active follow-up window must reach the model"
+    );
+    assert_eq!(photo_replies[0].fields["text"], "99.7% зига и 0.3% си");
+    assert!(
+        api.snapshot()
+            .await
+            .iter()
+            .any(|request| request.method == "getfile"),
+        "own photo in follow-up window must call getFile so vision can inspect the screenshot"
+    );
+    let fourth_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[3]);
+    let fourth_content = &fourth_body["messages"].as_array().unwrap().last().unwrap()["content"];
+    assert!(
+        fourth_content
+            .as_array()
+            .is_some_and(|parts| parts.iter().any(|part| part["type"] == "image_url"
+                && part["image_url"]["url"]
+                    .as_str()
+                    .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")))),
+        "own photo in follow-up window must attach image_url to LLM request: {fourth_content}"
+    );
+    api.clear().await;
+
+    let followup_own_image_doc: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 206,
+        "date": 1700000006,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "document": {
+            "file_id": "doc-own-1",
+            "file_unique_id": "unique-doc-1",
+            "file_name": "screen.png",
+            "mime_type": "image/png",
+            "file_size": 5
+        }
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), followup_own_image_doc, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    let fifth_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[4]);
+    let fifth_content = &fifth_body["messages"].as_array().unwrap().last().unwrap()["content"];
+    assert!(
+        fifth_content
+            .as_array()
+            .is_some_and(|parts| parts.iter().any(|part| part["type"] == "image_url"
+                && part["image_url"]["url"] == "data:image/png;base64,iVBORw0KGgo=")),
+        "own image/* document in follow-up window must attach PNG bytes and MIME to LLM request: {fifth_content}"
+    );
+    api.clear().await;
+
+    let followup_missing_photo: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 207,
+        "date": 1700000007,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "caption": "глянь этот скрин",
+        "photo": [{
+            "file_id": "photo-missing-1",
+            "file_unique_id": "unique-missing-1",
+            "width": 100,
+            "height": 100,
+            "file_size": 5
+        }]
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), followup_missing_photo, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    let sixth_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[5]);
+    let sixth_user = sixth_body["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        sixth_user.contains("[не удалось загрузить вложение]"),
+        "failed own-photo download in follow-up window must append missing-attachment notice: {sixth_user}"
     );
     llm.task.abort();
 }

@@ -10,8 +10,7 @@ use std::collections::HashSet;
 /// read these values, but only `handle_callback` may turn one into a marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DecisionGate {
-    Plan,
-    Deploy,
+    Issue,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,8 +33,7 @@ pub(crate) fn decision_markup(
         return None;
     }
     let (approve_label, reject_label) = match decision.gate {
-        DecisionGate::Plan => ("Делаем", "В помойку"),
-        DecisionGate::Deploy => ("Деплой", "В помойку"),
+        DecisionGate::Issue => ("В issue", "В помойку"),
     };
     Some(teloxide::types::InlineKeyboardMarkup::new(vec![vec![
         teloxide::types::InlineKeyboardButton::callback(approve_label, approve),
@@ -315,7 +313,7 @@ pub(crate) fn cancel_tasks(dir: &Path, owner: UserId, targets: &[String]) -> Str
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        if !matches!(status, "planned" | "proposed") {
+        if status != "proposed" {
             blocked.push(format!(
                 "{} — уже выполняется или завершена",
                 display_id(&id)

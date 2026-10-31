@@ -132,7 +132,7 @@ async fn improve_commands_apply_owner_decisions_without_goals() {
             &cfg.self_improve_dir,
             name,
             json!({
-                "id": id, "status": "planned", "chat_id": 10, "requested_by": cfg.owner_id.0,
+                "id": id, "status": "proposed", "chat_id": 10, "requested_by": cfg.owner_id.0,
                 "goal": "x", "created_at": 1,
             }),
         );
@@ -156,7 +156,7 @@ async fn improve_commands_apply_owner_decisions_without_goals() {
     }
     assert!(cfg
         .self_improve_dir
-        .join("plan-approvals")
+        .join("approvals")
         .join("plan-1.json")
         .exists());
     assert!(cfg
@@ -296,7 +296,7 @@ async fn anyone_can_propose_a_feature_but_only_the_owner_decides() {
         &cfg.self_improve_dir,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "chat_id": cfg.owner_id.0,
+            "id": "plan-1", "status": "proposed", "chat_id": cfg.owner_id.0,
             "requested_by": cfg.owner_id.0, "proposed_by": 2, "goal": "x", "created_at": 1,
         }),
     );
@@ -305,7 +305,7 @@ async fn anyone_can_propose_a_feature_but_only_the_owner_decides() {
     );
     assert!(
         !cfg.self_improve_dir
-            .join("plan-approvals")
+            .join("approvals")
             .join("plan-1.json")
             .exists(),
         "non-owner must not approve"
@@ -321,7 +321,7 @@ async fn anyone_can_propose_a_feature_but_only_the_owner_decides() {
     );
     assert!(
         cfg.self_improve_dir
-            .join("plan-approvals")
+            .join("approvals")
             .join("plan-1.json")
             .exists(),
         "owner approves"
@@ -334,13 +334,15 @@ async fn owner_inline_buttons_approve_only_the_matching_task() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = fake_settings(dir.path(), "#!/bin/sh\n").await;
     let api = FeatureApi::new().await;
-    write_outbox(
-        &cfg.self_improve_dir,
-        "plan-1.json",
-        json!({
-            "id": "plan-1", "status": "planned", "chat_id": 10, "goal": "x", "created_at": 1,
-        }),
-    );
+    for id in ["plan-1", "plan-2"] {
+        write_outbox(
+            &cfg.self_improve_dir,
+            &format!("{id}.json"),
+            json!({
+                "id": id, "status": "proposed", "chat_id": 10, "goal": "x", "created_at": 1,
+            }),
+        );
+    }
     assert!(
         crate::self_improve::handle_callback(
             &api.bot,
@@ -351,19 +353,19 @@ async fn owner_inline_buttons_approve_only_the_matching_task() {
     );
     assert!(cfg
         .self_improve_dir
-        .join("plan-approvals")
+        .join("approvals")
         .join("plan-1.json")
         .exists());
     assert!(!cfg
         .self_improve_dir
         .join("approvals")
-        .join("plan-1.json")
+        .join("plan-2.json")
         .exists());
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inline_trash_rejects_the_planned_task() {
+async fn inline_trash_rejects_the_proposed_task() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = fake_settings(dir.path(), "#!/bin/sh\n").await;
     let api = FeatureApi::new().await;
@@ -371,7 +373,7 @@ async fn inline_trash_rejects_the_planned_task() {
         &cfg.self_improve_dir,
         "plan-2.json",
         json!({
-            "id": "plan-2", "status": "planned", "chat_id": 10, "goal": "x", "created_at": 1,
+            "id": "plan-2", "status": "proposed", "chat_id": 10, "goal": "x", "created_at": 1,
         }),
     );
     assert!(
@@ -464,7 +466,7 @@ async fn non_owner_callback_and_expired_task_write_nothing() {
     );
     assert!(!cfg
         .self_improve_dir
-        .join("plan-approvals")
+        .join("approvals")
         .join("plan-4.json")
         .exists());
     assert!(!cfg
@@ -487,7 +489,7 @@ async fn status_snapshot_returns_only_whitelisted_fields_and_bounds() {
         "plan-1.json",
         json!({
             "id": "plan-1",
-            "status": "planned",
+            "status": "proposed",
             "requested_by": 1,
             "goal": "г".repeat(3000),
             "summary": "с".repeat(700),
@@ -524,8 +526,8 @@ async fn status_snapshot_returns_only_whitelisted_fields_and_bounds() {
     assert!(task["summary"].as_str().unwrap().chars().count() <= 500);
     assert!(task["files"].as_array().unwrap().len() <= 20);
     assert!(task["issue_url"].is_null());
-    assert_eq!(task["status"], "planned");
-    assert_eq!(task["decision"], "plan");
+    assert_eq!(task["status"], "proposed");
+    assert_eq!(task["decision"], "issue");
 }
 
 #[cfg(unix)]
@@ -577,12 +579,12 @@ fn status_overview_active_carries_already_decided() {
         root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "x", "created_at": 1,
         }),
     );
-    std::fs::create_dir_all(root.join("plan-approvals")).unwrap();
-    std::fs::write(root.join("plan-approvals").join("plan-1.json"), b"{}").unwrap();
+    std::fs::create_dir_all(root.join("approvals")).unwrap();
+    std::fs::write(root.join("approvals").join("plan-1.json"), b"{}").unwrap();
     let overview = crate::self_improve::status_overview(root, UserId(1));
     let active = overview["active"].as_array().unwrap();
     assert_eq!(active[0]["already_decided"], "approve");
@@ -687,7 +689,7 @@ async fn status_snapshot_for_non_owner_shows_only_own_requests() {
         root,
         "mine.json",
         json!({
-            "id": "mine", "status": "planning", "requested_by": 1,
+            "id": "mine", "status": "proposed", "requested_by": 1,
             "proposed_by": 2, "goal": "my goal", "created_at": 2,
         }),
     );
@@ -737,10 +739,9 @@ async fn status_snapshot_covers_queued_planned_proposed_failed_deployed_rejected
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let table = [
-        ("planning", Value::Null),
-        ("planned", json!("plan")),
-        ("running", Value::Null),
-        ("proposed", json!("deploy")),
+        ("proposed", json!("issue")),
+        ("issue_created", Value::Null),
+        ("planned", Value::Null),
         ("deployed", Value::Null),
         ("failed", Value::Null),
         ("rejected", Value::Null),
@@ -802,7 +803,7 @@ async fn status_snapshot_and_confirmation_do_not_mutate_queue() {
 
 #[cfg(unix)]
 #[test]
-fn plan_approval_does_not_block_deploy_approval() {
+fn issue_gate_confirmation_clears_after_approval() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     write_outbox(
@@ -812,14 +813,12 @@ fn plan_approval_does_not_block_deploy_approval() {
             "id": "plan-1", "status": "proposed", "requested_by": 1, "goal": "x", "created_at": 1,
         }),
     );
-    std::fs::create_dir_all(root.join("plan-approvals")).unwrap();
-    std::fs::write(root.join("plan-approvals").join("plan-1.json"), b"{}").unwrap();
     let value = crate::self_improve::pending_confirmation(root, UserId(1));
     assert!(value["tasks"][0]["already_decided"].is_null());
-    assert_eq!(value["tasks"][0]["decision"], "deploy");
+    assert_eq!(value["tasks"][0]["decision"], "issue");
     assert_eq!(
         crate::self_improve::newest_pending_decision(&value).map(|pending| pending.gate),
-        Some(crate::self_improve::DecisionGate::Deploy),
+        Some(crate::self_improve::DecisionGate::Issue),
     );
 
     std::fs::create_dir_all(root.join("approvals")).unwrap();
@@ -838,14 +837,14 @@ async fn confirmation_reports_existing_marker_as_already_decided() {
         root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1, "goal": "x", "created_at": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1, "goal": "x", "created_at": 1,
         }),
     );
-    std::fs::create_dir_all(root.join("plan-approvals")).unwrap();
-    std::fs::write(root.join("plan-approvals").join("plan-1.json"), b"{}").unwrap();
+    std::fs::create_dir_all(root.join("approvals")).unwrap();
+    std::fs::write(root.join("approvals").join("plan-1.json"), b"{}").unwrap();
     let value = crate::self_improve::pending_confirmation(root, UserId(1));
     assert_eq!(value["tasks"][0]["already_decided"], "approve");
-    assert_eq!(value["tasks"][0]["decision"], "plan");
+    assert_eq!(value["tasks"][0]["decision"], "issue");
     assert!(
         crate::self_improve::newest_pending_decision(&value).is_none(),
         "decided tasks get no buttons"
@@ -866,7 +865,7 @@ async fn propose_feature_refines_links_parent_without_rejection() {
         &cfg.self_improve_dir,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": cfg.owner_id.0,
+            "id": "plan-1", "status": "proposed", "requested_by": cfg.owner_id.0,
             "goal": "сделай кнопку", "spec": "старая спека", "review": "старое ревью", "created_at": 1,
         }),
     );
@@ -901,7 +900,7 @@ async fn propose_feature_refines_links_parent_without_rejection() {
         .exists());
     assert!(!cfg
         .self_improve_dir
-        .join("plan-approvals")
+        .join("approvals")
         .join("plan-1.json")
         .exists());
 }
@@ -915,7 +914,7 @@ async fn propose_feature_refines_rejects_non_owner_and_invalid_parent() {
         &cfg.self_improve_dir,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": cfg.owner_id.0,
+            "id": "plan-1", "status": "proposed", "requested_by": cfg.owner_id.0,
             "goal": "x", "created_at": 1,
         }),
     );
@@ -971,7 +970,7 @@ async fn displayed_short_ids_resolve_to_the_same_task() {
         root,
         &format!("{RUNNING_PLAN}.json"),
         json!({
-            "id": RUNNING_PLAN, "status": "running", "requested_by": 1, "goal": "x", "created_at": 1,
+            "id": RUNNING_PLAN, "status": "proposed", "requested_by": 1, "goal": "x", "created_at": 1,
         }),
     );
     for token in ["214534", "#214534", "34", RUNNING_PLAN] {
@@ -991,7 +990,7 @@ async fn status_command_accepts_the_displayed_short_id() {
         &cfg.self_improve_dir,
         &format!("{RUNNING_PLAN}.json"),
         json!({
-            "id": RUNNING_PLAN, "status": "running", "requested_by": cfg.owner_id.0,
+            "id": RUNNING_PLAN, "status": "proposed", "requested_by": cfg.owner_id.0,
             "goal": "делается", "created_at": 1,
         }),
     );
@@ -1020,7 +1019,7 @@ async fn status_command_accepts_the_displayed_short_id() {
         .collect();
     assert_eq!(replies.len(), 1, "{replies:?}");
     assert!(replies[0].contains(RUNNING_PLAN), "{replies:?}");
-    assert!(replies[0].contains("running"), "{replies:?}");
+    assert!(replies[0].contains("proposed"), "{replies:?}");
     assert!(!replies[0].contains("не найдена"), "{replies:?}");
 }
 
@@ -1034,7 +1033,7 @@ async fn exact_displayed_id_wins_over_a_longer_partial_match() {
         root,
         &format!("{RUNNING_PLAN}.json"),
         json!({
-            "id": RUNNING_PLAN, "status": "running", "requested_by": 1, "goal": "x", "created_at": 1,
+            "id": RUNNING_PLAN, "status": "proposed", "requested_by": 1, "goal": "x", "created_at": 1,
         }),
     );
     write_outbox(
@@ -1057,7 +1056,7 @@ async fn ambiguous_partial_id_is_reported_instead_of_missing() {
         root,
         &format!("{RUNNING_PLAN}.json"),
         json!({
-            "id": RUNNING_PLAN, "status": "running", "requested_by": 1, "goal": "x", "created_at": 1,
+            "id": RUNNING_PLAN, "status": "proposed", "requested_by": 1, "goal": "x", "created_at": 1,
         }),
     );
     write_outbox(
@@ -1087,7 +1086,7 @@ async fn partial_id_lookup_never_leaks_the_owner_queue() {
             root,
             &format!("{id}.json"),
             json!({
-                "id": id, "status": "running", "requested_by": 1,
+                "id": id, "status": "proposed", "requested_by": 1,
                 "proposed_by": 1, "goal": "owner goal", "created_at": created,
             }),
         );
@@ -1107,7 +1106,7 @@ async fn every_listed_queue_task_is_found_by_its_displayed_id() {
         root,
         &format!("{RUNNING_PLAN}.json"),
         json!({
-            "id": RUNNING_PLAN, "status": "running", "requested_by": 1, "goal": "делается", "created_at": 2,
+            "id": RUNNING_PLAN, "status": "proposed", "requested_by": 1, "goal": "делается", "created_at": 2,
         }),
     );
     write_inbox(
@@ -1144,7 +1143,7 @@ async fn cancel_command_removes_every_listed_task_in_one_reply() {
             &cfg.self_improve_dir,
             &format!("{id}.json"),
             json!({
-                "id": id, "status": "planned", "requested_by": cfg.owner_id.0,
+                "id": id, "status": "proposed", "requested_by": cfg.owner_id.0,
                 "goal": "x", "created_at": created,
             }),
         );
@@ -1153,7 +1152,7 @@ async fn cancel_command_removes_every_listed_task_in_one_reply() {
         &cfg.self_improve_dir,
         &format!("{running}.json"),
         json!({
-            "id": running, "status": "running", "requested_by": cfg.owner_id.0,
+            "id": running, "status": "issue_created", "requested_by": cfg.owner_id.0,
             "goal": "y", "created_at": 3,
         }),
     );
@@ -1230,7 +1229,7 @@ async fn cancel_command_reports_unknown_ids_without_stopping() {
         &cfg.self_improve_dir,
         &format!("{planned}.json"),
         json!({
-            "id": planned, "status": "planned", "requested_by": cfg.owner_id.0,
+            "id": planned, "status": "proposed", "requested_by": cfg.owner_id.0,
             "goal": "x", "created_at": 1,
         }),
     );
@@ -1290,10 +1289,8 @@ async fn cancel_command_reports_unknown_ids_without_stopping() {
 fn planned_notification_names_the_proposer_and_links_the_issue() {
     let value = json!({
         "id": "plan-1",
-        "status": "planned",
+        "status": "issue_created",
         "goal": "добавь кнопку",
-        "spec": "спека",
-        "review": "ревью",
         "issue_url": "https://github.com/labi-le/maxwell/issues/1",
         "requested_by": 1,
         "proposed_by": 2,
@@ -1301,16 +1298,50 @@ fn planned_notification_names_the_proposer_and_links_the_issue() {
     });
     let text = crate::self_improve::notification_text(&value).unwrap();
     assert!(text.contains("предложил: bob"));
-    assert!(text.contains("делаем или в помойку?"));
+    assert!(text.contains("issue создана"));
     assert!(text.contains("https://github.com/labi-le/maxwell/issues/1"));
-    assert!(!text.contains("спека"));
-    assert!(!text.contains("ревью"));
+    assert!(crate::self_improve::notification_markup(&value).is_none());
+}
+
+#[test]
+fn researched_notification_includes_research_text_and_plan_buttons() {
+    let value = json!({
+        "id": "plan-0",
+        "status": "proposed",
+        "goal": "добавь голосование",
+        "requested_by": 1,
+        "proposed_by": 2,
+        "proposed_by_name": "bob",
+    });
+    let text = crate::self_improve::notification_text(&value).unwrap();
+    assert!(text.contains("хотелка #plan-0"));
+    assert!(text.contains("предложил: bob"));
+    assert!(text.contains("создаём issue или в помойку?"));
+    assert!(!text.contains("[обрезано]"));
     let markup = crate::self_improve::notification_markup(&value).unwrap();
     let labels = serde_json::to_string(&markup).unwrap();
-    assert!(labels.contains("Делаем"));
+    assert!(labels.contains("В issue"));
     assert!(labels.contains("В помойку"));
-    assert!(!labels.contains('✅'));
-    assert!(!labels.contains('🗑'));
+    assert!(labels.contains("approve:plan-0"));
+    assert!(labels.contains("reject:plan-0"));
+
+    let oversized = json!({
+        "id": "plan-emoji",
+        "status": "proposed",
+        "goal": "🔥".repeat(2000),
+        "requested_by": 1,
+        "proposed_by": 2,
+        "proposed_by_name": "bob",
+    });
+    let capped = crate::self_improve::notification_text(&oversized).unwrap();
+    assert!(
+        capped.encode_utf16().count() < 3900,
+        "notification must fit one Telegram message in UTF-16: {}",
+        capped.encode_utf16().count()
+    );
+    assert!(capped.contains("[обрезано]"));
+    assert_eq!(crate::chat_style::split_message(&capped).len(), 1);
+    assert!(crate::self_improve::notification_markup(&oversized).is_some());
 }
 
 #[test]
@@ -1323,7 +1354,7 @@ fn proposed_notification_has_deploy_buttons() {
     });
     let markup = crate::self_improve::notification_markup(&value).unwrap();
     let labels = serde_json::to_string(&markup).unwrap();
-    assert!(labels.contains("Деплой"));
+    assert!(labels.contains("В issue"));
     assert!(labels.contains("В помойку"));
     assert!(labels.contains("approve:plan-2"));
     assert!(labels.contains("reject:plan-2"));
@@ -1331,9 +1362,11 @@ fn proposed_notification_has_deploy_buttons() {
 
 #[test]
 fn notification_ignores_non_terminal_states() {
-    let value = json!({"id": "plan-1", "status": "planning"});
-    assert!(crate::self_improve::notification_text(&value).is_none());
-    assert!(crate::self_improve::notification_markup(&value).is_none());
+    for status in ["queued", "unknown"] {
+        let value = json!({"id": "plan-1", "status": status});
+        assert!(crate::self_improve::notification_text(&value).is_none());
+        assert!(crate::self_improve::notification_markup(&value).is_none());
+    }
 }
 
 #[test]
@@ -1357,17 +1390,13 @@ fn owner_command_collects_every_id() {
 
 #[test]
 fn decision_markup_rejects_ids_that_cannot_fit() {
-    let plan = |id: String| crate::self_improve::PendingDecision {
+    let issue = |id: String| crate::self_improve::PendingDecision {
         id,
-        gate: crate::self_improve::DecisionGate::Plan,
+        gate: crate::self_improve::DecisionGate::Issue,
     };
-    assert!(crate::self_improve::decision_markup(&plan("a".repeat(80))).is_none());
-    assert!(crate::self_improve::decision_markup(&plan("bad/id".into())).is_none());
-    let deploy = crate::self_improve::PendingDecision {
-        id: "plan-1".into(),
-        gate: crate::self_improve::DecisionGate::Deploy,
-    };
-    assert!(crate::self_improve::decision_markup(&deploy).is_some());
+    assert!(crate::self_improve::decision_markup(&issue("a".repeat(80))).is_none());
+    assert!(crate::self_improve::decision_markup(&issue("bad/id".into())).is_none());
+    assert!(crate::self_improve::decision_markup(&issue("plan-1".into())).is_some());
 }
 
 #[test]

@@ -10,7 +10,7 @@ touching the control plane.
 Request:
     {
       "job_id": "plan-...",
-      "role": "planner|reviewer|implementer",
+      "role": "researcher|planner|reviewer|implementer",
       "workspace": "/abs/path",
       "profile_dir": "/abs/path",
       "prompt": "...",

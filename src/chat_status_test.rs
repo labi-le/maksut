@@ -69,7 +69,7 @@ fn planned_parent(root: &Path) {
         &format!("{REFINES_PARENT}.json"),
         json!({
             "id": REFINES_PARENT,
-            "status": "planned",
+            "status": "proposed",
             "requested_by": 2,
             "goal": "сделай кнопку",
             "spec": "старая спека",
@@ -414,7 +414,7 @@ async fn feature_status_tool_call_returns_snapshot() {
         &root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1, "goal": "сделай кнопку",
+            "id": "plan-1", "status": "issue_created", "requested_by": 1, "goal": "сделай кнопку",
             "summary": "готово", "issue_url": "https://github.com/labi-le/maxwell/issues/1",
             "spec": "SECRET SPEC", "review": "SECRET REVIEW", "worktree": "/host/path",
             "created_at": 1,
@@ -461,7 +461,7 @@ async fn feature_status_tool_call_returns_snapshot() {
     .unwrap();
     assert_eq!(
         reply.text,
-        "#plan-1: план готов: сделай кнопку\nhttps://github.com/labi-le/maxwell/issues/1"
+        "#plan-1: issue создана: сделай кнопку\nhttps://github.com/labi-le/maxwell/issues/1"
     );
     assert!(
         !reply.text.contains("остальное"),
@@ -476,7 +476,7 @@ async fn feature_status_tool_call_returns_snapshot() {
     assert!(user.contains("что по заявке?"), "{user}");
     let result = tool_contents(&requests[1]).join("\n");
     assert!(result.contains("plan-1"), "{result}");
-    assert!(result.contains("planned"), "{result}");
+    assert!(result.contains("issue_created"), "{result}");
     assert!(
         result.contains("https://github.com/labi-le/maxwell/issues/1"),
         "{result}"
@@ -495,7 +495,7 @@ async fn feature_status_rejects_a_false_status_claim() {
         &root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "сделай кнопку", "created_at": 1,
         }),
     );
@@ -538,7 +538,7 @@ async fn feature_status_rejects_a_false_status_claim() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "#plan-1: план готов: сделай кнопку");
+    assert_eq!(reply.text, "#plan-1: ждёт решения владельца: сделай кнопку");
     assert!(!reply.text.contains("задеплоена"), "{}", reply.text);
     llm.task.abort();
 }
@@ -551,7 +551,7 @@ async fn feature_status_repairs_a_false_status_claim() {
         &root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "сделай кнопку", "created_at": 1,
         }),
     );
@@ -564,7 +564,7 @@ async fn feature_status_repairs_a_false_status_claim() {
     let llm = mock_server(vec![
         tool_response("feature_status", json!({"id": "plan-1"})),
         reply_response("#plan-1 задеплоена"),
-        reply_response("#plan-1 — план готов, ждёт реализации"),
+        reply_response("#plan-1 — ждёт решения владельца"),
     ])
     .await;
     let config = ChatConfig::new(
@@ -595,7 +595,7 @@ async fn feature_status_repairs_a_false_status_claim() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "#plan-1 — план готов, ждёт реализации");
+    assert_eq!(reply.text, "#plan-1 — ждёт решения владельца");
     assert!(!reply.text.contains("задеплоена"), "{}", reply.text);
     llm.task.abort();
 }
@@ -608,7 +608,7 @@ async fn feature_status_keeps_a_grounded_model_answer() {
         &root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "сделай кнопку", "created_at": 1,
         }),
     );
@@ -620,7 +620,7 @@ async fn feature_status_keeps_a_grounded_model_answer() {
     .unwrap();
     let llm = mock_server(vec![
         tool_response("feature_status", json!({"id": "plan-1"})),
-        reply_response("#plan-1 — план готов, ждёт реализации"),
+        reply_response("#plan-1 — ждёт решения владельца"),
     ])
     .await;
     let config = ChatConfig::new(
@@ -651,7 +651,7 @@ async fn feature_status_keeps_a_grounded_model_answer() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "#plan-1 — план готов, ждёт реализации");
+    assert_eq!(reply.text, "#plan-1 — ждёт решения владельца");
     llm.task.abort();
 }
 
@@ -1050,7 +1050,7 @@ async fn feature_status_payload_contains_all_queue_states() {
     .await
     .unwrap();
     assert!(
-        reply.text.contains("#active — ждёт деплоя"),
+        reply.text.contains("#active — ждёт решения владельца"),
         "{}",
         reply.text
     );
@@ -1133,12 +1133,12 @@ async fn feature_status_reports_recorded_plan_approval() {
         &root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "x", "created_at": 1,
         }),
     );
-    std::fs::create_dir_all(root.join("plan-approvals")).unwrap();
-    std::fs::write(root.join("plan-approvals").join("plan-1.json"), b"{}").unwrap();
+    std::fs::create_dir_all(root.join("approvals")).unwrap();
+    std::fs::write(root.join("approvals").join("plan-1.json"), b"{}").unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
         dir.path().join("state.db").display()
@@ -1147,7 +1147,7 @@ async fn feature_status_reports_recorded_plan_approval() {
     .unwrap();
     let llm = mock_server(vec![
         tool_response("feature_status", json!({"id": "plan-1"})),
-        reply_response("план уже одобрен, ждёт реализации"),
+        reply_response("#plan-1 — одобрена, создаётся issue"),
     ])
     .await;
     let config = ChatConfig::new(
@@ -1178,7 +1178,7 @@ async fn feature_status_reports_recorded_plan_approval() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "план уже одобрен, ждёт реализации");
+    assert_eq!(reply.text, "#plan-1 — одобрена, создаётся issue");
     let requests = llm.requests.lock().unwrap();
     let result = tool_contents(&requests[1]).join("\n");
     assert!(result.contains("already_decided"), "{result}");
@@ -1193,12 +1193,12 @@ async fn feature_confirmation_reports_recorded_plan_approval() {
         &root,
         "plan-1.json",
         json!({
-            "id": "plan-1", "status": "planned", "requested_by": 1,
+            "id": "plan-1", "status": "proposed", "requested_by": 1,
             "goal": "x", "created_at": 1,
         }),
     );
-    std::fs::create_dir_all(root.join("plan-approvals")).unwrap();
-    std::fs::write(root.join("plan-approvals").join("plan-1.json"), b"{}").unwrap();
+    std::fs::create_dir_all(root.join("approvals")).unwrap();
+    std::fs::write(root.join("approvals").join("plan-1.json"), b"{}").unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
         dir.path().join("state.db").display()
@@ -1306,7 +1306,7 @@ async fn feature_status_returns_issue_links_for_ready_plans() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "Ссылки на issue:\n\n#214537 — план готов: threads links\nhttps://github.com/labi-le/maxwell/issues/7");
+    assert_eq!(reply.text, "Ссылки на issue:\n\n#214537 — issue создана: threads links\nhttps://github.com/labi-le/maxwell/issues/7");
     assert!(!reply.text.contains("остальное"), "{}", reply.text);
     let requests = llm.requests.lock().unwrap();
     let result = tool_contents(&requests[1]).join("\n");
@@ -1322,8 +1322,8 @@ async fn feature_status_payload_keeps_full_task_ids() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("self-improve");
     for (id, status, created) in [
-        ("plan-1793270374-1002045081420-214537", "planned", 1),
-        ("plan-1793269960-1002045081420-214534", "planned", 2),
+        ("plan-1793270374-1002045081420-214537", "proposed", 1),
+        ("plan-1793269960-1002045081420-214534", "proposed", 2),
     ] {
         write_outbox(
             &root,
@@ -1375,7 +1375,7 @@ async fn feature_status_payload_keeps_full_task_ids() {
     .unwrap();
     assert_eq!(
         reply.text,
-        "Очередь\n• #214534 — план готов: x\n• #214537 — план готов: x"
+        "Очередь\n• #214534 — ждёт решения владельца: x\n• #214537 — ждёт решения владельца: x"
     );
     assert!(!reply.text.contains("plan-1793270374"), "{}", reply.text);
     let requests = llm.requests.lock().unwrap();
@@ -1508,14 +1508,11 @@ async fn feature_status_redacts_api_key() {
 
 #[tokio::test]
 async fn feature_confirmation_attaches_validated_buttons() {
-    for (status, gate, approve_label) in [
-        ("planned", crate::self_improve::DecisionGate::Plan, "Делаем"),
-        (
-            "proposed",
-            crate::self_improve::DecisionGate::Deploy,
-            "Деплой",
-        ),
-    ] {
+    for (status, gate, approve_label) in [(
+        "proposed",
+        crate::self_improve::DecisionGate::Issue,
+        "В issue",
+    )] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("self-improve");
         write_outbox(
@@ -1573,19 +1570,18 @@ async fn feature_confirmation_attaches_validated_buttons() {
         assert!(labels.contains("В помойку"), "{labels}");
         assert!(labels.contains("approve:plan-1"), "{labels}");
         assert!(labels.contains("reject:plan-1"), "{labels}");
-        assert!(!marker_exists(&root, "plan-approvals", "plan-1"));
         assert!(!marker_exists(&root, "approvals", "plan-1"));
         assert!(!marker_exists(&root, "rejections", "plan-1"));
         llm.task.abort();
     }
     let invalid = crate::self_improve::PendingDecision {
         id: "bad/id".into(),
-        gate: crate::self_improve::DecisionGate::Plan,
+        gate: crate::self_improve::DecisionGate::Issue,
     };
     assert!(crate::self_improve::decision_markup(&invalid).is_none());
     let long = crate::self_improve::PendingDecision {
         id: "a".repeat(80),
-        gate: crate::self_improve::DecisionGate::Deploy,
+        gate: crate::self_improve::DecisionGate::Issue,
     };
     assert!(crate::self_improve::decision_markup(&long).is_none());
 }
@@ -1598,14 +1594,14 @@ async fn feature_confirmation_multiple_tasks_buttons_newest() {
         &root,
         "old.json",
         json!({
-            "id": "old", "status": "planned", "requested_by": 1, "goal": "old", "created_at": 1,
+            "id": "old", "status": "proposed", "requested_by": 1, "goal": "old", "created_at": 1,
         }),
     );
     write_outbox(
         &root,
         "new.json",
         json!({
-            "id": "new", "status": "planned", "requested_by": 1, "goal": "new", "created_at": 5,
+            "id": "new", "status": "proposed", "requested_by": 1, "goal": "new", "created_at": 5,
         }),
     );
     let pool = open_database(&format!(

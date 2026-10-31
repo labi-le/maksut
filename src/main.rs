@@ -45,6 +45,7 @@ mod links;
 pub(crate) use links::*;
 mod media;
 mod read_url;
+mod read_url_html;
 pub(crate) use media::*;
 mod process;
 pub(crate) use process::*;
@@ -87,6 +88,8 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 // download budget is for normal clips, not hours-long broadcasts.
 pub(crate) const MAX_VIDEO_DURATION: u64 = 30 * 60;
 const TELEGRAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+pub(crate) const TELEGRAM_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const TELEGRAM_TCP_KEEPALIVE: Duration = Duration::from_secs(15);
 const COOKIE_REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
 const YOUTUBE_PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_METADATA_BYTES: u64 = 4 * 1024 * 1024;
@@ -98,9 +101,15 @@ const MAX_VIDEO_PIXELS: u32 = 3840 * 2160;
 const TIKTOK_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
 
-fn telegram_bot(token: String) -> Result<Bot, reqwest::Error> {
-    let client = teloxide::net::default_reqwest_settings()
+pub(crate) fn telegram_bot(token: String) -> Result<Bot, reqwest::Error> {
+    // Proxy tunnels close idle sockets before reqwest's 90s pool default.
+    // Don't use teloxide's default_reqwest_settings because it hardcodes a 17s timeout.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
         .timeout(TELEGRAM_REQUEST_TIMEOUT)
+        .pool_idle_timeout(TELEGRAM_POOL_IDLE_TIMEOUT)
+        .tcp_keepalive(TELEGRAM_TCP_KEEPALIVE)
+        .tcp_nodelay(true)
         .build()?;
     Ok(Bot::with_client(token, client))
 }

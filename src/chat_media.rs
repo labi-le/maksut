@@ -55,6 +55,11 @@ pub(crate) fn message_image(message: &Message) -> Option<(FileId, String)> {
 
 /// One client for every attachment download: building a fresh one per photo
 /// message threw away the connection pool and its TLS setup.
+const CHAT_IMAGE_CONCURRENCY: usize = 4;
+
+static IMAGE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(CHAT_IMAGE_CONCURRENCY));
+
 static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
@@ -62,13 +67,16 @@ static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 
+pub(crate) async fn acquire_image_permit() -> Option<tokio::sync::SemaphorePermit<'static>> {
+    IMAGE_SEMAPHORE.acquire().await.ok()
+}
+
 pub(crate) async fn download_image(bot: &Bot, file_id: &FileId, mime: &str) -> Option<ChatImage> {
     let file = bot.get_file(file_id.clone()).await.ok()?;
-    let url = format!(
-        "https://api.telegram.org/file/bot{}/{}",
-        bot.token(),
-        file.path
-    );
+    let url = bot
+        .api_url()
+        .join(&format!("file/bot{}/{}", bot.token(), file.path))
+        .ok()?;
     let response = IMAGE_CLIENT.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
@@ -86,6 +94,70 @@ pub(crate) async fn download_image(bot: &Bot, file_id: &FileId, mime: &str) -> O
     Some(ChatImage {
         bytes,
         mime: mime.to_owned(),
+    })
+}
+
+pub(crate) struct ResolvedChatInput {
+    pub(crate) prompt: String,
+    pub(crate) followup: bool,
+    pub(crate) pending_media: Option<(FileId, String)>,
+    pub(crate) warn_missing_image: bool,
+    pub(crate) reply_context: Option<String>,
+}
+
+pub(crate) fn message_has_own_photo(message: &Message) -> bool {
+    message.photo().is_some()
+        || message
+            .document()
+            .and_then(|doc| doc.mime_type.as_ref())
+            .is_some_and(|mime| mime.as_ref().starts_with("image/"))
+}
+
+pub(crate) async fn resolve_chat_input(
+    message: &Message,
+    text: &str,
+    cfg: &crate::Settings,
+    reply_ignored: bool,
+) -> Option<ResolvedChatInput> {
+    let chat = cfg.chat.as_ref()?;
+    let current_media = message_image(message);
+    let has_current_media = current_media.is_some();
+    let media = current_media.or_else(|| {
+        (!reply_ignored)
+            .then(|| message.reply_to_message().and_then(message_image))
+            .flatten()
+    });
+    let (addressed, bare_sticker_reply) = crate::chat_style::resolve_addressed_chat(
+        message,
+        text,
+        &cfg.bot_username,
+        media.is_some(),
+    );
+    let (prompt, followup) = match addressed {
+        Some(pair) => pair,
+        None if !message.chat.is_private() => {
+            let trimmed = text.trim();
+            let active =
+                if (!trimmed.is_empty() && !has_current_media) || message_has_own_photo(message) {
+                    chat.followup_active(message.chat.id).await
+                } else {
+                    false
+                };
+            active.then(|| (trimmed.to_owned(), true))?
+        }
+        None => return None,
+    };
+    let reply_context = message
+        .reply_to_message()
+        .and_then(|reply| crate::chat_style::format_reply_context(reply, reply_ignored));
+    let pending_media = media.filter(|_| !followup || has_current_media);
+    let warn_missing_image = pending_media.is_some() && !bare_sticker_reply;
+    Some(ResolvedChatInput {
+        prompt,
+        followup,
+        pending_media,
+        warn_missing_image,
+        reply_context,
     })
 }
 

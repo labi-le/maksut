@@ -59,6 +59,11 @@ pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> 
     sqlx::query("CREATE INDEX IF NOT EXISTS ignored_users_until ON ignored_users(until)")
         .execute(&pool)
         .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS bot_self_memory (topic TEXT PRIMARY KEY, fact TEXT NOT NULL, source_url TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+    )
+    .execute(&pool)
+    .await?;
     migrate_chat_turns(&pool).await?;
     init_cache(&pool).await?;
     Ok(pool)

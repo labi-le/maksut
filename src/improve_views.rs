@@ -54,14 +54,7 @@ pub(crate) fn task_view(dir: &Path, value: &Value, queued: bool) -> Option<Value
     };
     if !matches!(
         status,
-        "queued"
-            | "planning"
-            | "planned"
-            | "running"
-            | "proposed"
-            | "deployed"
-            | "failed"
-            | "rejected"
+        "queued" | "proposed" | "issue_created" | "planned" | "deployed" | "failed" | "rejected"
     ) {
         return None;
     }
@@ -98,8 +91,7 @@ pub(crate) fn task_view(dir: &Path, value: &Value, queued: bool) -> Option<Value
         0
     };
     let decision = match status {
-        "planned" => json!("plan"),
-        "proposed" => json!("deploy"),
+        "proposed" => json!("issue"),
         _ => Value::Null,
     };
     let already_decided = if queued {
@@ -249,8 +241,17 @@ pub(crate) fn status_overview(dir: &Path, owner: UserId) -> Value {
     let mut counts = serde_json::Map::new();
     for task in &tasks {
         if let Some(status) = task.get("status").and_then(Value::as_str) {
-            let count = counts.get(status).and_then(Value::as_u64).unwrap_or(0);
-            counts.insert(status.to_owned(), json!(count + 1));
+            let has_issue = task
+                .get("issue_url")
+                .and_then(Value::as_str)
+                .is_some_and(|url| !url.trim().is_empty());
+            let key = if status == "planned" && has_issue {
+                "issue_created"
+            } else {
+                status
+            };
+            let count = counts.get(key).and_then(Value::as_u64).unwrap_or(0);
+            counts.insert(key.to_owned(), json!(count + 1));
         }
     }
     let active: Vec<Value> = tasks
@@ -258,7 +259,7 @@ pub(crate) fn status_overview(dir: &Path, owner: UserId) -> Value {
         .filter(|task| {
             matches!(
                 task.get("status").and_then(Value::as_str),
-                Some("queued" | "planning" | "planned" | "running" | "proposed")
+                Some("queued" | "proposed")
             )
         })
         .take(MAX_RESULT_TASKS)
@@ -339,14 +340,14 @@ pub(crate) fn pending_confirmation(dir: &Path, owner: UserId) -> Value {
 }
 
 /// Read-only probe used to keep a standalone «да»/«нет» sticker from
-/// swallowing a pending plan/deploy decision. It never writes a marker.
+/// swallowing a pending issue decision. It never writes a marker.
 pub(crate) fn has_pending_decision(dir: &Path, owner: UserId) -> bool {
     read_queue_tasks(dir).iter().any(|(_, _, value, queued)| {
         !*queued
             && owned_by_owner(value, owner)
             && matches!(
                 value.get("status").and_then(Value::as_str),
-                Some("planned" | "proposed")
+                Some("proposed")
             )
     })
 }
@@ -359,8 +360,7 @@ pub(crate) fn newest_pending_decision(result: &Value) -> Option<PendingDecision>
             return None;
         }
         let gate = match task.get("decision")?.as_str()? {
-            "plan" => DecisionGate::Plan,
-            "deploy" => DecisionGate::Deploy,
+            "issue" => DecisionGate::Issue,
             _ => return None,
         };
         let id = task.get("id")?.as_str()?;

@@ -62,6 +62,17 @@ pub(crate) fn truncate_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+pub(crate) fn truncate_utf16(text: &str, max_units: usize) -> (&str, bool) {
+    let mut units = 0;
+    for (index, ch) in text.char_indices() {
+        units += ch.len_utf16();
+        if units > max_units {
+            return (&text[..index], true);
+        }
+    }
+    (text, false)
+}
+
 fn plan_id(now: i64, source_chat_id: i64, message_id: i32) -> String {
     format!("plan-{now}-{}-{message_id}", source_chat_id.unsigned_abs())
 }
@@ -197,7 +208,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
         return Err("план не найден".to_owned());
     }
     let status = parent.get("status").and_then(Value::as_str).unwrap_or("");
-    if !matches!(status, "planning" | "planned" | "proposed" | "failed") {
+    if !matches!(status, "proposed" | "failed") {
         return Err("план уже закрыт".to_owned());
     }
     let parent_goal = parent
@@ -208,7 +219,12 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
     if parent_goal.is_empty() {
         return Err("план не найден".to_owned());
     }
-    let previous_spec = parent.get("spec").and_then(Value::as_str).unwrap_or("");
+    let previous_spec = parent
+        .get("spec")
+        .and_then(Value::as_str)
+        .filter(|spec| !spec.trim().is_empty())
+        .or_else(|| parent.get("research").and_then(Value::as_str))
+        .unwrap_or("");
     let previous_review = parent.get("review").and_then(Value::as_str).unwrap_or("");
     // The orchestrator only shows `feedback` next to a previous spec, so a
     // remark on a spec-less failed plan has to ride in the child goal.
@@ -245,17 +261,13 @@ pub(crate) fn has_pending_proposal(dir: &Path, proposer: UserId) -> bool {
             value.get("proposed_by").and_then(Value::as_i64) == Some(proposer.0 as i64)
                 && matches!(
                     value.get("status").and_then(Value::as_str),
-                    Some("planning" | "planned" | "proposed")
+                    Some("proposed")
                 )
         })
 }
 
-pub(crate) fn approval_dir(status: &str) -> &'static str {
-    if status == "planned" {
-        "plan-approvals"
-    } else {
-        "approvals"
-    }
+pub(crate) fn approval_dir(_status: &str) -> &'static str {
+    "approvals"
 }
 
 pub(crate) fn marker(id: &str, owner: UserId) -> serde_json::Result<Vec<u8>> {
@@ -369,9 +381,9 @@ pub(crate) fn task_path(dir: &Path, id: &str, queued: bool) -> PathBuf {
         .join(format!("{id}.json"))
 }
 
-/// The only writer of `plan-approvals`, `approvals`, and `rejections` markers.
-/// Text paths and model tools never reach these writes. The mutex serializes
-/// two rapid button presses so the first decision wins.
+/// The only writer of `approvals` and `rejections` markers. Text paths and
+/// model tools never reach these writes. The mutex serializes two rapid button
+/// presses so the first decision wins.
 static DECISION_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) fn record_decision(
@@ -388,7 +400,7 @@ pub(crate) fn record_decision(
         return Err("решение уже принято");
     }
     match action {
-        "approve" if matches!(status, "planned" | "proposed") => marker(id, owner)
+        "approve" if status == "proposed" => marker(id, owner)
             .map_err(|_| "не понял кнопку")
             .and_then(|bytes| {
                 atomic_write(
@@ -397,14 +409,8 @@ pub(crate) fn record_decision(
                 )
                 .map_err(|_| "не понял кнопку")
             })
-            .map(|()| {
-                if status == "planned" {
-                    "погнали"
-                } else {
-                    "деплой запущен"
-                }
-            }),
-        "reject" if matches!(status, "planned" | "proposed") => atomic_write(
+            .map(|()| "создаём issue"),
+        "reject" if status == "proposed" => atomic_write(
             &dir.join("rejections").join(format!("{id}.json")),
             b"reject",
         )

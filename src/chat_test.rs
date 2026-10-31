@@ -17,6 +17,10 @@ fn chat_prompt_needs_the_name_in_groups() {
         Some("что такое Rust")
     );
     assert_eq!(
+        chat_prompt("максутка, покажи код", false, "MyBot", false).as_deref(),
+        Some("покажи код")
+    );
+    assert_eq!(
         chat_prompt("максвелл что такое Rust", false, "MyBot", false),
         None
     );
@@ -55,6 +59,26 @@ fn replies_are_short_and_without_a_trailing_period() {
     assert_eq!(
         style_reply("Смотри https://Example.com/Path."),
         "смотри https://Example.com/Path"
+    );
+    let with_url = format!(
+        "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10. {}",
+        "длинное продолжение ".repeat(20)
+    );
+    assert!(
+        style_reply(&with_url)
+            .contains("https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10"),
+        "{}",
+        style_reply(&with_url)
+    );
+    let no_sentence_end = format!(
+        "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10 {}",
+        "длинное продолжение без точек ".repeat(20)
+    );
+    assert!(
+        style_reply(&no_sentence_end)
+            .contains("https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10"),
+        "{}",
+        style_reply(&no_sentence_end)
     );
     let long = format!("{} это конец.", "очень длинная фраза ".repeat(40));
     let reply = style_reply(&long);

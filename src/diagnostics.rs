@@ -116,3 +116,65 @@ pub(crate) async fn record_failure_with_events(
         eprintln!("Не удалось сохранить диагностику загрузки");
     }
 }
+
+pub(crate) async fn report_incomplete_delivery(
+    bot: &Bot,
+    chat_id: ChatId,
+    cfg: &crate::Settings,
+    url: &Url,
+    result: crate::DownloadResult,
+    report: crate::DeliveryReport,
+) {
+    let skipped = result.selection.skipped;
+    let selection_detail = if result.selection.size_skipped != 0 {
+        "Size limit"
+    } else {
+        "Media skipped"
+    };
+    let diagnostic = if let Some(error) = &report.error {
+        error.diagnostic
+    } else if let Some(failure) = result.diagnostic {
+        failure
+    } else if result.twitter_photos_failed {
+        FailureDiagnostic::new("metadata", "Photo metadata failed")
+    } else {
+        FailureDiagnostic::new("selection", selection_detail)
+    };
+    let user_diagnostic = source_user_diagnostic(diagnostic, &result.events);
+    let mut events = result.events;
+    if skipped != 0 && diagnostic.stage != "selection" {
+        trace_event(
+            &mut events,
+            FailureDiagnostic::new("selection", selection_detail),
+        );
+    }
+    if report.error.is_some() || events.is_empty() {
+        trace_event(&mut events, diagnostic);
+    }
+    record_failure_with_events(&cfg.database, url, diagnostic, &events).await;
+    let mut warning = String::from("Не все медиа доставлены; исходная ссылка сохранена.");
+    if result.limited {
+        warning.push_str(" Достигнут лимит места.");
+    } else if !result.process_ok {
+        warning.push_str(" Загрузка завершилась с ошибкой.");
+    }
+    if result.twitter_photos_failed {
+        warning.push_str(" Фото X не удалось извлечь.");
+    }
+    if skipped != 0 {
+        warning.push_str(" Некоторые файлы пропущены.");
+    }
+    warning.push(' ');
+    if let Some(error) = report.error {
+        warning.push_str(&error.reason);
+    } else {
+        warning.push_str(&crate::user_errors::diagnostic_message(
+            user_diagnostic,
+            cfg.max_media_bytes,
+        ));
+    }
+    let _ = bot
+        .send_message(chat_id, warning)
+        .disable_notification(true)
+        .await;
+}

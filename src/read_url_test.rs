@@ -37,8 +37,12 @@ fn extracts_article_and_skips_chrome() {
           <footer>подвал</footer>
         </body></html>
     "#;
-    let (title, text) =
-        extract_html(html, &Url::parse("https://example.com/article").unwrap()).unwrap();
+    let (title, text) = extract_html_with_links(
+        html,
+        &Url::parse("https://example.com/article").unwrap(),
+        &mut Vec::new(),
+    )
+    .unwrap();
     assert_eq!(title.as_deref(), Some("Заголовок статьи"));
     let text = normalize_text(&text);
     assert!(text.contains("Первый"), "{text}");
@@ -82,9 +86,9 @@ async fn live_fetch_article_page() {
 
 #[test]
 fn fallback_drops_scripts_and_preserves_spacing() {
-    let document = clean_document(
+    let document = strip_chrome(dom_query::Document::from(
         "<html><body><script>alert('secret')</script><style>.x{}</style>             <p>hello <b>world</b></p></body></html>",
-    );
+    ));
     let text = fallback_text(&document);
     assert!(text.contains("hello world"), "{text}");
     assert!(!text.contains("secret"), "{text}");
@@ -102,8 +106,12 @@ fn oversized_titles_are_capped_and_sanitized() {
 #[test]
 fn tiny_pages_fall_back_to_body_text() {
     let html = "<html><head><title>Tiny</title></head><body><p>hello</p></body></html>";
-    let (title, text) =
-        extract_html(html, &Url::parse("https://example.com/tiny").unwrap()).unwrap();
+    let (title, text) = extract_html_with_links(
+        html,
+        &Url::parse("https://example.com/tiny").unwrap(),
+        &mut Vec::new(),
+    )
+    .unwrap();
     assert_eq!(title.as_deref(), Some("Tiny"));
     assert!(text.contains("hello"), "{text}");
 }
@@ -121,15 +129,30 @@ fn decodes_declared_non_utf8_charsets() {
 fn only_urls_from_the_prompt_are_allowed() {
     let prompt = "прочитай https://example.com/article?x=1 и всё";
     let allowed = prompt_urls(prompt);
-    assert!(allowed_target("https://example.com/article?x=1", &allowed));
-    assert!(!allowed_target("https://example.com/article?x=2", &allowed));
+    assert!(allowed_target(
+        "https://example.com/article?x=1",
+        &allowed,
+        false
+    ));
+    assert!(!allowed_target(
+        "https://example.com/article?x=2",
+        &allowed,
+        false
+    ));
     assert!(!allowed_target(
         "https://attacker.example/?q=chat-summary",
-        &allowed
+        &allowed,
+        false
     ));
     assert!(!allowed_target(
         "https://example.com/article?x=1&q=secret",
-        &allowed
+        &allowed,
+        true
+    ));
+    assert!(allowed_target(
+        "https://example.com/other-page",
+        &allowed,
+        true
     ));
 }
 
@@ -141,7 +164,11 @@ fn deeply_nested_html_does_not_overflow() {
         "</div>".repeat(5_000)
     );
     assert!(matches!(
-        extract_html(&html, &Url::parse("https://example.com/deep").unwrap()),
+        extract_html_with_links(
+            &html,
+            &Url::parse("https://example.com/deep").unwrap(),
+            &mut Vec::new(),
+        ),
         Err(ReadUrlError::TooComplex)
     ));
 }
@@ -151,4 +178,52 @@ fn truncation_does_not_split_utf8() {
     let (text, truncated) = truncate_chars("привет", 2);
     assert_eq!(text, "пр");
     assert!(truncated);
+}
+
+#[test]
+fn table_layout_with_sidebar_stub_preserves_main_body_and_links() {
+    let items = (1..=20)
+        .map(|i| {
+            format!("<li><a href=\"/node/{i}\">Новость номер {i} про разработку и книги</a></li>")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let html = format!(
+        "<html><head><title>Сайт Столярова</title></head><body>\
+         <table><tr><td><h1>Последние новости</h1><ul>{items}</ul></td>\
+         <td><div class=\"rblock\"><h4>пояснение</h4><p>Вы находитесь на официальном сайте Андрея Викторовича Столярова.</p></div></td></tr></table>\
+         </body></html>"
+    );
+    let page = render_page(
+        &Url::parse("http://stolyarov.info/").unwrap(),
+        "text/html",
+        html.as_bytes(),
+    )
+    .unwrap();
+    assert!(page.text.contains("Новость номер 1"), "{}", page.text);
+    assert!(
+        page.text.contains("http://stolyarov.info/node/1"),
+        "{}",
+        page.text
+    );
+    assert!(page
+        .links
+        .contains(&Url::parse("http://stolyarov.info/node/1").unwrap()));
+}
+
+#[test]
+fn render_page_caps_links_and_stays_within_max_chars() {
+    let body = (0..200)
+        .map(|i| format!("https://example.com/item/{i} "))
+        .collect::<String>()
+        + &"слово ".repeat(6000);
+    let long_url = Url::parse(&format!("https://example.com/{}", "a".repeat(25_000))).unwrap();
+    let long_kind = format!("text/plain{}", "x".repeat(25_000));
+    let page = render_page(&long_url, &long_kind, body.as_bytes()).unwrap();
+    assert!(page.links.len() <= 32, "links: {}", page.links.len());
+    assert!(
+        page.text.chars().count() <= READ_URL_MAX_CHARS,
+        "chars: {}",
+        page.text.chars().count()
+    );
 }

@@ -1,0 +1,217 @@
+use crate::prelude::*;
+use crate::read_url::{
+    truncate_chars, validate_url, ReadUrlError, READ_URL_MAX_DISCOVERED_LINKS,
+    READ_URL_MAX_HTML_DEPTH, READ_URL_MAX_HTML_ELEMENTS, READ_URL_MAX_LINK_CHARS,
+    READ_URL_TITLE_CHARS,
+};
+use dom_smoothie::{Config, Readability, TextMode};
+
+pub(crate) fn extract_html_with_links(
+    html: &str,
+    url: &Url,
+    links: &mut Vec<Url>,
+) -> Result<(Option<String>, String), ReadUrlError> {
+    if html_is_too_complex(html) {
+        return Err(ReadUrlError::TooComplex);
+    }
+    // Readability picks the main article and strips navigation/chrome. Parse
+    // synchronously: its tendril-backed Article is not Send.
+    let document = dom_query::Document::from(html);
+    collect_document_links(&document, url, links);
+    let document = strip_chrome(document);
+    let title = document.select_single("title").text().to_string();
+    let title = title.trim().to_owned();
+    // Readability's scoring can fall back to the body on short pages and keep
+    // site chrome. Remove elements whose content is non-prose by definition
+    // first; keep header/footer because they often carry article metadata.
+    let cleaned = document.html().to_string();
+    let config = Config {
+        text_mode: TextMode::Markdown,
+        char_threshold: 0,
+        max_elements_to_parse: READ_URL_MAX_HTML_ELEMENTS,
+        ..Config::default()
+    };
+    if let Ok(mut readability) = Readability::new(cleaned, Some(url.as_str()), Some(config)) {
+        if let Ok(article) = readability.parse() {
+            let text = article.text_content.to_string();
+            if !text.trim().is_empty() {
+                let article_title = article.title.trim();
+                let title = if article_title.is_empty() {
+                    title
+                } else {
+                    article_title.to_owned()
+                };
+                let r_chars = text.chars().count();
+                let chosen = if r_chars < 600 {
+                    let fallback = fallback_text(&document);
+                    let f_chars = fallback.chars().count();
+                    if f_chars >= 600 && f_chars > r_chars.saturating_mul(2) {
+                        format!("{text}\n\n{fallback}")
+                    } else {
+                        text
+                    }
+                } else {
+                    text
+                };
+                return Ok(((!title.is_empty()).then_some(title), chosen));
+            }
+        }
+    }
+    // A readability failure must not turn a simple page into an error. Fall
+    // back to the cleaned body text; links and headings are lost but content is not.
+    Ok((
+        (!title.is_empty()).then_some(title),
+        fallback_text(&document),
+    ))
+}
+
+pub(crate) fn strip_chrome(document: dom_query::Document) -> dom_query::Document {
+    document
+        .select(
+            "script, style, nav, aside, form, noscript, svg, iframe, template, select, dialog, canvas",
+        )
+        .remove();
+    document
+}
+
+pub(crate) fn fallback_text(document: &dom_query::Document) -> String {
+    document.select_single("body").formatted_text().to_string()
+}
+
+fn collect_document_links(document: &dom_query::Document, base: &Url, links: &mut Vec<Url>) {
+    for node in document
+        .select("a[href], link[rel='alternate'][href]")
+        .iter()
+    {
+        if links.len() >= READ_URL_MAX_DISCOVERED_LINKS {
+            break;
+        }
+        let Some(href) = node.attr("href") else {
+            continue;
+        };
+        let Ok(mut resolved) = base.join(href.trim()) else {
+            continue;
+        };
+        resolved.set_fragment(None);
+        if resolved.as_str().len() <= READ_URL_MAX_LINK_CHARS
+            && matches!(resolved.scheme(), "http" | "https")
+            && validate_url(&resolved).is_ok()
+            && !links.contains(&resolved)
+        {
+            links.push(resolved);
+        }
+    }
+}
+
+pub(crate) fn sanitize_title(raw: &str) -> String {
+    let cleaned: String = raw.chars().filter(|ch| !ch.is_control()).collect();
+    truncate_chars(
+        &cleaned.split_whitespace().collect::<Vec<_>>().join(" "),
+        READ_URL_TITLE_CHARS,
+    )
+    .0
+}
+
+fn html_is_too_complex(html: &str) -> bool {
+    let bytes = html.as_bytes();
+    let mut i = 0usize;
+    let mut depth = 0usize;
+    let mut max_depth = 0usize;
+    let mut elements = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        if html[i..].starts_with("<!--") {
+            i = html[i + 4..]
+                .find("-->")
+                .map_or(bytes.len(), |end| i + 4 + end + 3);
+            continue;
+        }
+        if html[i..].starts_with("<![CDATA[") {
+            i = html[i + 9..]
+                .find("]]>")
+                .map_or(bytes.len(), |end| i + 9 + end + 3);
+            continue;
+        }
+        if matches!(bytes.get(i + 1), Some(b'!') | Some(b'?')) {
+            i = html[i + 2..]
+                .find('>')
+                .map_or(bytes.len(), |end| i + 2 + end + 1);
+            continue;
+        }
+        i += 1;
+        let closing = bytes.get(i) == Some(&b'/');
+        if closing {
+            i += 1;
+        }
+        let name_start = i;
+        while i < bytes.len()
+            && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'-' | b':' | b'_'))
+        {
+            i += 1;
+        }
+        if name_start == i {
+            continue;
+        }
+        let name = html[name_start..i].to_ascii_lowercase();
+        let mut quote = None;
+        let mut self_closing = false;
+        while i < bytes.len() {
+            let byte = bytes[i];
+            if let Some(active) = quote {
+                if byte == active {
+                    quote = None;
+                }
+            } else if matches!(byte, b'"' | b'\'') {
+                quote = Some(byte);
+            } else if byte == b'>' {
+                let mut previous = i;
+                while previous > 0 && bytes[previous - 1].is_ascii_whitespace() {
+                    previous -= 1;
+                }
+                self_closing = previous > 0 && bytes[previous - 1] == b'/';
+                break;
+            }
+            i += 1;
+        }
+        i = i.saturating_add(1);
+        if closing {
+            depth = depth.saturating_sub(1);
+            continue;
+        }
+        elements = elements.saturating_add(1);
+        if elements > READ_URL_MAX_HTML_ELEMENTS {
+            return true;
+        }
+        if !self_closing && !is_void_element(&name) {
+            depth += 1;
+            max_depth = max_depth.max(depth);
+            if max_depth > READ_URL_MAX_HTML_DEPTH {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_void_element(name: &str) -> bool {
+    matches!(
+        name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}

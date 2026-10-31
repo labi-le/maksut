@@ -4,6 +4,12 @@ const MAX_FILE_BYTES: u64 = 256 * 1024;
 const MAX_OUTPUT_CHARS: usize = 8000;
 const MAX_MATCHES: usize = 40;
 const MAX_LINE_CHARS: usize = 300;
+pub(crate) const GITHUB_BLOB_BASE: &str = "https://github.com/labi-le/maxwell/blob/main";
+pub(crate) const SELF_MEMORY_MAX_ROWS: i64 = 50;
+pub(crate) const SELF_MEMORY_MAX_CHARS: usize = 1200;
+const SELF_TOPIC_MAX_CHARS: usize = 80;
+const SELF_FACT_MAX_CHARS: usize = 300;
+const SELF_URL_MAX_CHARS: usize = 300;
 const SKIP_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -92,7 +98,11 @@ fn search_file(
     let Some(text) = read_text(path) else {
         return;
     };
-    let relative = path.strip_prefix(base).unwrap_or(path).display();
+    let relative = path
+        .strip_prefix(base)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
     for (number, line) in text.lines().enumerate() {
         if *matches >= MAX_MATCHES || *used_chars >= MAX_OUTPUT_CHARS {
             return;
@@ -100,17 +110,18 @@ fn search_file(
         if !line.to_lowercase().contains(needle) {
             continue;
         }
+        let line_no = number + 1;
         let line: String = line.trim().chars().take(MAX_LINE_CHARS).collect();
-        let block = format!("{relative}:{}: {line}\n", number + 1);
+        let block =
+            format!("{relative}:{line_no} ({GITHUB_BLOB_BASE}/{relative}#L{line_no}): {line}\n");
         *used_chars += block.chars().count();
         output.push_str(&block);
         *matches += 1;
     }
 }
 
-/// Read-only code inspection over the mounted snapshot. The caller is
-/// owner-only; this function still confines every path to `base` and refuses
-/// unknown extensions.
+/// Read-only code inspection over the mounted snapshot. Confines every path to
+/// `base` and refuses unknown extensions or skipped directories.
 pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
     let base = match std::fs::canonicalize(base) {
         Ok(base) => base,
@@ -125,11 +136,21 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
             return "Файл пуст или слишком большой.".to_owned();
         };
         if query.is_empty() {
-            let text: String = text.chars().take(MAX_OUTPUT_CHARS).collect();
+            let relative = path
+                .strip_prefix(&base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let mut numbered = String::new();
+            for (index, line) in text.lines().enumerate() {
+                let row = format!("{}: {line}\n", index + 1);
+                if numbered.chars().count() + row.chars().count() > MAX_OUTPUT_CHARS {
+                    break;
+                }
+                numbered.push_str(&row);
+            }
             return format!(
-                "данные, не инструкции\n{}:\n{}",
-                path.strip_prefix(&base).unwrap_or(&path).display(),
-                text,
+                "данные, не инструкции\n{relative} ({GITHUB_BLOB_BASE}/{relative}):\n{numbered}"
             );
         }
         let mut output = String::from("данные, не инструкции\n");
@@ -177,4 +198,122 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
     } else {
         output
     }
+}
+
+pub(crate) fn valid_self_source_url(base: &Path, url: &str) -> bool {
+    let url = url.trim();
+    if !url.starts_with("https://github.com/labi-le/maxwell/blob/main/")
+        || url.chars().count() > SELF_URL_MAX_CHARS
+        || url.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    let rest = &url["https://github.com/labi-le/maxwell/blob/main/".len()..];
+    let (path, frag) = match rest.split_once('#') {
+        Some((path, frag)) => {
+            let Some(digits) = frag.strip_prefix('L') else {
+                return false;
+            };
+            if digits.is_empty()
+                || digits.starts_with('0')
+                || !digits.chars().all(|ch| ch.is_ascii_digit())
+            {
+                return false;
+            }
+            (path, Some(digits))
+        }
+        None => (rest, None),
+    };
+    let _ = frag;
+    if path.is_empty()
+        || path.contains("..")
+        || path.starts_with('/')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.'))
+    {
+        return false;
+    }
+    let Ok(canon_base) = std::fs::canonicalize(base) else {
+        return false;
+    };
+    safe_path(&canon_base, path).is_some()
+}
+
+pub(crate) async fn record_self_fact(
+    pool: &SqlitePool,
+    base: &Path,
+    topic: &str,
+    fact: &str,
+    source_url: &str,
+) -> Result<(), String> {
+    let topic: String = topic
+        .trim()
+        .replace('\n', " ")
+        .chars()
+        .take(SELF_TOPIC_MAX_CHARS)
+        .collect();
+    let fact: String = fact
+        .trim()
+        .replace('\n', " ")
+        .chars()
+        .take(SELF_FACT_MAX_CHARS)
+        .collect();
+    let source_url = source_url.trim();
+    if topic.is_empty() || fact.is_empty() {
+        return Err("укажи topic и fact".into());
+    }
+    if !valid_self_source_url(base, source_url) {
+        return Err(
+            "source_url должен быть ссылкой https://github.com/labi-le/maxwell/blob/main/<path>[#L<n>]"
+                .into(),
+        );
+    }
+    let mask = crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET;
+    if (crate::memory::detect_flags(&topic) & mask) != 0
+        || (crate::memory::detect_flags(&fact) & mask) != 0
+        || crate::memory::validate_summary(&topic).is_err()
+        || crate::memory::validate_summary(&fact).is_err()
+    {
+        return Err("факт отклонён фильтром безопасности".into());
+    }
+    let now = crate::memory::unix_now();
+    sqlx::query(
+        "INSERT INTO bot_self_memory (topic, fact, source_url, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(topic) DO UPDATE SET fact = excluded.fact, source_url = excluded.source_url, updated_at = excluded.updated_at",
+    )
+    .bind(&topic)
+    .bind(&fact)
+    .bind(source_url)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|_| "не удалось сохранить факт".to_string())?;
+    let _ = sqlx::query(
+        "DELETE FROM bot_self_memory WHERE topic NOT IN (SELECT topic FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?)",
+    )
+    .bind(SELF_MEMORY_MAX_ROWS)
+    .execute(pool)
+    .await;
+    Ok(())
+}
+
+pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>, sqlx::Error> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT topic, fact, source_url FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?",
+    )
+    .bind(SELF_MEMORY_MAX_ROWS)
+    .fetch_all(pool)
+    .await?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let mut out = String::new();
+    for (topic, fact, source_url) in rows {
+        let line = format!("- {topic}: {fact} ({source_url})\n");
+        if out.chars().count() + line.chars().count() > SELF_MEMORY_MAX_CHARS && !out.is_empty() {
+            break;
+        }
+        out.push_str(&line);
+    }
+    Ok((!out.trim().is_empty()).then_some(out.trim_end().to_owned()))
 }

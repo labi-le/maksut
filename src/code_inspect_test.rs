@@ -7,7 +7,12 @@ fn inspect_prefers_matches_and_respects_allowlist() {
     std::fs::write(dir.path().join("src/chat.rs"), "fn answer() {}\n").unwrap();
     std::fs::write(dir.path().join("secret.env"), "answer=secret\n").unwrap();
     let result = inspect(dir.path(), "answer", None);
-    assert!(result.contains("src/chat.rs:1"), "{result}");
+    assert!(
+        result.contains(
+            "src/chat.rs:1 (https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L1)"
+        ),
+        "{result}"
+    );
     assert!(!result.contains("secret"), "{result}");
 }
 
@@ -34,5 +39,10 @@ fn inspect_rejects_traversal_and_unknown_files() {
     std::fs::write(dir.path().join("secret.txt"), "hello\n").unwrap();
     assert!(!inspect(dir.path(), "hello", Some("../README.md")).contains("hello"));
     assert!(!inspect(dir.path(), "hello", Some("secret.txt")).contains("hello"));
-    assert!(inspect(dir.path(), "hello", Some("README.md")).contains("hello"));
+    let file_view = inspect(dir.path(), "", Some("README.md"));
+    assert!(
+        file_view.contains("README.md (https://github.com/labi-le/maxwell/blob/main/README.md):"),
+        "{file_view}"
+    );
+    assert!(file_view.contains("1: hello"), "{file_view}");
 }

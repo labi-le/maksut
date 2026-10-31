@@ -873,3 +873,39 @@ async fn features_preparation_failures_are_excluded_before_album_selection_witho
         "prepared subset must not become a complete cached publication"
     );
 }
+
+#[tokio::test]
+async fn telegram_bot_client_drops_idle_pooled_socket_after_idle_timeout() {
+    assert!(
+        TELEGRAM_POOL_IDLE_TIMEOUT <= Duration::from_secs(30),
+        "idle timeout must expire pooled Bot API sockets before proxy tunnels drop them"
+    );
+    assert!(
+        TELEGRAM_TCP_KEEPALIVE <= Duration::from_secs(30),
+        "TCP keepalive must probe Bot API sockets before proxy tunnels drop them"
+    );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = Arc::clone(&accepted);
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = read_bot_api_request(&mut stream).await;
+        let body = r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"Maksut","username":"MyBot","can_join_groups":true,"can_read_all_group_messages":true,"supports_inline_queries":false,"can_connect_to_business":false,"has_main_web_app":false,"has_topics_enabled":false,"allows_users_to_create_topics":false}}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(reply.as_bytes()).await.unwrap();
+    });
+    let bot = telegram_bot("123:test-token".into())
+        .expect("Bot client builds")
+        .set_api_url(Url::parse(&format!("http://{addr}/")).unwrap());
+    let me = bot.get_me().await.expect("get_me succeeds over Bot client");
+    assert_eq!(me.user.username.as_deref(), Some("MyBot"));
+    assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
+    server.abort();
+}

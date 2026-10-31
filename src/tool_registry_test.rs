@@ -48,6 +48,7 @@ fn builtin_visibility_matches_current_roles() {
         "send_sticker",
         "feature_confirmation",
         "inspect_code",
+        "remember_self",
     ] {
         assert!(
             registry.find(name, false).is_none(),
@@ -81,6 +82,7 @@ fn builtin_visibility_matches_current_roles() {
             "feature_status".to_string(),
             "feature_confirmation".to_string(),
             "inspect_code".to_string(),
+            "remember_self".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
         ],
@@ -102,6 +104,7 @@ fn builtin_visibility_matches_current_roles() {
             "read_url".to_string(),
             "propose_feature".to_string(),
             "inspect_code".to_string(),
+            "remember_self".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
         ],
@@ -163,6 +166,11 @@ fn builtin_names_match_their_kinds_and_visibility() {
             ToolVisibility::Owner,
         ),
         (ToolKind::InspectCode, "inspect_code", ToolVisibility::Owner),
+        (
+            ToolKind::RememberSelf,
+            "remember_self",
+            ToolVisibility::Owner,
+        ),
         (
             ToolKind::FindStickers,
             "find_stickers",

@@ -192,21 +192,25 @@ pub(crate) fn notification_text(value: &Value) -> Option<String> {
         String::new()
     };
     let mut text = match status {
+        "proposed" => {
+            format!("хотелка #{id}\n{attribution}цель: {goal}\n\nсоздаём issue или в помойку?")
+        }
+        "issue_created" => {
+            let issue = value.get("issue_url").and_then(Value::as_str).unwrap_or("");
+            if issue.is_empty() {
+                format!("хотелка #{id}: issue создана\n{attribution}цель: {goal}")
+            } else {
+                format!("хотелка #{id}: issue создана\n{attribution}цель: {goal}\n{issue}")
+            }
+        }
         "planned" => {
             let issue = value.get("issue_url").and_then(Value::as_str).unwrap_or("");
             if issue.is_empty() {
-                format!("план #{id} готов\n{attribution}цель: {goal}\nissue не создалась, спроси, что с задачей\n\nделаем или в помойку?")
+                format!("план #{id} готов\n{attribution}цель: {goal}")
             } else {
-                format!(
-                    "план #{id} готов\n{attribution}цель: {goal}\n{issue}\n\nделаем или в помойку?"
-                )
+                format!("хотелка #{id}: issue создана\n{attribution}цель: {goal}\n{issue}")
             }
         }
-        "proposed" => format!(
-            "{}{}\n\nапрув на деплой?",
-            attribution,
-            format_status(value)
-        ),
         "deployed" => format!("задача #{id} задеплоена"),
         "failed" => format!(
             "задача #{id} провалилась: {}",
@@ -218,9 +222,9 @@ pub(crate) fn notification_text(value: &Value) -> Option<String> {
         "rejected" => format!("задача #{id} отклонена"),
         _ => return None,
     };
-    if text.chars().count() > 24000 {
-        text = text.chars().take(24000).collect();
-        text.push_str("\n...[обрезано]");
+    let (prefix, clipped) = truncate_utf16(&text, 3700);
+    if clipped {
+        text = format!("{prefix}\n...[обрезано]");
     }
     Some(text)
 }
@@ -228,8 +232,7 @@ pub(crate) fn notification_text(value: &Value) -> Option<String> {
 pub(crate) fn notification_markup(value: &Value) -> Option<teloxide::types::InlineKeyboardMarkup> {
     let status = value.get("status").and_then(Value::as_str)?;
     let gate = match status {
-        "planned" => DecisionGate::Plan,
-        "proposed" => DecisionGate::Deploy,
+        "proposed" => DecisionGate::Issue,
         _ => return None,
     };
     let id = value.get("id").and_then(Value::as_str)?;
@@ -288,8 +291,8 @@ fn collect_updates(dir: &Path) -> Vec<QueuedUpdate> {
     updates
 }
 
-/// Polls the outbox and sends plan/proposal/deploy updates to the chat that
-/// started the task. The orchestrator never talks to Telegram directly.
+/// Polls the outbox and sends proposal/issue updates to the chat that started
+/// the task. The orchestrator never talks to Telegram directly.
 pub(crate) async fn improvement_notifier(bot: Bot, cfg: Arc<Settings>) {
     loop {
         let dir = cfg.self_improve_dir.clone();
@@ -309,7 +312,7 @@ pub(crate) async fn improvement_notifier(bot: Bot, cfg: Arc<Settings>) {
                 eprintln!("Improvement update withheld: credential in output");
             } else {
                 let markup = notification_markup(&update.value);
-                if matches!(update.status.as_str(), "planned" | "proposed") && markup.is_none() {
+                if update.status == "proposed" && markup.is_none() {
                     text.push_str("\nкнопка недоступна для этого id");
                 }
                 if !send_update(&bot, update.chat_id, &text, markup).await {
@@ -379,7 +382,7 @@ pub(crate) async fn handle_callback(
             return "задача уже неактуальна";
         };
         let status = value.get("status").and_then(Value::as_str).unwrap_or("");
-        if !matches!(status, "planned" | "proposed") {
+        if status != "proposed" {
             return "задача уже неактуальна";
         }
         match record_decision(&dir, &id, status, &action, owner) {

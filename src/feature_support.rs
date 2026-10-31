@@ -242,6 +242,10 @@ impl FeatureApi {
                 drop(state);
                 let media = request.media();
                 let method = request.method.clone();
+                let file_id = request.fields["file_id"]
+                    .as_str()
+                    .unwrap_or("file-1")
+                    .to_owned();
                 records.lock().await.push(request);
                 let response = match reply {
                     Some(FeatureReply::Disconnect) => continue,
@@ -272,6 +276,41 @@ impl FeatureApi {
                             serde_json::json!({"ok": false, "error_code": 400,
                                 "description": "Bad Request: not enough rights to delete messages"})
                         } else { serde_json::json!({"ok": true, "result": true}) }
+                    }
+                    None if method == "getfile" => {
+                        let file_id = file_id.as_str();
+                        if file_id.contains("missing") {
+                            serde_json::json!({"ok": false, "error_code": 400, "description": "Bad Request: invalid file_id"})
+                        } else {
+                            let file_path = if file_id.contains("doc") {
+                                "photos/test.png"
+                            } else {
+                                "photos/test.jpg"
+                            };
+                            serde_json::json!({
+                                "ok": true,
+                                "result": {
+                                    "file_id": file_id,
+                                    "file_unique_id": format!("unique-{file_id}"),
+                                    "file_size": 4,
+                                    "file_path": file_path
+                                }
+                            })
+                        }
+                    }
+                    None if method == "test.jpg" || method == "test.png" => {
+                        let (content_type, bytes): (&str, &[u8]) = if method == "test.png" {
+                            ("image/png", b"\x89PNG\r\n\x1a\n")
+                        } else {
+                            ("image/jpeg", b"\xff\xd8\xff\xd9")
+                        };
+                        let headers = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            bytes.len()
+                        );
+                        stream.write_all(headers.as_bytes()).await.unwrap();
+                        stream.write_all(bytes).await.unwrap();
+                        continue;
                     }
                     None => {
                         let messages: Vec<_> = media.iter().map(|item| {
