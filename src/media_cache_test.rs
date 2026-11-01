@@ -630,3 +630,14 @@ async fn features_unverified_legacy_video_cache_requires_fresh_download() {
         .filter(|request| request.is_media())
         .all(|request| request.uploads.is_empty()));
 }
+
+// The key is persisted in `media_cache`, so its exact bytes are a compatibility
+// contract: an encoding or prefix change silently strands every stored row.
+#[test]
+fn cache_key_bytes_stay_stable_for_stored_rows() {
+    let url = Url::parse("https://example.com/a").unwrap();
+    assert_eq!(
+        crate::media_cache::cache_key("token", &url),
+        "dd650b85e70188f6389dada576ebea27478eeb71ee24c0cc99043243a53f3154"
+    );
+}
