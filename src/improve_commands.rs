@@ -83,7 +83,7 @@ pub(crate) fn action_word(word: &str) -> Option<OwnerAction> {
     }
 }
 
-pub(crate) fn clean_word(word: &str) -> String {
+fn trim_owner_word(word: &str) -> &str {
     word.trim_matches(|ch: char| {
         ch.is_whitespace()
             || matches!(
@@ -91,11 +91,16 @@ pub(crate) fn clean_word(word: &str) -> String {
                 ',' | ';' | ':' | '!' | '?' | '.' | '…' | '«' | '»' | '"' | '\''
             )
     })
-    .to_lowercase()
 }
 
+pub(crate) fn clean_word(word: &str) -> String {
+    trim_owner_word(word).to_lowercase()
+}
+
+/// Targets keep the case the owner typed, so replies echo the token exactly as
+/// written; `lookup_in_tasks` lowercases it for the comparison.
 fn clean_target(word: &str) -> String {
-    clean_word(word).trim_start_matches('#').to_owned()
+    trim_owner_word(word).trim_start_matches('#').to_owned()
 }
 
 pub(crate) fn parse_owner_command(text: &str) -> Option<OwnerCommand> {
@@ -162,17 +167,18 @@ pub(crate) fn lookup_in_tasks(
     if !valid_id(token) {
         return TaskIdMatch::Missing;
     }
+    let token = token.to_lowercase();
     let ids: Vec<String> = tasks
         .iter()
         .filter(|(_, _, value, _)| allowed(value))
         .map(|(_, id, _, _)| id.clone())
         .collect();
-    if let Some(id) = ids.iter().find(|id| id.as_str() == token) {
+    if let Some(id) = ids.iter().find(|id| id.as_str() == token.as_str()) {
         return TaskIdMatch::Found(id.clone());
     }
     let exact: Vec<String> = ids
         .iter()
-        .filter(|id| short_task_id(id) == token)
+        .filter(|id| short_task_id(id) == token.as_str())
         .cloned()
         .collect();
     match exact.len() {
@@ -185,7 +191,7 @@ pub(crate) fn lookup_in_tasks(
         .iter()
         .filter(|id| {
             let shown = short_task_id(id);
-            numeric && (shown.starts_with(token) || shown.ends_with(token))
+            numeric && (shown.starts_with(token.as_str()) || shown.ends_with(token.as_str()))
         })
         .cloned()
         .collect();
