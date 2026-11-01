@@ -47,6 +47,16 @@ CARGO_TARGET_DIR=/tmp/maxwell-target nix-shell --run "cargo test"
 nix-shell --run "python3 -m unittest discover -s tools -p 'test_*.py'"
 ```
 
+## Сборка и проверки
+
+Rust компилируется на `pc` через `cargo-slot`: команда занимает общий слот сборки, при необходимости переносит дерево на `pc` и держит `CARGO_TARGET_DIR` в `/home/labile/.cache/cargo-pc`. Аргументы совпадают с обычным `cargo`, тулчейн поставляет `nix-shell` (`shell.nix`):
+
+```sh
+timeout 900 cargo-slot cargo check --all-targets
+timeout 900 cargo-slot cargo test
+timeout 900 cargo-slot cargo clippy --all-targets
+```
+
 ## Использование
 
 - **Ссылки и группы:** в личном чате бот принимает ссылки только от владельца (`OWNER_ID`). В группах обработка по умолчанию выключена и управляется владельцем через `/maksut on`, `/maksut off` и `/maksut status` (у бота должен быть выключен Privacy Mode в BotFather и выдано право `can_delete_messages` для удаления исходной ссылки после доставки). Во включённой группе ссылки принимает от любого участника с лимитом на отправителя (`USER_DOWNLOAD_LIMIT = 3`); остальные действия остаются owner-only.
