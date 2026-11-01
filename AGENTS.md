@@ -53,6 +53,7 @@ Every change to production code (`src/`, `tools/`, `compose.yaml`, `Dockerfile`)
 - **Proportionality: the gate is risk, not diff size.** A docs-only or config-only change takes ONE pass, and that pass is the ARCHITECTURE one. The termination conditions never relax: a one-line change with an open finding is not done either.
 - **Resource bounds and allocations are binding constraints.** Every network read, subprocess pipe, and DOM parse must have an explicit byte/element/time bound; an avoidable clone or lock held across `.await` is a blocking finding.
 - **Comments and docs are first-class review targets.** A review that approves the code and ignores the comments or guides its change falsified has not finished.
+- **Dependabot pull requests are exempt from this loop.** `.github/workflows/automerge-dependabot.yml` squash-merges them when the diff touches only `Cargo.toml`/`Cargo.lock` and `cargo check --all-targets` passes on the pull request head. A semantic major bump that fails to compile stays open for a human.
 
 Why each of these rules exists, and what shipping without it cost, is in [`docs/guides/workflow.md`](./docs/guides/workflow.md). Read it before your first edit.
 
