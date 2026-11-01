@@ -21,7 +21,7 @@ string_slice = { level = "warn", priority = 1 }
 [dependencies]
 teloxide = { version = "0.17", default-features = false, features = ["rustls", "ctrlc_handler"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "fs", "sync", "io-util", "net"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 url = "2"
 tempfile = "3"
 libc = "0.2"
