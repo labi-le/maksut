@@ -591,12 +591,9 @@ async fn features_cache_initialization_failures_are_not_silently_ignored() {
 async fn features_unverified_legacy_video_cache_requires_fresh_download() {
     use sha2::Digest;
     let fixture = FeatureFixture::new(&["mp4"], "exit 0").await;
-    let legacy = format!(
-        "{:x}",
-        sha2::Sha256::digest(
-            format!("maksut/media-cache/v1\0{}\0{LINK}", fixture.api.bot.token()).as_bytes()
-        )
-    );
+    let legacy = crate::media_cache::hex_lower(&sha2::Sha256::digest(
+        format!("maksut/media-cache/v1\0{}\0{LINK}", fixture.api.bot.token()).as_bytes(),
+    ));
     sqlx::query(
         "INSERT INTO media_cache (chat_id, cache_key, created_at, items_json)
             VALUES (1, ?, unixepoch(), ?)",

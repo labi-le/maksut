@@ -25,7 +25,19 @@ pub(crate) fn cache_key(bot_token: &str, url: &Url) -> String {
     digest.update(bot_token.as_bytes());
     digest.update(b"\0");
     digest.update(url.as_str().as_bytes());
-    format!("{:x}", digest.finalize())
+    hex_lower(&digest.finalize())
+}
+
+// sha2 0.11 dropped `LowerHex` for the digest array; the key is persisted in
+// `media_cache`, so the encoding has to stay lowercase hex.
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 pub(crate) async fn init_cache(pool: &SqlitePool) -> Result<(), sqlx::Error> {
