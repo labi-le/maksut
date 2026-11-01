@@ -301,7 +301,7 @@ def review_body(review, event, head_sha, model):
         if item["evidence"]:
             block.append(f"> {item['evidence']}")
         parts.append("\n\n".join(block))
-    parts.append("_Ревьюер — отдельный аккаунт на модели `" + model + "`; решение о мерже принимает человек._")
+    parts.append("_Ревьюер автоматический, модель `" + model + "`; решение о мерже принимает человек._")
     body = "\n\n".join(parts)
     if len(body) > MAX_REVIEW_BODY_CHARS:
         body = body[:MAX_REVIEW_BODY_CHARS] + "\n\n[ревью обрезано по лимиту GitHub]"
