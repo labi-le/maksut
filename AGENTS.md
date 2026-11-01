@@ -81,13 +81,14 @@ Why each of these rules exists, and what shipping without it cost, is in [`docs/
 | Guide | Load it when |
 |---|---|
 | [`docs/guides/workflow.md`](./docs/guides/workflow.md) | before your FIRST edit to production code, a contract, or a doc agents act on |
+| [`docs/guides/review-bot.md`](./docs/guides/review-bot.md) | touching `.github/workflows/pr-review.yml`, `tools/pr_review.py`, the `REVIEWER_*` secrets, or the reviewer account |
 | [`docs/guides/layout.md`](./docs/guides/layout.md) | orientation: which `src/*.rs` module or `tools/*.py` script owns a concern |
 | [`docs/guides/security.md`](./docs/guides/security.md) | touching URL validation, `read_url`, `pinned_client`, `tool_registry`, `memory` injection flags, cookies, or container/sandbox boundaries |
 | [`docs/guides/media.md`](./docs/guides/media.md) | touching link parsing, `yt-dlp`, YouTube pre-probe, TikTok/X/Instagram/Pinterest photos, `ffprobe`/`ffmpeg` transcoding, albums, captions, `media_cache`, or `download_failures` |
 | [`docs/guides/chat.md`](./docs/guides/chat.md) | touching LLM chat, `SYSTEM_PROMPT`, `web_search`, `research`, `read_url`, `memory_compactor`, `tool_registry`, or sticker triggers/catalog |
 | [`docs/guides/self-improve.md`](./docs/guides/self-improve.md) | touching `src/self_improve.rs`, `src/code_inspect.rs`, `tools/self_improve_orchestrator.py`, `tools/omp_worker.py`, or `self_improve/*` |
 | [`docs/guides/cookies.md`](./docs/guides/cookies.md) | touching `src/cookies.rs`, `src/cookie_refresh.rs`, `tools/export_chrome_cookies.py`, `tools/cookie_refresh_service.py`, or `cookie_refresh/Dockerfile` |
-| [`docs/adr/`](./docs/adr/) | checking the historical decision record (`001` to `019`) before proposing or reversing an architectural choice |
+| [`docs/adr/`](./docs/adr/) | checking the historical decision record (`001` and up) before proposing or reversing an architectural choice |
 
 Two rules about the guides themselves:
 
