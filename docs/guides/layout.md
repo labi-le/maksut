@@ -67,4 +67,4 @@ Every module is declared in `src/main.rs` and shares imports through `src/prelud
 - `shell.nix`: local development shell (`cargo`, `rustc`, `rustfmt`, `clippy`, `sqlite`, `python3`, `ffmpeg`, `yt-dlp`)
 - `docs/communication-guide.md`: **READ-ONLY** operating specification compiled into the binary via `include_str!`
 - `docs/guides/`: task-triggered engineering guides
-- `docs/adr/`: numbered architecture decision records (`001` to `019`)
+- `docs/adr/`: numbered architecture decision records (`001` to `020`)

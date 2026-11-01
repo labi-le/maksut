@@ -64,11 +64,15 @@ fn replies_are_lowercased_except_urls() {
 
 #[test]
 fn replies_are_short_and_without_a_trailing_period() {
-    assert_eq!(style_reply("Привет. Как дела."), "привет. как дела");
+    assert_eq!(style_reply("Привет. Как дела."), "Привет. Как дела");
+    assert_eq!(
+        style_reply("Привет, Вадик. Как дела?"),
+        "Привет, Вадик. Как дела?"
+    );
     assert_eq!(style_reply("привет...\n\nкак дела."), "привет... как дела");
     assert_eq!(
         style_reply("Смотри https://Example.com/Path."),
-        "смотри https://Example.com/Path"
+        "Смотри https://Example.com/Path"
     );
     let with_url = format!(
         "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10. {}",
@@ -353,7 +357,7 @@ async fn chat_reply_runs_registered_search_tool() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "нашёл пример");
+    assert_eq!(reply.text, "Нашёл пример");
 
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);

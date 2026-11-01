@@ -203,11 +203,11 @@ fn render_sources_block(
     lines.join("\n")
 }
 
-/// Chat style: lowercase, single-line, no trailing period, and bounded to one
-/// Telegram message (`MAX_REPLY_CHARS`).
+/// Chat style: single-line, no trailing period, and bounded to one Telegram
+/// message (`MAX_REPLY_CHARS`). Casing belongs to the model: the prompt asks for
+/// mostly lowercase, but delivery never rewrites the answer's case.
 pub(crate) fn style_reply(text: &str) -> String {
-    let lowered = lowercase_reply(text);
-    let joined = lowered
+    let joined = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
