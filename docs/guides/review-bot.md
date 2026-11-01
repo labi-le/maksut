@@ -2,7 +2,7 @@
 
 > **When to read this:** Read before touching `.github/workflows/pr-review.yml`, `tools/pr_review.py`, `tools/test_pr_review.py`, or the `REVIEWER_*` repository secrets and the reviewer account behind them.
 
-Every pull request in this repository is opened by the `farm/*` bot account (`int8-ptr`). `buer` — the GitHub triage bot — refuses to review a pull request whose author is its own account: `_pr_review_pr` in upstream `python/robomp/src/github_events.py` returns `skip: bot-authored PR`, and `docs/buer.md` records that as a known gap. A second identity therefore has to do the critique, which is what this workflow is: a separate GitHub account, a separate `repo`-scoped PAT, and `gemini-4-argon` through the LiteLLM gateway.
+Every pull request in this repository is opened by the `farm/*` bot account (`int8-ptr`). `buer` — the GitHub triage bot — refuses to review a pull request whose author is its own account: `_pr_review_pr` in upstream `python/robomp/src/github_events.py` returns `skip: bot-authored PR`, and `docs/buer.md` records that as a known gap. The critique therefore has to come from an account that is not the author: either a dedicated reviewer account or the repository owner's own account. Both work; the workflow only ever knows the identity behind `REVIEWER_TOKEN`, and the review body always states that the review is automated.
 
 ## What runs
 
@@ -19,17 +19,21 @@ A model answer that fails schema validation is retried once with the rejection r
 
 ## Setup
 
-1. Create the reviewer account, invite it to `labi-le/maxwell` as a collaborator with **Write** (an outside account cannot submit an approving or requesting-changes review without it; only collaborators' reviews count for branch protection).
-2. Create a **classic** PAT on that account with the `repo` scope. A fine-grained token owned by a personal account cannot be scoped to repositories the account does not own, the same limitation `docs/buer.md` records for the triage bot.
-3. Store two repository secrets:
+The reviewer is whichever account owns `REVIEWER_TOKEN`. Two workable choices:
 
-   ```sh
-   gh secret set REVIEWER_TOKEN --repo labi-le/maxwell       # reviewer PAT
-   gh secret set REVIEWER_LLM_API_KEY --repo labi-le/maxwell # LiteLLM key with gemini-4-argon access
-   ```
+- **Owner's own account (recommended).** Create a *fine-grained* PAT scoped to `labi-le/maxwell` with repository permissions **Pull requests: Read and write**, **Contents: Read**, and the mandatory **Metadata: Read**; set an expiry. A personal account owns the repository, so the fine-grained token can select it — the limitation described below only applies to accounts that do not own the repository. No collaborator invitation is needed, and the token cannot touch any other repository. Reviews appear under the owner's login and say “Автоматическое ревью” in the body; do not merge on an automated approval without reading it.
+- **Dedicated reviewer account.** Invite it as a collaborator with **Write** (an outside account cannot submit an approving or requesting-changes review without it; only collaborators' reviews count for branch protection) and create a **classic** PAT with the `repo` scope. A fine-grained token owned by a personal account cannot be scoped to repositories that account does not own, the same limitation `docs/buer.md` records for the triage bot.
 
-   The bot's own `LLM_API_KEY` is restricted to `deepseek-v4.1-flash` and answers `403 The requested model 'gemini-4-argon' is not available for this API key`; the reviewer needs a key that lists that model.
-4. Optionally pin the model per repository without editing the workflow: `gh variable set PR_REVIEW_MODEL --repo labi-le/maxwell --body gemini-4-argon`. `LLM_BASE_URL` defaults to `https://llm.labile.cc/v1`.
+Then store two repository secrets:
+
+```sh
+gh secret set REVIEWER_TOKEN --repo labi-le/maxwell       # PAT of the chosen reviewer identity
+gh secret set REVIEWER_LLM_API_KEY --repo labi-le/maxwell # LiteLLM key with gemini-4-argon access
+```
+
+The bot's own `LLM_API_KEY` is restricted to `deepseek-v4.1-flash` and answers `403 The requested model 'gemini-4-argon' is not available for this API key`; the reviewer needs a key that lists that model. Switching identities later only means replacing `REVIEWER_TOKEN`; reviews already published stay attributed to the account that posted them.
+
+Optionally pin the model per repository without editing the workflow: `gh variable set PR_REVIEW_MODEL --repo labi-le/maxwell --body gemini-4-argon`. `LLM_BASE_URL` defaults to `https://llm.labile.cc/v1`.
 
 ## Blocking merges
 
@@ -51,6 +55,8 @@ gh api -X PUT repos/labi-le/maxwell/branches/main/protection --input /tmp/maxwel
 ```
 
 Run it only after `REVIEWER_TOKEN` works: until the reviewer can submit an `APPROVE`, every pull request is blocked. The required `review` check also blocks fork pull requests, which never receive the secrets; keep the requirement off if forks should merge without the bot.
+
+With `enforce_admins: false` an administrator can still merge without the approval. If the reviewer is the owner's own account, that makes the gate advisory for the owner; set `enforce_admins: true` to make the bot's `APPROVE` the thing that unblocks every merge, including the owner's.
 
 `REQUEST_CHANGES` blocks the merge while it stands; a clean `APPROVE` satisfies the one-approval rule, and the workflow re-reviews every push so a dismissed stale approval is replaced automatically.
 
