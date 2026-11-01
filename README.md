@@ -57,6 +57,12 @@ timeout 900 cargo-slot cargo test
 timeout 900 cargo-slot cargo clippy --all-targets
 ```
 
+Сетевые smoke-тесты `read_url` помечены `#[ignore = "network smoke test"]` и в обычном прогоне не запускаются; отдельная проверка живых страниц:
+
+```sh
+timeout 900 cargo-slot cargo test live_fetch -- --ignored
+```
+
 ## Использование
 
 - **Ссылки и группы:** в личном чате бот принимает ссылки только от владельца (`OWNER_ID`). В группах обработка по умолчанию выключена и управляется владельцем через `/maksut on`, `/maksut off` и `/maksut status` (у бота должен быть выключен Privacy Mode в BotFather и выдано право `can_delete_messages` для удаления исходной ссылки после доставки). Во включённой группе ссылки принимает от любого участника с лимитом на отправителя (`USER_DOWNLOAD_LIMIT = 3`); остальные действия остаются owner-only.
