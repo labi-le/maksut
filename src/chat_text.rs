@@ -59,8 +59,10 @@ pub(crate) fn lowercase_reply(text: &str) -> String {
         .collect()
 }
 
-/// Cuts at the last sentence end that is not inside a bare URL, else at the
-/// last whitespace.
+/// Cuts at the last whitespace before `max_chars`: a shortened reply never
+/// loses a whole sentence and never ends mid-word. Splitting on sentence ends
+/// deleted the final clause of measured replies, which read as a broken
+/// thought rather than a short one.
 pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {
     let Some((limit, _)) = text.char_indices().nth(max_chars) else {
         return text;
@@ -68,21 +70,9 @@ pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {
     let Some(head) = text.get(..limit) else {
         return text;
     };
-    for (index, _) in head.rmatch_indices(['.', '!', '?']) {
-        let Some(before) = head.get(..index) else {
-            continue;
-        };
-        let token = before
-            .split_whitespace()
-            .next_back()
-            .unwrap_or("")
-            .trim_start_matches(['(', '[', '<', '"', '\'']);
-        if !token.starts_with("http://") && !token.starts_with("https://") {
-            return before.trim_end();
-        }
-    }
     head.rfind(char::is_whitespace)
         .and_then(|index| head.get(..index))
+        .map(str::trim_end)
         .unwrap_or(head)
 }
 

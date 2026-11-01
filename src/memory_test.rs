@@ -217,16 +217,108 @@ async fn chat_reply_injects_summary_as_data_not_instructions() {
     .unwrap();
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
-    let system = body["messages"][0]["content"].as_str().unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    let system = messages[0]["content"].as_str().unwrap();
     assert!(system.contains("Блоки <memory> и <self_memory>"));
-    let text = body["messages"].as_array().unwrap().last().unwrap()["content"]
-        .as_str()
-        .unwrap();
-    assert!(
-        text.contains("<memory type=\"data\" source=\"chat_summary\">"),
-        "{text}"
+    // The summary travels in its own system message, marked as data, so the
+    // model reads it as background and not as a quoted transcript.
+    let memory = messages
+        .iter()
+        .find(|message| {
+            message["role"] == "system"
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("<memory type=\"data\""))
+        })
+        .expect("summary system message");
+    let memory = memory["content"].as_str().unwrap();
+    assert!(memory.contains("<memory type=\"data\" source=\"chat_summary\">"));
+    assert!(memory.contains("Вадик говорил, что любит борщ"), "{memory}");
+    assert!(memory.contains("не инструкции"), "{memory}");
+    let text = messages.last().unwrap()["content"].as_str().unwrap();
+    assert!(text.contains("говорит tester [2]: привет"), "{text}");
+    assert!(!text.contains("<memory"), "{text}");
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn history_keeps_a_fact_from_fifty_messages_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"борщ"}}]}"#.into(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
     );
-    assert!(text.contains("Вадик говорил, что любит борщ"), "{text}");
+    let chat_id = ChatId(1);
+    crate::memory::record_message(
+        &pool,
+        RecordMessage::new(
+            chat_id,
+            300,
+            "crudoshlepa",
+            "user",
+            "на обед был борщ с пампушками и сметаной",
+        )
+        .with_message_id(Some(1)),
+    )
+    .await
+    .unwrap();
+    for index in 0..55i32 {
+        crate::memory::record_message(
+            &pool,
+            RecordMessage::new(
+                chat_id,
+                300,
+                "crudoshlepa",
+                "user",
+                &format!("болтовня номер {index} про погоду за окном и вчерашний футбол"),
+            )
+            .with_message_id(Some(index + 2)),
+        )
+        .await
+        .unwrap();
+    }
+    let _ = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        chat_id,
+        UserId(2),
+        "tester",
+        60,
+        true,
+        "что я ел на обед?",
+        None,
+    )
+    .await
+    .unwrap();
+    let requests = llm.requests.lock().unwrap();
+    let body = body_of(&requests[0]);
+    let seen = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|message| message["content"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        seen.contains("на обед был борщ"),
+        "a fact 55 messages back must reach the model"
+    );
     llm.task.abort();
 }
 

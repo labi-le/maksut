@@ -82,7 +82,23 @@ fn replies_are_short_and_without_a_trailing_period() {
     );
     let long = format!("{} это конец.", "очень длинная фраза ".repeat(40));
     let reply = style_reply(&long);
-    assert!(reply.chars().count() <= 280, "{}", reply.chars().count());
+    // Under one Telegram message a reply is delivered whole, minus the trailing
+    // period the persona drops.
+    assert!(reply.chars().count() > 800, "{}", reply.chars().count());
+    assert!(reply.ends_with("это конец"));
+    // The answer keeps every sentence: splitting on the last sentence end used
+    // to delete the final clause of a reply that was well within the budget.
+    let three = "первое предложение про лимиты. второе про модель и токены. третье про обрезку ответа.";
+    assert_eq!(
+        style_reply(three),
+        "первое предложение про лимиты. второе про модель и токены. третье про обрезку ответа"
+    );
+    // Only a reply longer than one Telegram message is cut, and then at a word.
+    let huge = "слово ".repeat(1000);
+    let cut = style_reply(&huge);
+    assert!(cut.chars().count() <= 3900, "{}", cut.chars().count());
+    assert!(cut.chars().count() >= 3880, "{}", cut.chars().count());
+    assert!(cut.ends_with("слово"));
     assert!(!reply.ends_with('.'));
     assert!(!reply.contains('—'));
     assert_eq!(style_reply("привет — как дела"), "привет - как дела");
@@ -175,12 +191,19 @@ async fn chat_reply_includes_previous_chat_messages() {
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
     assert_eq!(body["model"], "deepseek-v4.1-flash");
-    let text = body["messages"].as_array().unwrap().last().unwrap()["content"]
+    let messages = body["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|message| message["role"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(roles, vec!["system", "user", "assistant", "user"]);
+    assert_eq!(messages[1]["content"], "tester [20]: привет");
+    assert_eq!(messages[2]["content"], "привет!");
+    let text = messages.last().unwrap()["content"]
         .as_str()
         .unwrap();
-    assert!(text.contains("tester [20]: привет"), "{text}");
-    assert!(text.contains("максут [0]: привет!"), "{text}");
     assert!(text.contains("говорит tester [20]: как ты"), "{text}");
+    assert!(!text.contains("недавние сообщения чата"), "{text}");
     llm.task.abort();
 }
 
@@ -386,7 +409,11 @@ async fn chat_reply_attaches_an_image_without_reasoning() {
     assert_eq!(reply.text, "на картинке мем");
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
-    assert_eq!(body["reasoning_effort"], "none");
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "vision turns must not ask for deliberation: {}",
+        body
+    );
     assert_eq!(
         body["messages"][1]["content"][1]["image_url"]["url"],
         "data:image/png;base64,aGVsbG8="
@@ -489,10 +516,16 @@ async fn recent_group_messages_reach_the_model() {
     assert_eq!(reply.text, "борщ");
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
-    let text = body["messages"].as_array().unwrap().last().unwrap()["content"]
+    let messages = body["messages"].as_array().unwrap();
+    assert!(
+        messages.iter().any(|message| message["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("crudoshlepa [300]: я ел борщ"))),
+        "{messages:?}"
+    );
+    let text = messages.last().unwrap()["content"]
         .as_str()
         .unwrap();
-    assert!(text.contains("crudoshlepa [300]: я ел борщ"), "{text}");
     assert!(text.contains("говорит tester [2]: что я ел?"), "{text}");
     llm.task.abort();
 }
@@ -1162,3 +1195,4 @@ async fn explicit_add_packs_request_still_sends_an_existing_sticker() {
     assert_eq!(reply.text, "паки добавляет владелец");
     llm.task.abort();
 }
+

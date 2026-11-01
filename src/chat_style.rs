@@ -1,7 +1,10 @@
 use crate::chat_text::{lowercase_reply, shorten, truncate_text};
 use crate::research::ResearchSource;
 
-const MAX_REPLY_CHARS: usize = 280;
+// Safety net against a runaway answer, not a style rule: 280 cut whole
+// sentences off measured replies. Brevity is the prompt's job; this only keeps
+// one reply inside one Telegram message.
+const MAX_REPLY_CHARS: usize = crate::chat_text::TELEGRAM_MESSAGE_CHARS;
 const RESEARCH_BODY_CHARS: usize = 4800;
 const RESEARCH_SOURCES_CHARS: usize = 1200;
 const RESEARCH_MAX_CHARS: usize = 6000;
