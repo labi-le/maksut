@@ -14,9 +14,11 @@ schemes to every group member, which is unacceptable in the bot container.
 - Add a separate `read_url` tool instead of porting the universal `read` tool.
   It accepts one public `http` or `https` URL and returns extracted text.
 - `ToolVisibility::All`: the page is public and the tool has no bot-local side
-  effects. The model may call it at most three times per reply.
-- The target must be an exact normalized URL from the current user prompt
-  (`prompt_urls`/`allowed_target`). The model cannot choose an arbitrary URL and
+  effects. The model may call it at most five times per reply (`READ_URL_CALLS_PER_REPLY = 5`).
+- The target must be an exact normalized URL from the current user prompt, reply
+  context, recent chat messages, or links discovered by `web_search` / `research` /
+  `read_url` in the current or recent turns of the same chat (`prompt_urls`/`allowed_target`,
+  plus query-less public URLs for the owner). The model cannot choose an arbitrary URL and
   append chat summary or recent messages as query data; that would be egress.
   The URL fragment is ignored for comparison because it is never sent.
 - Reject credentials, non-standard ports, IP literals, single-label hosts,

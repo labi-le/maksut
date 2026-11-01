@@ -1,9 +1,9 @@
 use crate::*;
 use serde_json::json;
 
-const READ_URL_CALLS_PER_REPLY: usize = 3;
-const INSPECT_CODE_CALLS_PER_REPLY: usize = 3;
-const REMEMBER_SELF_CALLS_PER_REPLY: usize = 2;
+const READ_URL_CALLS_PER_REPLY: usize = 5;
+const INSPECT_CODE_CALLS_PER_REPLY: usize = 5;
+const REMEMBER_SELF_CALLS_PER_REPLY: usize = 3;
 const SEARCH_CALLS_PER_REPLY: usize = 6;
 const RESEARCH_MAX_PER_REPLY: usize = 1;
 
@@ -319,6 +319,15 @@ pub(crate) async fn run_tool_call(
                     Ok(outcome) => {
                         state.search_calls += outcome.queries_used;
                         state.research.used = true;
+                        for source in &outcome.sources {
+                            if let Ok(url) = Url::parse(&source.url) {
+                                if state.discovered_urls.len() < 64
+                                    && !state.discovered_urls.contains(&url)
+                                {
+                                    state.discovered_urls.push(url);
+                                }
+                            }
+                        }
                         state.research.sources = outcome.sources;
                         outcome.result
                     }

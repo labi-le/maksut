@@ -59,8 +59,8 @@ pub(crate) fn lowercase_reply(text: &str) -> String {
         .collect()
 }
 
-/// Cuts at the last sentence end that is not inside a bare URL, else at the
-/// last whitespace.
+/// Cuts at the last whitespace before `max_chars` so a shortened reply never
+/// ends mid-word.
 pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {
     let Some((limit, _)) = text.char_indices().nth(max_chars) else {
         return text;
@@ -68,21 +68,9 @@ pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {
     let Some(head) = text.get(..limit) else {
         return text;
     };
-    for (index, _) in head.rmatch_indices(['.', '!', '?']) {
-        let Some(before) = head.get(..index) else {
-            continue;
-        };
-        let token = before
-            .split_whitespace()
-            .next_back()
-            .unwrap_or("")
-            .trim_start_matches(['(', '[', '<', '"', '\'']);
-        if !token.starts_with("http://") && !token.starts_with("https://") {
-            return before.trim_end();
-        }
-    }
     head.rfind(char::is_whitespace)
         .and_then(|index| head.get(..index))
+        .map(str::trim_end)
         .unwrap_or(head)
 }
 
@@ -150,4 +138,34 @@ pub(crate) fn strip_url_schemes(text: &str) -> String {
         index += ch.len_utf8();
     }
     output
+}
+
+pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
+    let msk = unix_secs.saturating_add(3 * 3600).max(0);
+    let days = msk.div_euclid(86_400);
+    let rem = msk.rem_euclid(86_400);
+    let hour = rem / 3600;
+    let minute = (rem % 3600) / 60;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    if month <= 2 {
+        year += 1;
+    }
+    let weekday = match (days + 4).rem_euclid(7) {
+        0 => "вс",
+        1 => "пн",
+        2 => "вт",
+        3 => "ср",
+        4 => "чт",
+        5 => "пт",
+        _ => "сб",
+    };
+    format!("{year:04}-{month:02}-{day:02} ({weekday}) {hour:02}:{minute:02} МСК (UTC+3)")
 }

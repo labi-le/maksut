@@ -9,8 +9,8 @@ pub(crate) const IGNORE_SECS: i64 = 24 * 60 * 60;
 pub(crate) const IGNORE_REASON: &str = "prompt_injection";
 
 pub(crate) const SUMMARY_MAX_CHARS: usize = 1500;
-pub(crate) const RECENT_MESSAGES: usize = 40;
-pub(crate) const RECENT_MAX_CHARS: usize = 3000;
+pub(crate) const RECENT_MESSAGES: usize = 60;
+pub(crate) const RECENT_MAX_CHARS: usize = 12_000;
 const KEEP_NEWEST: usize = 5;
 const KEEP_FRESH: usize = 40;
 const COMPACT_AFTER_SECS: i64 = 12 * 60 * 60;
@@ -25,6 +25,7 @@ const LOAD_LIMIT: i64 = 2000;
 pub(crate) struct ChatMessage {
     pub(crate) author_id: i64,
     pub(crate) author_name: String,
+    pub(crate) role: String,
     pub(crate) text: String,
 }
 
@@ -160,8 +161,8 @@ pub(crate) async fn load_memory(
             .bind(chat_id.0)
             .fetch_optional(pool)
             .await?;
-    let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
-        "SELECT author_id, author_name, text, created_at FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
+    let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT author_id, author_name, role, text FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
     )
     .bind(chat_id.0)
     .bind(i64::from(current_id))
@@ -169,16 +170,16 @@ pub(crate) async fn load_memory(
     .await?;
     let mut selected = Vec::new();
     let mut chars = 0;
-    for (author_id, author_name, text, created_at) in rows {
+    for (author_id, author_name, role, text) in rows {
         let line = format_line(&author_name, author_id, &text);
         chars += line.chars().count();
         if chars > RECENT_MAX_CHARS && !selected.is_empty() {
             break;
         }
-        let _ = created_at;
         selected.push(ChatMessage {
             author_id,
             author_name,
+            role,
             text,
         });
         if selected.len() >= RECENT_MESSAGES {

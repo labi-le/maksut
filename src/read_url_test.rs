@@ -227,3 +227,43 @@ fn render_page_caps_links_and_stays_within_max_chars() {
         page.text.chars().count()
     );
 }
+
+#[test]
+fn xml_rss_extracts_links_and_html_footer_includes_anchor_labels() {
+    let rss = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><title>Новости</title>
+        <item><title>Заметка</title><link>http://stolyarov.info/Guestbook/2026_07.html#n17</link></item>
+        </channel></rss>"#
+        .as_bytes();
+    let rss_page = render_page(
+        &Url::parse("http://www.stolyarov.info/rss.xml").unwrap(),
+        "application/rss+xml",
+        rss,
+    )
+    .unwrap();
+    assert!(
+        rss_page
+            .links
+            .contains(&Url::parse("http://stolyarov.info/Guestbook/2026_07.html").unwrap()),
+        "{:?}",
+        rss_page.links
+    );
+    let html = r#"<html><head><title>Главная</title></head><body>
+        <p>Короткий текст.</p>
+        <a href="/news.html">Свежие новости</a>
+        </body></html>"#
+        .as_bytes();
+    let html_page = render_page(
+        &Url::parse("http://stolyarov.info/").unwrap(),
+        "text/html",
+        html,
+    )
+    .unwrap();
+    assert!(
+        html_page
+            .text
+            .contains("- Свежие новости: http://stolyarov.info/news.html"),
+        "{}",
+        html_page.text
+    );
+}

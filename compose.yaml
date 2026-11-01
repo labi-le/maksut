@@ -24,6 +24,7 @@ services:
       COOKIE_REFRESH_URL: http://cookie-refresh:8080
       LLM_BASE_URL: ${LLM_BASE_URL:-https://llm.labile.cc/v1}
       LLM_MODEL: ${LLM_MODEL:-deepseek-v4.1-flash}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-low}
       CODE_DIR: /var/lib/maksut/code
     volumes:
       - data:/data

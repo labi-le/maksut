@@ -9,7 +9,7 @@ use dom_smoothie::{Config, Readability, TextMode};
 pub(crate) fn extract_html_with_links(
     html: &str,
     url: &Url,
-    links: &mut Vec<Url>,
+    links: &mut Vec<(String, Url)>,
 ) -> Result<(Option<String>, String), ReadUrlError> {
     if html_is_too_complex(html) {
         return Err(ReadUrlError::TooComplex);
@@ -78,7 +78,11 @@ pub(crate) fn fallback_text(document: &dom_query::Document) -> String {
     document.select_single("body").formatted_text().to_string()
 }
 
-fn collect_document_links(document: &dom_query::Document, base: &Url, links: &mut Vec<Url>) {
+fn collect_document_links(
+    document: &dom_query::Document,
+    base: &Url,
+    links: &mut Vec<(String, Url)>,
+) {
     for node in document
         .select("a[href], link[rel='alternate'][href]")
         .iter()
@@ -96,9 +100,27 @@ fn collect_document_links(document: &dom_query::Document, base: &Url, links: &mu
         if resolved.as_str().len() <= READ_URL_MAX_LINK_CHARS
             && matches!(resolved.scheme(), "http" | "https")
             && validate_url(&resolved).is_ok()
-            && !links.contains(&resolved)
+            && !links.iter().any(|(_, existing)| existing == &resolved)
         {
-            links.push(resolved);
+            let raw_label: String = node
+                .text()
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(1_000)
+                .collect();
+            let label = truncate_chars(
+                &raw_label.split_whitespace().collect::<Vec<_>>().join(" "),
+                80,
+            )
+            .0;
+            let label = if label.is_empty() {
+                node.attr("title")
+                    .map(|title| sanitize_title(&title))
+                    .unwrap_or_default()
+            } else {
+                label
+            };
+            links.push((label, resolved));
         }
     }
 }

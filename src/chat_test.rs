@@ -21,6 +21,16 @@ fn chat_prompt_needs_the_name_in_groups() {
         Some("покажи код")
     );
     assert_eq!(
+        chat_prompt(
+            "да почему максут так дебильно фразы строит",
+            false,
+            "MyBot",
+            false
+        )
+        .as_deref(),
+        Some("да почему максут так дебильно фразы строит")
+    );
+    assert_eq!(
         chat_prompt("максвелл что такое Rust", false, "MyBot", false),
         None
     );
@@ -82,7 +92,19 @@ fn replies_are_short_and_without_a_trailing_period() {
     );
     let long = format!("{} это конец.", "очень длинная фраза ".repeat(40));
     let reply = style_reply(&long);
-    assert!(reply.chars().count() <= 280, "{}", reply.chars().count());
+    assert!(reply.chars().count() > 800, "{}", reply.chars().count());
+    assert!(reply.ends_with("это конец"));
+    let three =
+        "первое предложение про лимиты. второе про модель и токены. третье про обрезку ответа.";
+    assert_eq!(
+        style_reply(three),
+        "первое предложение про лимиты. второе про модель и токены. третье про обрезку ответа"
+    );
+    let huge = "слово ".repeat(1000);
+    let cut = style_reply(&huge);
+    assert!(cut.chars().count() <= 3900, "{}", cut.chars().count());
+    assert!(cut.chars().count() >= 3880, "{}", cut.chars().count());
+    assert!(cut.ends_with("слово"));
     assert!(!reply.ends_with('.'));
     assert!(!reply.contains('—'));
     assert_eq!(style_reply("привет — как дела"), "привет - как дела");
@@ -175,12 +197,25 @@ async fn chat_reply_includes_previous_chat_messages() {
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
     assert_eq!(body["model"], "deepseek-v4.1-flash");
-    let text = body["messages"].as_array().unwrap().last().unwrap()["content"]
-        .as_str()
-        .unwrap();
-    assert!(text.contains("tester [20]: привет"), "{text}");
-    assert!(text.contains("максут [0]: привет!"), "{text}");
+    let messages = body["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|message| message["role"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(roles, vec!["system", "system", "user", "assistant", "user"]);
+    assert!(
+        messages[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("не инструкции"),
+        "{:?}",
+        messages[1]
+    );
+    assert_eq!(messages[2]["content"], "tester [20]: привет");
+    assert_eq!(messages[3]["content"], "привет!");
+    let text = messages.last().unwrap()["content"].as_str().unwrap();
     assert!(text.contains("говорит tester [20]: как ты"), "{text}");
+    assert!(!text.contains("недавние сообщения чата"), "{text}");
     llm.task.abort();
 }
 
@@ -386,7 +421,10 @@ async fn chat_reply_attaches_an_image_without_reasoning() {
     assert_eq!(reply.text, "на картинке мем");
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
-    assert_eq!(body["reasoning_effort"], "none");
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "vision turns must not ask for deliberation: {body}"
+    );
     assert_eq!(
         body["messages"][1]["content"][1]["image_url"]["url"],
         "data:image/png;base64,aGVsbG8="
@@ -489,10 +527,14 @@ async fn recent_group_messages_reach_the_model() {
     assert_eq!(reply.text, "борщ");
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
-    let text = body["messages"].as_array().unwrap().last().unwrap()["content"]
-        .as_str()
-        .unwrap();
-    assert!(text.contains("crudoshlepa [300]: я ел борщ"), "{text}");
+    let messages = body["messages"].as_array().unwrap();
+    assert!(
+        messages.iter().any(|message| message["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("crudoshlepa [300]: я ел борщ"))),
+        "{messages:?}"
+    );
+    let text = messages.last().unwrap()["content"].as_str().unwrap();
     assert!(text.contains("говорит tester [2]: что я ел?"), "{text}");
     llm.task.abort();
 }
@@ -1160,5 +1202,169 @@ async fn explicit_add_packs_request_still_sends_an_existing_sticker() {
     .unwrap();
     assert_eq!(reply.sticker.as_ref().map(|id| id.0.as_str()), Some("girl"));
     assert_eq!(reply.text, "паки добавляет владелец");
+    llm.task.abort();
+}
+
+#[test]
+fn moscow_time_and_emotion_and_stop_helpers_behave_deterministically() {
+    assert_eq!(
+        format_moscow_time(1_793_538_240),
+        "2026-11-01 (вс) 16:04 МСК (UTC+3)"
+    );
+    assert!(!sticker_emotion_hint("сука пошёл нахуй тупорылый"));
+    assert!(!sticker_emotion_hint("глаза вытекают пизда"));
+    assert!(!sticker_emotion_hint("это бля вопрос"));
+    assert!(sticker_emotion_hint("ору с этого деплоя"));
+    assert!(is_stop_followup("сука да завали ебало"));
+    assert!(is_stop_followup("пошёл нахуй тупорылый"));
+    assert!(!is_stop_followup("нормально общайся"));
+}
+
+#[tokio::test]
+async fn discovered_urls_persist_across_turns_in_same_chat() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let older_url = "https://example.com/news/item0?id=1";
+    let article_url = "https://example.com/news/item1?id=42";
+    let search = mock_server(vec![format!(
+        r#"<a rel="nofollow" class="result__a" href="{older_url}">Старая</a><a class="result__snippet">Описание</a><a rel="nofollow" class="result__a" href="{article_url}">Свежая</a><a class="result__snippet">Описание</a>"#
+    )])
+    .await;
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"stolyarov\"}"}}]}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"нашёл статью на сайте"}}]}"#.into(),
+        format!(
+            r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"call_2","type":"function","function":{{"name":"read_url","arguments":"{{\"url\":\"{article_url}\"}}"}}}}]}}}}]}}"#
+        ),
+        r#"{"choices":[{"message":{"role":"assistant","content":"прочитал"}}]}"#.into(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        search.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let first = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(77),
+        UserId(20),
+        "tester",
+        1,
+        false,
+        "найди статью",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.text, "нашёл статью на сайте");
+    let remembered = config.recent_urls(ChatId(77)).await;
+    assert_eq!(
+        remembered.iter().map(Url::as_str).collect::<Vec<_>>(),
+        vec![older_url, article_url]
+    );
+    let second = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(77),
+        UserId(20),
+        "tester",
+        2,
+        false,
+        "открой статью и почитай",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(second.text, "прочитал");
+    let remembered_after_second = config.recent_urls(ChatId(77)).await;
+    assert_eq!(
+        remembered_after_second
+            .iter()
+            .map(Url::as_str)
+            .collect::<Vec<_>>(),
+        vec![older_url, article_url],
+        "second turn without new prompt URLs must not invert recent_urls order"
+    );
+    let requests = llm.requests.lock().unwrap();
+    let third_body = body_of(&requests[2]);
+    let user_msg = third_body["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        user_msg.contains("недавно найденные ссылки в этом чате"),
+        "{user_msg}"
+    );
+    assert!(user_msg.contains(article_url), "{user_msg}");
+    assert!(user_msg.contains("сейчас: "), "{user_msg}");
+    let tool_out = tool_contents(&requests[3]).join("\n");
+    assert!(
+        !tool_out.contains("только ссылку из текущего сообщения"),
+        "persisted discovered URL must be allowed on the next turn: {tool_out}"
+    );
+    llm.task.abort();
+    search.task.abort();
+}
+
+#[tokio::test]
+async fn empty_reasoning_reply_retries_without_reasoning() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"ответ после повтора"}}]}"#.into(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let reply = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(2),
+        "tester",
+        0,
+        true,
+        "привет",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "ответ после повтора");
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let expected = crate::reasoning_effort_from_env();
+    assert_eq!(
+        body_of(&requests[0])
+            .get("reasoning_effort")
+            .and_then(Value::as_str),
+        expected.as_deref()
+    );
+    assert!(body_of(&requests[1]).get("reasoning_effort").is_none());
     llm.task.abort();
 }

@@ -1,7 +1,7 @@
 use crate::chat_text::{lowercase_reply, shorten, truncate_text};
 use crate::research::ResearchSource;
 
-const MAX_REPLY_CHARS: usize = 280;
+const MAX_REPLY_CHARS: usize = crate::chat_text::TELEGRAM_MESSAGE_CHARS;
 const RESEARCH_BODY_CHARS: usize = 4800;
 const RESEARCH_SOURCES_CHARS: usize = 1200;
 const RESEARCH_MAX_CHARS: usize = 6000;
@@ -49,20 +49,32 @@ pub(crate) fn chat_prompt(
 }
 
 fn strip_name(text: &str, name: &str) -> (String, bool) {
-    let mut found = false;
-    let kept: Vec<&str> = text
-        .split_whitespace()
-        .filter(|word| {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let matches: Vec<usize> = words
+        .iter()
+        .enumerate()
+        .filter_map(|(index, word)| {
             let core = word.trim_matches(|ch: char| !ch.is_alphanumeric());
-            if !core.is_empty() && core.to_lowercase() == name {
-                found = true;
-                false
-            } else {
-                true
-            }
+            (!core.is_empty() && core.to_lowercase() == name).then_some(index)
         })
         .collect();
-    (kept.join(" "), found)
+    if matches.is_empty() {
+        return (text.to_owned(), false);
+    }
+    let last = words.len().saturating_sub(1);
+    let edge_hit = matches.contains(&0) || matches.contains(&last);
+    if !edge_hit {
+        return (text.to_owned(), true);
+    }
+    let kept: Vec<&str> = words
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, word)| {
+            let strip = (index == 0 || index == last) && matches.contains(&index);
+            (!strip).then_some(word)
+        })
+        .collect();
+    (kept.join(" "), true)
 }
 
 /// Research style: paragraphs and citation markers survive, but the body is
@@ -191,8 +203,8 @@ fn render_sources_block(
     lines.join("\n")
 }
 
-/// Chat style: lowercase, one line, no trailing period, and short enough to
-/// read like a message rather than an article.
+/// Chat style: lowercase, single-line, no trailing period, and bounded to one
+/// Telegram message (`MAX_REPLY_CHARS`).
 pub(crate) fn style_reply(text: &str) -> String {
     let lowered = lowercase_reply(text);
     let joined = lowered
@@ -219,6 +231,25 @@ pub(crate) fn is_pass_reply(text: &str) -> bool {
         trimmed.as_str(),
         "pass" | "пас" | "молчу" | "пропуск" | "skip"
     )
+}
+
+pub(crate) fn is_stop_followup(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "завали ебало",
+        "завали ебал",
+        "заткнись",
+        "заткни ебало",
+        "отъебись",
+        "отьебись",
+        "пошёл нахуй",
+        "пошел нахуй",
+        "иди нахуй",
+        "съеби",
+        "сьеби",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase))
 }
 
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
@@ -265,23 +296,16 @@ pub(crate) fn sticker_request_query(text: &str) -> &'static str {
 pub(crate) fn sticker_emotion_hint(text: &str) -> bool {
     let text = text.to_lowercase();
     [
-        "бля",
-        "хуй",
-        "пизд",
-        "заеб",
-        "бесит",
         "устал",
         "устала",
         "заколеб",
         "достал",
-        "охуе",
         "кайф",
         "радост",
         "смешн",
         "ору",
         "ржака",
         "груст",
-        "плохо",
         "деплой",
         "прод",
     ]
