@@ -6,13 +6,13 @@ Every pull request in this repository is opened by the `farm/*` bot account (`in
 
 ## What runs
 
-`.github/workflows/pr-review.yml` triggers on `opened`, `synchronize`, `reopened`, and `ready_for_review`, and can be started by hand with `workflow_dispatch` plus a `pr` input. It checks out the **base** revision, so the code that holds `REVIEWER_TOKEN` in its environment is always the reviewed branch's ancestor, never the pull request itself.
+`.github/workflows/pr-review.yml` triggers on `opened`, `synchronize`, `reopened`, and `ready_for_review`, and can be started by hand with `workflow_dispatch` plus a `pr` input. It checks out the repository's **default branch**, so the code that holds `REVIEWER_TOKEN` in its environment is always the reviewer as merged, never the pull request itself.
 
 `tools/pr_review.py` then:
 
 1. Reads the PR (`GET /repos/{repo}/pulls/{n}`) and its diff (`Accept: application/vnd.github.v3.diff`), capped at 120 000 characters.
 2. Skips silently when the token is empty (fork pull requests never receive repository secrets), when the PR is a draft, when the reviewer is the author (GitHub forbids approving your own PR), or when the reviewer already reviewed this exact head SHA — a re-run never duplicates a review, and a push produces a new one.
-3. Asks the gateway for one strict-JSON review with `severity`/`file`/`line`/`claim`/`evidence` per finding. The prompt carries `AGENTS.md` from the base checkout and requires two passes, architecture and performance; the PR text is declared untrusted data.
+3. Asks the gateway for one strict-JSON review with `severity`/`file`/`line`/`claim`/`evidence` per finding. The prompt carries `AGENTS.md` from that checkout and requires two passes, architecture and performance; the PR text is declared untrusted data.
 4. Publishes `REQUEST_CHANGES` when any P0/P1 finding exists or the model's verdict says so, otherwise `APPROVE`, with the findings rendered as a Markdown body. This is a body-only review: inline comments are not posted.
 
 A model answer that fails schema validation is retried once with the rejection reason appended; a second failure fails the job instead of approving anything. GitHub, gateway, and parsing failures exit non-zero for the same reason.
