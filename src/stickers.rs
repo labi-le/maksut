@@ -153,15 +153,17 @@ fn short_answer_matches(text: &str, trigger: &str, max_words: usize) -> bool {
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
         .collect();
-    if words.is_empty() || words.len() > max_words {
+    let Some(first) = words.first() else {
+        return false;
+    };
+    if words.len() > max_words {
         return false;
     }
-    let index = if words[0] == trigger {
+    let index = if first == trigger {
         0
     } else if trigger == "да"
-        && words.len() >= 2
-        && matches!(words[0].as_str(), "ну" | "ага" | "угу")
-        && words[1] == trigger
+        && matches!(words.get(1), Some(second) if second == trigger)
+        && matches!(first.as_str(), "ну" | "ага" | "угу")
     {
         1
     } else {
@@ -195,13 +197,13 @@ fn contains_phrase(text: &str, phrase: &str) -> bool {
     let text = text.to_lowercase();
     text.match_indices(phrase).any(|(start, _)| {
         let end = start + phrase.len();
-        let before = text[..start]
-            .chars()
-            .next_back()
+        let before = text
+            .get(..start)
+            .and_then(|head| head.chars().next_back())
             .is_none_or(|ch| !ch.is_alphanumeric());
-        let after = text[end..]
-            .chars()
-            .next()
+        let after = text
+            .get(end..)
+            .and_then(|tail| tail.chars().next())
             .is_none_or(|ch| !ch.is_alphanumeric());
         before && after
     })
@@ -393,7 +395,7 @@ impl StickerCatalog {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         unix_nanos().hash(&mut hasher);
         let index = (hasher.finish() as usize) % entries.len();
-        Some(entries[index].file_id.clone())
+        entries.get(index).map(|entry| entry.file_id.clone())
     }
 }
 

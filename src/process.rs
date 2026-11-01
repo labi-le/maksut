@@ -1,9 +1,9 @@
 use crate::*;
 
 pub(crate) struct DownloadProcess {
-    pub(crate) child: Option<tokio::process::Child>,
+    child: Option<tokio::process::Child>,
     #[cfg(unix)]
-    pub(crate) group: i32,
+    group: i32,
     pub(crate) reaped: bool,
     pub(crate) stderr: Option<tokio::task::JoinHandle<Vec<u8>>>,
     pub(crate) stdout: Option<tokio::task::JoinHandle<Vec<(PathBuf, String)>>>,
@@ -93,7 +93,14 @@ pub(crate) fn stderr_detail(text: &str) -> &'static str {
 }
 
 impl DownloadProcess {
-    pub(crate) fn new(mut child: tokio::process::Child) -> Self {
+    pub(crate) fn new(mut child: tokio::process::Child) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        let group = match child.id() {
+            Some(pid) => pid as i32,
+            None => {
+                return Err(std::io::Error::other("spawned child has no process id"));
+            }
+        };
         let stderr = child.stderr.take().map(|mut pipe| {
             tokio::spawn(async move {
                 let mut captured = Vec::new();
@@ -103,19 +110,30 @@ impl DownloadProcess {
                         break;
                     }
                     let keep = size.min(4096usize.saturating_sub(captured.len()));
-                    captured.extend_from_slice(&buffer[..keep]);
+                    captured.extend_from_slice(buffer.get(..keep).unwrap_or_default());
                 }
                 captured
             })
         });
-        Self {
+        Ok(Self {
             #[cfg(unix)]
-            group: child.id().expect("spawned child has a pid") as i32,
+            group,
             child: Some(child),
             reaped: false,
             stderr,
             stdout: None,
-        }
+        })
+    }
+
+    pub(crate) fn take_stdout(
+        &mut self,
+        limit: u64,
+    ) -> std::io::Result<tokio::io::Take<tokio::process::ChildStdout>> {
+        self.child
+            .as_mut()
+            .and_then(|child| child.stdout.take())
+            .map(|pipe| pipe.take(limit))
+            .ok_or_else(|| std::io::Error::other("spawned child has no piped stdout"))
     }
 
     pub(crate) fn capture_stdout(&mut self) {
@@ -154,10 +172,13 @@ impl DownloadProcess {
                         if size == 0 {
                             break;
                         }
-                        for segment in buffer[..size].split_inclusive(|byte| *byte == b'\n') {
+                        let Some(chunk) = buffer.get(..size) else {
+                            break;
+                        };
+                        for segment in chunk.split_inclusive(|byte| *byte == b'\n') {
                             let complete = segment.last() == Some(&b'\n');
                             let content = if complete {
-                                &segment[..segment.len() - 1]
+                                segment.split_last().map_or(segment, |(_, head)| head)
                             } else {
                                 segment
                             };
@@ -224,7 +245,11 @@ impl DownloadProcess {
     }
 
     pub(crate) async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        let status = self.child.as_mut().expect("child is owned").wait().await?;
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("child process already reaped"))?;
+        let status = child.wait().await?;
         self.reaped = true;
         Ok(status)
     }

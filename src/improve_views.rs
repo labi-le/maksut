@@ -185,13 +185,17 @@ pub(crate) fn bound_result(mut result: Value) -> Value {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned();
-            task["goal"] = json!(truncate_chars(&goal, 200));
-            task["summary"] = json!(truncate_chars(&summary, 100));
-            task["files"] = json!([]);
-            task["issue_url"] = Value::Null;
+            if let Some(object) = task.as_object_mut() {
+                object.insert("goal".to_owned(), json!(truncate_chars(&goal, 200)));
+                object.insert("summary".to_owned(), json!(truncate_chars(&summary, 100)));
+                object.insert("files".to_owned(), json!([]));
+                object.insert("issue_url".to_owned(), Value::Null);
+            }
         }
     }
-    result["tasks"] = Value::Array(tasks);
+    if let Some(object) = result.as_object_mut() {
+        object.insert("tasks".to_owned(), Value::Array(tasks));
+    }
     result
 }
 
@@ -300,7 +304,9 @@ pub(crate) fn status_snapshot_for(
         |value: &Value| value.get("proposed_by").and_then(Value::as_i64) == Some(viewer.0 as i64);
     let result = if let Some(id) = id {
         let mut value = snapshot_for_id(dir, id, &own_task);
-        value["scope"] = json!("your_requests");
+        if let Some(object) = value.as_object_mut() {
+            object.insert("scope".to_owned(), json!("your_requests"));
+        }
         value
     } else {
         let tasks: Vec<Value> = read_queue_tasks(dir)

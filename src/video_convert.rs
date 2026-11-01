@@ -34,19 +34,14 @@ pub(crate) async fn video_dimensions(
     let child = cmd
         .spawn()
         .map_err(|_| "Не удалось запустить ffprobe".to_string())?;
-    let mut process = DownloadProcess::new(child);
+    let mut process =
+        DownloadProcess::new(child).map_err(|_| "Не удалось запустить ffprobe".to_string())?;
+    let mut stdout = process
+        .take_stdout(128)
+        .map_err(|_| "Не удалось запустить ffprobe".to_string())?;
     let mut output = Vec::new();
     let result = time::timeout_at(deadline, async {
-        process
-            .child
-            .as_mut()
-            .expect("child is owned")
-            .stdout
-            .take()
-            .expect("ffprobe stdout is piped")
-            .take(128)
-            .read_to_end(&mut output)
-            .await?;
+        stdout.read_to_end(&mut output).await?;
         process.wait().await
     })
     .await;
@@ -99,19 +94,14 @@ pub(crate) async fn require_video_audio(
     let child = cmd
         .spawn()
         .map_err(|_| "Не удалось запустить ffprobe".to_string())?;
-    let mut process = DownloadProcess::new(child);
+    let mut process =
+        DownloadProcess::new(child).map_err(|_| "Не удалось запустить ffprobe".to_string())?;
+    let mut stdout = process
+        .take_stdout(128)
+        .map_err(|_| "Не удалось запустить ffprobe".to_string())?;
     let mut output = Vec::new();
     let result = time::timeout_at(deadline, async {
-        process
-            .child
-            .as_mut()
-            .expect("child is owned")
-            .stdout
-            .take()
-            .expect("ffprobe stdout is piped")
-            .take(128)
-            .read_to_end(&mut output)
-            .await?;
+        stdout.read_to_end(&mut output).await?;
         process.wait().await
     })
     .await;
@@ -180,7 +170,8 @@ pub(crate) async fn convert_video(
     let child = cmd
         .spawn()
         .map_err(|_| "Не удалось запустить ffmpeg".to_string())?;
-    let mut process = DownloadProcess::new(child);
+    let mut process =
+        DownloadProcess::new(child).map_err(|_| "Не удалось запустить ffmpeg".to_string())?;
     let mut interval = time::interval_at(
         time::Instant::now() + Duration::from_millis(300),
         Duration::from_millis(300),

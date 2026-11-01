@@ -329,7 +329,11 @@ impl FeatureApi {
                 };
                 let body = match response {
                     Value::String(raw) => raw,
-                    response => response.to_string(),
+                    Value::Null
+                    | Value::Bool(_)
+                    | Value::Number(_)
+                    | Value::Array(_)
+                    | Value::Object(_) => response.to_string(),
                 };
                 let headers = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                 stream.write_all(headers.as_bytes()).await.unwrap();

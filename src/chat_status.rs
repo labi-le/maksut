@@ -51,8 +51,7 @@ fn status_details_answer(tasks: &[Value], overview: Option<&Value>) -> String {
     if tasks.is_empty() {
         return "Очередь пуста".to_owned();
     }
-    if tasks.len() == 1 {
-        let task = &tasks[0];
+    if let [task] = tasks {
         let id = task.get("id").and_then(Value::as_str).unwrap_or("без id");
         let mut line = format!(
             "#{}: {}{}",
@@ -242,7 +241,9 @@ fn status_claims(line: &str) -> Vec<&'static str> {
         let Some(index) = lower.find(needle) else {
             continue;
         };
-        let prefix = &lower[..index];
+        let Some(prefix) = lower.get(..index) else {
+            continue;
+        };
         let negated = prefix.ends_with("не ") || prefix.ends_with("not ") || prefix.ends_with("не");
         if !negated && !claims.contains(&status) {
             claims.push(status);
@@ -362,10 +363,13 @@ pub(crate) fn status_answer_grounded(text: &str, snapshot: Option<&Value>, view:
                 })
             })
             .collect();
-        if actual.is_empty() || actual.iter().any(|status| *status != actual[0]) {
+        let Some(primary) = actual.first() else {
+            return false;
+        };
+        if actual.iter().any(|status| status != primary) {
             return false;
         }
-        if claims.iter().any(|claim| *claim != actual[0]) {
+        if claims.iter().any(|claim| claim != primary) {
             return false;
         }
     }

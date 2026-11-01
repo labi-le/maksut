@@ -126,7 +126,11 @@ pub(crate) fn parse_owner_command(text: &str) -> Option<OwnerCommand> {
                 None => OwnerAction::PrioritySet(0),
             }
         }
-        other => other,
+        OwnerAction::Approve
+        | OwnerAction::Reject
+        | OwnerAction::Cancel
+        | OwnerAction::PriorityTop
+        | OwnerAction::PriorityBottom => action,
     };
     Some(OwnerCommand { action, targets })
 }
@@ -251,7 +255,7 @@ pub(crate) fn apply_owner_command(dir: &Path, owner: UserId, command: OwnerComma
             Ok(reply) => format!("{}: #{}", reply, id),
             Err(reason) => format!("#{}: {}.", id, reason),
         },
-        OwnerAction::Cancel => unreachable!("cancel is handled before id resolution"),
+        OwnerAction::Cancel => cancel_tasks(dir, owner, std::slice::from_ref(&id)),
         OwnerAction::PriorityTop | OwnerAction::PriorityBottom | OwnerAction::PrioritySet(_) => {
             let priority = match command.action {
                 OwnerAction::PrioritySet(value) => value,
@@ -261,10 +265,15 @@ pub(crate) fn apply_owner_command(dir: &Path, owner: UserId, command: OwnerComma
                 OwnerAction::PriorityBottom => {
                     tasks.iter().filter_map(priority_of).min().unwrap_or(0) - 1
                 }
-                _ => 0,
+                OwnerAction::Approve | OwnerAction::Reject | OwnerAction::Cancel => 0,
             };
             let mut updated = value;
-            updated["priority"] = json!(priority);
+            match updated.as_object_mut() {
+                Some(object) => {
+                    object.insert("priority".to_owned(), json!(priority));
+                }
+                None => updated = json!({ "priority": priority }),
+            }
             match atomic_write(&task_path(dir, &id, queued), updated.to_string().as_bytes()) {
                 Ok(()) => format!("Приоритет #{}: {}.", id, priority),
                 Err(_) => format!("Не смог изменить приоритет #{}", id),

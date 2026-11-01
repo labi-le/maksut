@@ -1,7 +1,7 @@
 use crate::prelude::*;
 
 use crate::chat_client::ChatConfig;
-use crate::chat_style::{is_bidi_or_control, strip_url_schemes, truncate_text};
+use crate::chat_text::{is_bidi_or_control, strip_url_schemes, truncate_text};
 use crate::search::{clean_text, SearchClient, SearchFailure, SearchHit};
 
 pub(crate) const RESEARCH_COOLDOWN: Duration = Duration::from_secs(20);
@@ -81,7 +81,7 @@ impl ChatConfig {
         let (result, sources) = collect_research(
             Arc::clone(&self.search),
             &question,
-            &queries[..execute],
+            queries.get(..execute).unwrap_or_default(),
             truncated_queries,
         )
         .await;
@@ -222,14 +222,18 @@ fn record_research_task(
 ) {
     match joined {
         Ok((index, result)) => {
-            completed[index] = true;
+            if let Some(done) = completed.get_mut(index) {
+                *done = true;
+            }
             results.push((index, result));
         }
         Err(error) => {
             if let Some(index) = task_indices.get(&error.id()).copied() {
-                if !completed[index] {
-                    completed[index] = true;
-                    results.push((index, Err(SearchFailure::Canceled)));
+                if let Some(done) = completed.get_mut(index) {
+                    if !*done {
+                        *done = true;
+                        results.push((index, Err(SearchFailure::Canceled)));
+                    }
                 }
             }
         }

@@ -196,9 +196,6 @@ impl DeliveryReport {
 
     pub(crate) fn push(&mut self, kind: MediaKind, message: Message, description: Option<&str>) {
         self.delivered += 1;
-        if self.cached_items.is_none() {
-            return;
-        }
         let file_id = match kind {
             MediaKind::Photo => message
                 .photo()
@@ -212,28 +209,26 @@ impl DeliveryReport {
             MediaKind::Audio => message.audio().map(|audio| &audio.file.id.0),
             MediaKind::Document => message.document().map(|document| &document.file.id.0),
         };
-        match file_id.filter(|id| !id.is_empty()) {
-            Some(file_id) => self
-                .cached_items
-                .as_mut()
-                .expect("cache IDs are being collected")
-                .push(CachedMedia {
-                    kind,
-                    file_id: file_id.clone(),
-                    description: description.map(|text| {
-                        let mut units = 0;
-                        let end = text
-                            .char_indices()
-                            .find_map(|(index, ch)| {
-                                units += ch.len_utf16();
-                                (units > 1024).then_some(index)
-                            })
-                            .unwrap_or(text.len());
-                        text[..end].to_owned()
-                    }),
-                }),
-            None => self.cached_items = None,
-        }
+        let Some(file_id) = file_id.filter(|id| !id.is_empty()) else {
+            self.cached_items = None;
+            return;
+        };
+        let Some(cached_items) = self.cached_items.as_mut() else {
+            return;
+        };
+        cached_items.push(CachedMedia {
+            kind,
+            file_id: file_id.clone(),
+            description: description.map(|text| {
+                let mut units = 0;
+                text.chars()
+                    .take_while(|ch| {
+                        units += ch.len_utf16();
+                        units <= 1024
+                    })
+                    .collect()
+            }),
+        });
     }
 }
 
@@ -257,113 +252,131 @@ pub(crate) async fn deliver_items(
         report.cached_items = None;
     }
     let mut start = 0;
-    while start < items.len() {
-        if items[start].input.is_none() {
+    while let Some(head) = items.get(start) {
+        if head.input.is_none() {
             start += 1;
             continue;
         }
+        let kind = head.kind;
         let mut end = start + 1;
-        while end < items.len()
-            && end - start < 10
-            && items[end].input.is_some()
-            && album_compatible(items[start].kind, items[end].kind)
-        {
+        while end - start < 10 {
+            let Some(next) = items.get(end) else {
+                break;
+            };
+            if next.input.is_none() || !album_compatible(kind, next.kind) {
+                break;
+            }
             end += 1;
         }
-        if end - start == 1 {
-            let item = &mut items[start];
-            let Some(input) = item.input.take() else {
-                start = end;
-                continue;
-            };
-            match send_single_media(
-                bot,
-                chat_id,
-                input,
-                item.kind,
-                &item.caption,
-                max_bytes,
-                allow_document_fallback,
-            )
-            .await
-            {
-                Ok(receipt) => report.push(receipt.kind, receipt.message, item.description),
-                Err(error) => {
-                    report.error = Some(error);
-                    break;
-                }
-            }
-        } else {
-            let mut seen_captions: Vec<String> = Vec::new();
-            let media: Vec<_> = items[start..end]
-                .iter_mut()
-                .filter_map(|item| {
-                    let input = item.input.take()?;
-                    let caption = std::mem::take(&mut item.caption);
-                    // Telegram shows per-item album captions, so a shared attribution block
-                    // would repeat once per image. Keep each distinct caption, but attach an
-                    // already-delivered identical caption only to its first album item.
-                    let duplicate = seen_captions.contains(&caption);
-                    if !caption.is_empty() && !duplicate {
-                        seen_captions.push(caption.clone());
-                    }
-                    let caption = if duplicate { String::new() } else { caption };
-                    Some(match item.kind {
-                        MediaKind::Photo => {
-                            let mut media = InputMediaPhoto::new(input);
-                            if !caption.is_empty() {
-                                media = media.caption(caption).parse_mode(ParseMode::Html);
-                            }
-                            InputMedia::Photo(media)
-                        }
-                        MediaKind::Video => {
-                            let mut media = InputMediaVideo::new(input).supports_streaming(true);
-                            if !caption.is_empty() {
-                                media = media.caption(caption).parse_mode(ParseMode::Html);
-                            }
-                            InputMedia::Video(media)
-                        }
-                        MediaKind::Audio => {
-                            let mut media = InputMediaAudio::new(input);
-                            if !caption.is_empty() {
-                                media = media.caption(caption).parse_mode(ParseMode::Html);
-                            }
-                            InputMedia::Audio(media)
-                        }
-                        MediaKind::Document => {
-                            let mut media = InputMediaDocument::new(input);
-                            if !caption.is_empty() {
-                                media = media.caption(caption).parse_mode(ParseMode::Html);
-                            }
-                            InputMedia::Document(media)
-                        }
-                    })
-                })
-                .collect();
-            match bot
-                .send_media_group(chat_id, media)
-                .disable_notification(true)
+        let Some(group) = items.get_mut(start..end) else {
+            break;
+        };
+        let failed = match group {
+            [item] => {
+                let Some(input) = item.input.take() else {
+                    start = end;
+                    continue;
+                };
+                match send_single_media(
+                    bot,
+                    chat_id,
+                    input,
+                    item.kind,
+                    &item.caption,
+                    max_bytes,
+                    allow_document_fallback,
+                )
                 .await
-            {
-                Ok(messages) if messages.len() == end - start => {
-                    for (item, message) in items[start..end].iter().zip(messages) {
-                        report.push(item.kind, message, item.description);
+                {
+                    Ok(receipt) => {
+                        report.push(receipt.kind, receipt.message, item.description);
+                        false
+                    }
+                    Err(error) => {
+                        report.error = Some(error);
+                        true
                     }
                 }
-                Ok(_) => {
-                    // A successful but unexpected response may already have delivered the album.
-                    report.error = Some(DeliveryError {
-                        reason: "Telegram вернул некорректный ответ на отправку альбома.".into(),
-                        diagnostic: FailureDiagnostic::new("delivery", "Invalid response"),
-                        invalid_cached_file: false,
-                    });
-                    break;
-                }
-                Err(error) => {
-                    report.error = Some(DeliveryError::request(error, max_bytes));
-                    break;
+            }
+            _ => {
+                let mut seen_captions: Vec<String> = Vec::new();
+                let media: Vec<_> = group
+                    .iter_mut()
+                    .filter_map(|item| {
+                        let input = item.input.take()?;
+                        let caption = std::mem::take(&mut item.caption);
+                        // Telegram shows per-item album captions, so a shared attribution block
+                        // would repeat once per image. Keep each distinct caption, but attach an
+                        // already-delivered identical caption only to its first album item.
+                        let duplicate = seen_captions.contains(&caption);
+                        if !caption.is_empty() && !duplicate {
+                            seen_captions.push(caption.clone());
+                        }
+                        let caption = if duplicate { String::new() } else { caption };
+                        Some(match item.kind {
+                            MediaKind::Photo => {
+                                let mut media = InputMediaPhoto::new(input);
+                                if !caption.is_empty() {
+                                    media = media.caption(caption).parse_mode(ParseMode::Html);
+                                }
+                                InputMedia::Photo(media)
+                            }
+                            MediaKind::Video => {
+                                let mut media =
+                                    InputMediaVideo::new(input).supports_streaming(true);
+                                if !caption.is_empty() {
+                                    media = media.caption(caption).parse_mode(ParseMode::Html);
+                                }
+                                InputMedia::Video(media)
+                            }
+                            MediaKind::Audio => {
+                                let mut media = InputMediaAudio::new(input);
+                                if !caption.is_empty() {
+                                    media = media.caption(caption).parse_mode(ParseMode::Html);
+                                }
+                                InputMedia::Audio(media)
+                            }
+                            MediaKind::Document => {
+                                let mut media = InputMediaDocument::new(input);
+                                if !caption.is_empty() {
+                                    media = media.caption(caption).parse_mode(ParseMode::Html);
+                                }
+                                InputMedia::Document(media)
+                            }
+                        })
+                    })
+                    .collect();
+                let expected = group.len();
+                match bot
+                    .send_media_group(chat_id, media)
+                    .disable_notification(true)
+                    .await
+                {
+                    Ok(messages) if messages.len() == expected => {
+                        for (item, message) in group.iter().zip(messages) {
+                            report.push(item.kind, message, item.description);
+                        }
+                        false
+                    }
+                    Ok(_) => {
+                        // A successful but unexpected response may already have delivered the album.
+                        report.error = Some(DeliveryError {
+                            reason: "Telegram вернул некорректный ответ на отправку альбома."
+                                .into(),
+                            diagnostic: FailureDiagnostic::new("delivery", "Invalid response"),
+                            invalid_cached_file: false,
+                        });
+                        true
+                    }
+                    Err(error) => {
+                        report.error = Some(DeliveryError::request(error, max_bytes));
+                        true
+                    }
                 }
             }
+        };
+        if failed {
+            break;
         }
         start = end;
     }

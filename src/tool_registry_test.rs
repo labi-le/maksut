@@ -115,7 +115,12 @@ fn builtin_visibility_matches_current_roles() {
 fn research_mode_hides_side_effect_tools() {
     let registry = ToolRegistry::builtin();
     assert_eq!(
-        payload_names(registry.payload_for_mode(true, true, true, false, false)),
+        payload_names(registry.payload_for_mode(ToolMode {
+            owner: true,
+            feature_tools: true,
+            research_mode: true,
+            ..ToolMode::default()
+        })),
         vec![
             "web_search".to_string(),
             "research".to_string(),
@@ -123,7 +128,13 @@ fn research_mode_hides_side_effect_tools() {
         ],
     );
     assert_eq!(
-        payload_names(registry.payload_for_mode(true, true, true, true, false)),
+        payload_names(registry.payload_for_mode(ToolMode {
+            owner: true,
+            feature_tools: true,
+            research_mode: true,
+            allow_sticker: true,
+            ..ToolMode::default()
+        })),
         vec![
             "web_search".to_string(),
             "research".to_string(),
@@ -133,7 +144,13 @@ fn research_mode_hides_side_effect_tools() {
         ],
     );
     assert_eq!(
-        payload_names(registry.payload_for_mode(true, true, true, false, true)),
+        payload_names(registry.payload_for_mode(ToolMode {
+            owner: true,
+            feature_tools: true,
+            research_mode: true,
+            allow_feature: true,
+            ..ToolMode::default()
+        })),
         vec![
             "web_search".to_string(),
             "research".to_string(),

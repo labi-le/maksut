@@ -252,45 +252,57 @@ pub(crate) fn extract_search_results(html: &str, limit: usize) -> Vec<(String, S
     let mut results = Vec::new();
     let mut cursor = 0;
     while results.len() < limit {
-        let Some(relative) = html[cursor..].find("class=\"result__a\"") else {
+        let Some(relative) = html
+            .get(cursor..)
+            .and_then(|tail| tail.find("class=\"result__a\""))
+        else {
             break;
         };
         let marker = cursor + relative;
-        let Some(tag_relative) = html[..marker].rfind("<a ") else {
+        let Some(tag_relative) = html.get(..marker).and_then(|head| head.rfind("<a ")) else {
             break;
         };
-        let tag_end = html[marker..]
-            .find('>')
+        let tag_end = html
+            .get(marker..)
+            .and_then(|tail| tail.find('>'))
             .map(|index| marker + index + 1)
             .unwrap_or(html.len());
-        let tag = &html[tag_relative..tag_end];
+        let tag = html.get(tag_relative..tag_end).unwrap_or_default();
         let href = tag
             .find("href=\"")
             .and_then(|start| {
-                tag[start + 6..]
-                    .find('"')
-                    .map(|end| &tag[start + 6..start + 6 + end])
+                tag.get(start + 6..)
+                    .and_then(|tail| tail.find('"'))
+                    .and_then(|end| tag.get(start + 6..start + 6 + end))
             })
             .map(decode_link)
             .unwrap_or_default();
-        let title_end = html[tag_end..]
-            .find("</a>")
+        let title_end = html
+            .get(tag_end..)
+            .and_then(|tail| tail.find("</a>"))
             .map(|index| tag_end + index)
             .unwrap_or(html.len());
-        let title = clean_text(&html[tag_end..title_end]);
-        let next_result = html[tag_end..]
-            .find("class=\"result__a\"")
+        let title = clean_text(html.get(tag_end..title_end).unwrap_or_default());
+        let next_result = html
+            .get(tag_end..)
+            .and_then(|tail| tail.find("class=\"result__a\""))
             .map(|index| tag_end + index)
             .unwrap_or(html.len());
-        let snippet = html[title_end..next_result]
-            .find("class=\"result__snippet\"")
+        let snippet = html
+            .get(title_end..next_result)
+            .and_then(|tail| tail.find("class=\"result__snippet\""))
             .and_then(|index| {
                 let marker = title_end + index;
-                let text_start = html[marker..].find('>').map(|offset| marker + offset + 1)?;
-                let text_end = html[text_start..next_result]
-                    .find("</a>")
+                let text_start = html
+                    .get(marker..)
+                    .and_then(|tail| tail.find('>'))
+                    .map(|offset| marker + offset + 1)?;
+                let text_end = html
+                    .get(text_start..next_result)
+                    .and_then(|tail| tail.find("</a>"))
                     .map(|offset| text_start + offset)?;
-                (text_start < text_end).then(|| clean_text(&html[text_start..text_end]))
+                (text_start < text_end)
+                    .then(|| clean_text(html.get(text_start..text_end).unwrap_or_default()))
             })
             .unwrap_or_default();
         if !href.is_empty() {
@@ -336,25 +348,39 @@ fn decode_entities(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(position) = rest.find('&') {
-        output.push_str(&rest[..position]);
-        let after = &rest[position..];
-        let entity_end = after[1..]
-            .find(';')
+        let (Some(head), Some(after)) = (rest.get(..position), rest.get(position..)) else {
+            break;
+        };
+        output.push_str(head);
+        let entity_end = after
+            .get(1..)
+            .and_then(|tail| tail.find(';'))
             .filter(|offset| *offset <= 32)
             .map(|offset| offset + 1);
+        let tail = after.get(1..);
         let Some(end) = entity_end else {
             output.push('&');
-            rest = &after[1..];
+            let Some(next) = tail else {
+                break;
+            };
+            rest = next;
             continue;
         };
-        match decode_entity(&after[1..end]) {
+        let decoded = after.get(1..end).and_then(decode_entity);
+        match decoded {
             Some(ch) => {
                 output.push(ch);
-                rest = &after[end + 1..];
+                let Some(next) = after.get(end + 1..) else {
+                    break;
+                };
+                rest = next;
             }
             None => {
                 output.push('&');
-                rest = &after[1..];
+                let Some(next) = tail else {
+                    break;
+                };
+                rest = next;
             }
         }
     }

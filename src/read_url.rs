@@ -447,7 +447,7 @@ pub(crate) fn truncate_chars(text: &str, max: usize) -> (String, bool) {
         return (String::new(), !text.is_empty());
     }
     match text.char_indices().nth(max) {
-        Some((index, _)) => (text[..index].to_owned(), true),
+        Some((index, _)) => (text.get(..index).unwrap_or_default().to_owned(), true),
         None => (text.to_owned(), false),
     }
 }

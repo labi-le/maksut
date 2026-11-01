@@ -165,21 +165,27 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-        encoded.push(TABLE[usize::from(first >> 2)] as char);
-        encoded.push(TABLE[usize::from((first & 0x03) << 4 | second >> 4)] as char);
-        encoded.push(if chunk.len() > 1 {
-            TABLE[usize::from((second & 0x0f) << 2 | third >> 6)] as char
-        } else {
-            '='
-        });
-        encoded.push(if chunk.len() > 2 {
-            TABLE[usize::from(third & 0x3f)] as char
-        } else {
-            '='
-        });
+        let Some((first, rest)) = chunk.split_first() else {
+            continue;
+        };
+        let second = rest.first().copied().unwrap_or(0);
+        let third = rest.get(1).copied().unwrap_or(0);
+        let quad = [
+            usize::from(first >> 2),
+            usize::from((first & 0x03) << 4 | second >> 4),
+            usize::from((second & 0x0f) << 2 | third >> 6),
+            usize::from(third & 0x3f),
+        ];
+        for (index, padded) in quad
+            .into_iter()
+            .zip([false, false, rest.is_empty(), rest.len() < 2])
+        {
+            if padded {
+                encoded.push('=');
+            } else {
+                encoded.extend(TABLE.get(index).copied().map(char::from));
+            }
+        }
     }
     encoded
 }

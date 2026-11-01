@@ -212,7 +212,8 @@ pub(crate) async fn download_videos_attempt(
     let child = cmd
         .spawn()
         .map_err(|_| "Не удалось запустить yt-dlp".to_string())?;
-    let mut process = DownloadProcess::new(child);
+    let mut process =
+        DownloadProcess::new(child).map_err(|_| "Не удалось запустить yt-dlp".to_string())?;
     process.capture_stdout();
     // Checking once per second detects storage overflow before it becomes critical.
     let mut interval = time::interval_at(

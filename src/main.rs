@@ -1,3 +1,18 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::indexing_slicing,
+        clippy::string_slice,
+        reason = "test scaffolding is not product code, and a failing test should abort"
+    )
+)]
+
 mod prelude;
 pub(crate) use prelude::*;
 
@@ -18,6 +33,8 @@ mod chat_status;
 pub(crate) use chat_status::*;
 mod chat_style;
 pub(crate) use chat_style::*;
+mod chat_text;
+pub(crate) use chat_text::*;
 mod chat_tools;
 pub(crate) use chat_tools::*;
 mod research;
@@ -32,6 +49,7 @@ mod code_inspect;
 mod improve_commands;
 mod improve_store;
 mod improve_views;
+mod memory_guard;
 mod self_improve;
 mod settings;
 pub(crate) use settings::*;
@@ -51,6 +69,8 @@ mod process;
 pub(crate) use process::*;
 mod images;
 pub(crate) use images::*;
+mod twitter_images;
+pub(crate) use twitter_images::*;
 mod image_fetch;
 pub(crate) use image_fetch::*;
 mod youtube;

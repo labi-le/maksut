@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::ToolMode;
 use crate::ToolRegistry;
 use serde_json::json;
 use tokio::sync::{Mutex, OwnedSemaphorePermit};
@@ -262,27 +263,21 @@ impl ChatConfig {
         with_tools: bool,
         with_reasoning: bool,
     ) -> Result<Value, CompleteError> {
-        let mut body = json!({
-            "model": self.model,
-            "messages": request.messages,
-            "max_tokens": request.max_tokens,
-            "temperature": 0.7,
-        });
+        let mut body = serde_json::Map::new();
+        body.insert("model".to_owned(), json!(self.model));
+        body.insert("messages".to_owned(), json!(request.messages));
+        body.insert("max_tokens".to_owned(), json!(request.max_tokens));
+        body.insert("temperature".to_owned(), json!(0.7));
         if with_reasoning {
-            body["reasoning_effort"] = json!("none");
+            body.insert("reasoning_effort".to_owned(), json!("none"));
         }
         if with_tools {
-            if let Some(tools) = self.tools.payload_for_mode(
-                request.owner,
-                request.feature_tools,
-                request.research_mode,
-                request.allow_sticker,
-                request.allow_feature,
-            ) {
-                body["tools"] = tools;
-                body["tool_choice"] = json!("auto");
+            if let Some(tools) = self.tools.payload_for_mode(request.tool_mode()) {
+                body.insert("tools".to_owned(), tools);
+                body.insert("tool_choice".to_owned(), json!("auto"));
             }
         }
+        let body = Value::Object(body);
         let endpoint = self.endpoint().map_err(|_| CompleteError::Failed)?;
         let response = self
             .http
@@ -338,6 +333,16 @@ impl<'a> CompletionRequest<'a> {
             research_mode: false,
             allow_sticker: false,
             allow_feature: false,
+        }
+    }
+
+    pub(crate) fn tool_mode(&self) -> ToolMode {
+        ToolMode {
+            owner: self.owner,
+            feature_tools: self.feature_tools,
+            research_mode: self.research_mode,
+            allow_sticker: self.allow_sticker,
+            allow_feature: self.allow_feature,
         }
     }
 

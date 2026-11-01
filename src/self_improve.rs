@@ -91,9 +91,10 @@ pub(crate) async fn handle_improve(
         } else {
             let id = id.to_owned();
             let status_dir = dir.clone();
-            let snapshot = run_blocking(move || status_snapshot(&status_dir, owner, Some(&id[..])))
-                .await
-                .unwrap_or(Value::Null);
+            let snapshot =
+                run_blocking(move || status_snapshot(&status_dir, owner, Some(id.as_str())))
+                    .await
+                    .unwrap_or(Value::Null);
             let key = cfg
                 .chat
                 .as_ref()
@@ -332,7 +333,7 @@ async fn send_update(
     text: &str,
     markup: Option<teloxide::types::InlineKeyboardMarkup>,
 ) -> bool {
-    for (index, chunk) in crate::chat_style::split_message(text)
+    for (index, chunk) in crate::chat_text::split_message(text)
         .into_iter()
         .enumerate()
     {

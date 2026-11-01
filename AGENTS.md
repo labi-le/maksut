@@ -4,15 +4,17 @@ This repository is **maxwell** (binary crate `maksut`): a Rust Telegram bot for 
 
 ## Running commands
 
-Always run Rust and Python checks via `nix-shell` (defined in `shell.nix`: `cargo`, `rustc`, `rustfmt`, `clippy`, `sqlite`, `python3`, `ffmpeg`, `yt-dlp`). Prefix test runs with `timeout` so a hung subprocess or lock never stalls the session, and set `CARGO_TARGET_DIR=/tmp/maxwell-target` when `./target` is root-owned from a container run:
+Rust compilation runs on `pc` through `cargo-slot`; the server and the buer worker never compile Rust locally. `cargo-slot` holds a shared build slot, mirrors the tree to `pc` when the path is not shared, and keeps `CARGO_TARGET_DIR` under `/home/labile/.cache/cargo-pc` there. `nix-shell` still supplies the toolchain (`shell.nix`), so the same `cargo` arguments work:
 
 ```bash
-timeout 300 env CARGO_TARGET_DIR=/tmp/maxwell-target nix-shell --run "cargo check --all-targets"
-timeout 300 env CARGO_TARGET_DIR=/tmp/maxwell-target nix-shell --run "cargo test"
-timeout 300 env CARGO_TARGET_DIR=/tmp/maxwell-target nix-shell --run "cargo clippy --all-targets"
-nix-shell --run "cargo fmt -- --check"
+timeout 900 cargo-slot cargo check --all-targets
+timeout 900 cargo-slot cargo test
+timeout 900 cargo-slot cargo clippy --all-targets
+cargo-slot cargo fmt -- --check
 timeout 120 nix-shell --run "python3 -m unittest discover -s tools -p 'test_*.py'"
 ```
+
+Cargo target directories stay on `pc`, so a stale local `./target` is never a factor. Inside the buer worker the same `cargo-slot` name reaches the host relay through `/run/cargo-slot/socket`; it accepts only workspace paths under `/data/workspaces` and only `cargo` subcommands.
 
 When a running bot or sidecar change needs container verification:
 
@@ -63,8 +65,10 @@ Why each of these rules exists, and what shipping without it cost, is in [`docs/
   - Keep function parameter lists small (`<= 7` parameters; use a request/options struct instead of positional boolean flags or `#[allow(clippy::too_many_arguments)]`).
   - Never call blocking `std::fs` / `std::io` inside `async fn` on the Tokio runtime; use `tokio::fs` or `tokio::task::spawn_blocking`.
   - Every in-memory `HashMap` or cache keyed by user, chat, IP, or task ID must have an explicit size cap or TTL eviction.
+- **Clippy gate lives in `Cargo.toml`.** `[lints.clippy]` denies the whole `clippy::all` group (which includes `perf`, `correctness`, `suspicious`, `complexity`, `style`) plus the `restriction` lint `unwrap_used`; `expect_used` and `panic` are warnings until their remaining production sites are converted. Tests opt out through `#![cfg_attr(test, allow(...))]` in `src/main.rs`, so a `.unwrap()` is legal in `src/*_test.rs`, `src/test_support.rs`, and `src/feature_support.rs` only. Never silence the gate with `#[allow]` on production code; handle the error.
+
 - **Working agreements:**
-  - Briefs to subagents name the exact `nix-shell --run ...` verification command, the files in scope, and the acceptance criteria.
+  - Briefs to subagents name the exact `cargo-slot cargo ...` verification command, the files in scope, and the acceptance criteria.
   - Subagents do not run full builds mid-flight while sibling edits are in progress; run the smallest targeted test (`cargo test <filter>`), then run the full gate once when the tree is quiet.
   - Report evidence: command plus observed output.
   - Commits only when asked (`COMPONENT: imperative description`, single `-m`, `<= 70` chars, no body).

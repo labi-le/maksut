@@ -22,10 +22,10 @@ pub(crate) async fn pinned_client(url: &Url) -> Result<reqwest::Client, String> 
         .map_err(|_| "Не удалось разрешить имя HTTPS-хоста")?
         .filter(|address| permitted_ipv4(address.ip()))
         .collect();
-    if addresses.is_empty() {
+    let Some(first) = addresses.first() else {
         return Err("HTTPS-хост не имеет пригодного IPv4-адреса".into());
-    }
-    let key = (host.to_owned(), addresses[0].ip());
+    };
+    let key = (host.to_owned(), first.ip());
     let mut cache = PINNED_CLIENTS.lock().ok();
     if let Some(cached) = cache.as_ref().and_then(|cache| cache.get(&key)) {
         // A host-specific DNS override cannot be reused after DNS removes one of
@@ -177,6 +177,12 @@ fn append_manifest_entry(photo: &Path, manifest: &Path) -> std::io::Result<u64> 
         .saturating_add(file.metadata()?.len().saturating_sub(previous_size)))
 }
 
+#[derive(Clone, Copy)]
+enum ExtensionHint {
+    Known(&'static str),
+    FromContentType,
+}
+
 pub(crate) async fn add_images(
     images: &[Url],
     alternates: &[Vec<Url>],
@@ -199,15 +205,16 @@ pub(crate) async fn add_images(
         let mut size_rejected = false;
         for url in std::iter::once(first).chain(alternates.get(index).into_iter().flatten()) {
             let path_ext = url.path().rsplit('.').next().unwrap_or("");
-            let ext = if url.host_str() == Some("pbs.twimg.com") {
-                None
+            let ext_hint = if url.host_str() == Some("pbs.twimg.com") {
+                ExtensionHint::FromContentType
             } else {
-                image_extension(path_ext)
+                let Some(ext) = image_extension(path_ext) else {
+                    failure
+                        .get_or_insert(FailureDiagnostic::new("photo-cdn", "Unsupported format"));
+                    continue;
+                };
+                ExtensionHint::Known(ext)
             };
-            if ext.is_none() && url.host_str() != Some("pbs.twimg.com") {
-                failure.get_or_insert(FailureDiagnostic::new("photo-cdn", "Unsupported format"));
-                continue;
-            }
             let remaining = match &used {
                 Ok(used) => cfg
                     .max_media_bytes
@@ -258,18 +265,19 @@ pub(crate) async fn add_images(
                         user_errors::http_detail(response.status().as_u16()),
                     ));
                 }
-                let expected_ext = ext;
-                let ext = if url.host_str() == Some("pbs.twimg.com") {
-                    twitter_image_extension(
-                        url,
-                        response
-                            .headers()
-                            .get(reqwest::header::CONTENT_TYPE)
-                            .and_then(|header| header.to_str().ok()),
-                    )
-                    .ok_or_else(|| FailureDiagnostic::new("photo-cdn", "Unsupported format"))?
-                } else {
-                    ext.expect("other CDN image extension was checked")
+                let (expected_ext, ext) = match ext_hint {
+                    ExtensionHint::FromContentType => (
+                        None,
+                        twitter_image_extension(
+                            url,
+                            response
+                                .headers()
+                                .get(reqwest::header::CONTENT_TYPE)
+                                .and_then(|header| header.to_str().ok()),
+                        )
+                        .ok_or_else(|| FailureDiagnostic::new("photo-cdn", "Unsupported format"))?,
+                    ),
+                    ExtensionHint::Known(ext) => (Some(ext), ext),
                 };
                 let name = format!("photo-{index:02}.{ext}");
                 save_image_response(

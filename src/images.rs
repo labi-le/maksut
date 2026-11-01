@@ -211,10 +211,10 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
 pub(crate) fn tiktok_rehydration(html: &str) -> Option<Value> {
     let mut remaining = html;
     while let Some(start) = remaining.find("<script") {
-        remaining = &remaining[start + "<script".len()..];
+        remaining = remaining.get(start + "<script".len()..)?;
         let tag_end = remaining.find('>')?;
-        let tag = &remaining[..tag_end];
-        let body = &remaining[tag_end + 1..];
+        let tag = remaining.get(..tag_end)?;
+        let body = remaining.get(tag_end + 1..)?;
         let end = body.find("</script>")?;
         if tag.split_ascii_whitespace().any(|attribute| {
             matches!(
@@ -223,9 +223,9 @@ pub(crate) fn tiktok_rehydration(html: &str) -> Option<Value> {
                     | "id='__UNIVERSAL_DATA_FOR_REHYDRATION__'"
             )
         }) {
-            return serde_json::from_str(&body[..end]).ok();
+            return serde_json::from_str(body.get(..end)?).ok();
         }
-        remaining = &body[end + "</script>".len()..];
+        remaining = body.get(end + "</script>".len()..)?;
     }
     None
 }
@@ -378,15 +378,18 @@ pub(crate) async fn extract_images(
             "Launch failed",
         )
     })?;
-    let mut process = DownloadProcess::new(child);
-    let mut stdout = process
-        .child
-        .as_mut()
-        .expect("spawned process")
-        .stdout
-        .take()
-        .expect("metadata stdout is piped")
-        .take(MAX_METADATA_BYTES + 1);
+    let mut process = DownloadProcess::new(child).map_err(|_| {
+        failure(
+            "Не удалось запустить yt-dlp для метаданных",
+            "Launch failed",
+        )
+    })?;
+    let mut stdout = process.take_stdout(MAX_METADATA_BYTES + 1).map_err(|_| {
+        failure(
+            "Не удалось запустить yt-dlp для метаданных",
+            "Launch failed",
+        )
+    })?;
     let (bytes, status) = time::timeout_at(deadline, async {
         let mut bytes = Vec::new();
         stdout
@@ -419,150 +422,11 @@ pub(crate) async fn extract_images(
     Ok(collect_images(&info, source))
 }
 
-pub(crate) fn twitter_status_id(url: &Url) -> Option<&str> {
-    if image_source(url) != Some("twitter") {
-        return None;
-    }
-    let path = url.path().strip_suffix('/').unwrap_or(url.path());
-    let mut segments = path.trim_start_matches('/').split('/');
-    let (Some(user), Some("status"), Some(id)) =
-        (segments.next(), segments.next(), segments.next())
-    else {
-        return None;
-    };
-    let suffix_valid = match (segments.next(), segments.next(), segments.next()) {
-        (None, None, None) => true,
-        (Some("photo"), Some(index), None) => {
-            !index.is_empty()
-                && index.bytes().all(|byte| byte.is_ascii_digit())
-                && index.bytes().any(|byte| byte != b'0')
-        }
-        _ => false,
-    };
-    (suffix_valid
-        && !user.is_empty()
-        && !id.is_empty()
-        && id.bytes().all(|byte| byte.is_ascii_digit()))
-    .then_some(id)
-}
-
-#[derive(Debug)]
-pub(crate) struct TwitterImagesError {
-    pub(crate) auth: bool,
-}
-
-impl TwitterImagesError {
-    pub(crate) fn new(auth: bool) -> Self {
-        Self { auth }
-    }
-}
-
-pub(crate) async fn extract_twitter_images(
-    url: &Url,
-    cfg: &Settings,
-    dir: &Path,
-    duration: Duration,
-) -> Result<ImageMetadata, TwitterImagesError> {
-    let id = twitter_status_id(url).ok_or_else(|| TwitterImagesError::new(false))?;
-    let cookie = process_cookies_async(cfg.cookies_file.as_deref(), dir)
-        .await
-        .map_err(|_| TwitterImagesError::new(false))?;
-    let mut cmd = Command::new(&cfg.python_bin);
-    cmd.arg(&cfg.twitter_helper)
-        .arg(id)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    if let Some((_, path)) = &cookie {
-        cmd.arg(path);
-    }
-    #[cfg(unix)]
-    cmd.as_std_mut().process_group(0);
-    let child = cmd.spawn().map_err(|_| TwitterImagesError::new(false))?;
-    let mut process = DownloadProcess::new(child);
-    let mut stdout = process
-        .child
-        .as_mut()
-        .expect("spawned process")
-        .stdout
-        .take()
-        .expect("helper stdout is piped")
-        .take(MAX_TWITTER_JSON_BYTES + 1);
-    let (bytes, status) = time::timeout(duration, async {
-        let mut bytes = Vec::new();
-        stdout
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| TwitterImagesError::new(false))?;
-        if bytes.len() as u64 > MAX_TWITTER_JSON_BYTES {
-            return Err(TwitterImagesError::new(false));
-        }
-        let status = process
-            .wait()
-            .await
-            .map_err(|_| TwitterImagesError::new(false))?;
-        Ok::<_, TwitterImagesError>((bytes, status))
-    })
-    .await
-    .map_err(|_| TwitterImagesError::new(false))??;
-    if !status.success() {
-        return Err(TwitterImagesError::new(status.code() == Some(3)));
-    }
-    let info: Value = serde_json::from_slice(&bytes).map_err(|_| TwitterImagesError::new(false))?;
-    let urls = info
-        .get("photos")
-        .and_then(Value::as_array)
-        .ok_or_else(|| TwitterImagesError::new(false))?;
-    let has_video = info
-        .get("has_video")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| TwitterImagesError::new(false))?;
-    let mut result = ImageMetadata {
-        images: Vec::new(),
-        has_video,
-        skipped: 0,
-        alternates: Vec::new(),
-        description: info
-            .get("description")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned),
-    };
-    for raw in urls {
-        if let Some(image) = raw.as_str().and_then(|raw| image_cdn_url(raw, "twitter")) {
-            if !result.images.contains(&image) {
-                result.images.push(image);
-            }
-        } else {
-            result.skipped += 1;
-        }
-    }
-    Ok(result)
-}
-
 pub(crate) fn image_extension(raw: &str) -> Option<&'static str> {
     match raw.to_ascii_lowercase().as_str() {
         "jpg" | "jpeg" | "image/jpeg" => Some("jpg"),
         "png" | "image/png" => Some("png"),
         "webp" | "image/webp" => Some("webp"),
         _ => None,
-    }
-}
-
-pub(crate) fn twitter_image_extension(
-    url: &Url,
-    content_type: Option<&str>,
-) -> Option<&'static str> {
-    let url_format = url
-        .query_pairs()
-        .find(|(key, _)| key == "format")
-        .and_then(|(_, format)| image_extension(&format));
-    let content_format = content_type.map(|value| image_extension(value.split(';').next()?.trim()));
-    match (url_format, content_format) {
-        (_, Some(None)) => None,
-        (Some(expected), Some(Some(actual))) if expected != actual => None,
-        (Some(expected), _) => Some(expected),
-        (None, Some(Some(actual))) => Some(actual),
-        (None, None) => image_extension(url.path().rsplit('.').next()?),
     }
 }

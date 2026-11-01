@@ -67,7 +67,7 @@ pub(crate) fn truncate_utf16(text: &str, max_units: usize) -> (&str, bool) {
     for (index, ch) in text.char_indices() {
         units += ch.len_utf16();
         if units > max_units {
-            return (&text[..index], true);
+            return (text.get(..index).unwrap_or_default(), true);
         }
     }
     (text, false)

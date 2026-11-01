@@ -1,6 +1,6 @@
+use crate::chat_text::{lowercase_reply, shorten, truncate_text};
 use crate::research::ResearchSource;
 
-const TELEGRAM_MESSAGE_CHARS: usize = 3900;
 const MAX_REPLY_CHARS: usize = 280;
 const RESEARCH_BODY_CHARS: usize = 4800;
 const RESEARCH_SOURCES_CHARS: usize = 1200;
@@ -65,59 +65,6 @@ fn strip_name(text: &str, name: &str) -> (String, bool) {
     (kept.join(" "), found)
 }
 
-/// Plain-text chunks within Telegram's message limit, split on line
-/// boundaries where possible.
-pub(crate) fn split_message(text: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    for line in text.lines() {
-        if line.chars().count() > TELEGRAM_MESSAGE_CHARS {
-            if !current.trim().is_empty() {
-                chunks.push(std::mem::take(&mut current));
-            }
-            let mut rest = line;
-            while rest.chars().count() > TELEGRAM_MESSAGE_CHARS {
-                let split = rest
-                    .char_indices()
-                    .nth(TELEGRAM_MESSAGE_CHARS)
-                    .map(|(index, _)| index)
-                    .unwrap_or(rest.len());
-                chunks.push(rest[..split].to_owned());
-                rest = &rest[split..];
-            }
-            current.push_str(rest);
-            continue;
-        }
-        let projected =
-            current.chars().count() + usize::from(!current.is_empty()) + line.chars().count();
-        if projected > TELEGRAM_MESSAGE_CHARS {
-            chunks.push(std::mem::take(&mut current));
-        }
-        if !current.is_empty() {
-            current.push('\n');
-        }
-        current.push_str(line);
-    }
-    if !current.trim().is_empty() {
-        chunks.push(current);
-    }
-    chunks
-}
-
-/// Lowercases the whole reply, except for URLs whose path may be case-sensitive.
-pub(crate) fn lowercase_reply(text: &str) -> String {
-    text.split_inclusive(char::is_whitespace)
-        .map(|token| {
-            let trimmed = token.trim_start_matches(|ch: char| !ch.is_alphanumeric());
-            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-                token.to_owned()
-            } else {
-                token.to_lowercase()
-            }
-        })
-        .collect()
-}
-
 /// Research style: paragraphs and citation markers survive, but the body is
 /// bounded and the bot always appends a verified source list.
 pub(crate) fn style_research_reply(
@@ -173,9 +120,19 @@ fn sanitize_citations(text: &str, source_count: usize) -> (String, Vec<usize>) {
     let mut cited = Vec::new();
     let mut index = 0;
     while index < chars.len() {
-        if chars[index] == '[' {
-            if let Some(close) = chars[index + 1..].iter().position(|ch| *ch == ']') {
-                let content: String = chars[index + 1..index + 1 + close].iter().collect();
+        let Some(ch) = chars.get(index).copied() else {
+            break;
+        };
+        if ch == '[' {
+            let close = chars
+                .get(index + 1..)
+                .and_then(|tail| tail.iter().position(|ch| *ch == ']'));
+            if let Some(close) = close {
+                let content: String = chars
+                    .get(index + 1..index + 1 + close)
+                    .unwrap_or_default()
+                    .iter()
+                    .collect();
                 if !content.is_empty() && content.chars().all(|ch| ch.is_ascii_digit()) {
                     if let Ok(id) = content.parse::<usize>() {
                         if (1..=source_count).contains(&id) {
@@ -192,7 +149,7 @@ fn sanitize_citations(text: &str, source_count: usize) -> (String, Vec<usize>) {
                 }
             }
         }
-        output.push(chars[index]);
+        output.push(ch);
         index += 1;
     }
     (output, cited)
@@ -262,95 +219,6 @@ pub(crate) fn is_pass_reply(text: &str) -> bool {
         trimmed.as_str(),
         "pass" | "пас" | "молчу" | "пропуск" | "skip"
     )
-}
-
-fn shorten(text: &str, max_chars: usize) -> &str {
-    if text.chars().count() <= max_chars {
-        return text;
-    }
-    let limit = text
-        .char_indices()
-        .nth(max_chars)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len());
-    let head = &text[..limit];
-    for (index, _) in head.rmatch_indices(['.', '!', '?']) {
-        let before = &head[..index];
-        let token = before
-            .split_whitespace()
-            .next_back()
-            .unwrap_or("")
-            .trim_start_matches(['(', '[', '<', '"', '\'']);
-        if !token.starts_with("http://") && !token.starts_with("https://") {
-            return before.trim_end();
-        }
-    }
-    head.rfind(char::is_whitespace)
-        .map(|index| &head[..index])
-        .unwrap_or(head)
-}
-
-pub(crate) fn truncate_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    let limit = text
-        .char_indices()
-        .nth(max_chars)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len());
-    let head = &text[..limit];
-    let cut = head.rfind(char::is_whitespace).unwrap_or(head.len());
-    let head = if cut == 0 { head } else { &head[..cut] };
-    head.trim_end().to_owned()
-}
-
-pub(crate) fn is_bidi_or_control(ch: char) -> bool {
-    ch.is_control()
-        || matches!(ch as u32,
-            0x00AD
-            | 0x200B..=0x200F
-            | 0x202A..=0x202E
-            | 0x2066..=0x2069
-            | 0xFEFF)
-}
-
-pub(crate) fn strip_url_schemes(text: &str) -> String {
-    const SCHEMES: [&str; 7] = [
-        "https://",
-        "http://",
-        "tg://",
-        "javascript:",
-        "data:",
-        "file:",
-        "ftp://",
-    ];
-    let lower = text.to_ascii_lowercase();
-    let mut output = String::with_capacity(text.len());
-    let mut index = 0;
-    while index < text.len() {
-        let boundary = text[..index]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !ch.is_alphanumeric());
-        let mut matched = None;
-        if boundary {
-            for scheme in SCHEMES {
-                if lower[index..].starts_with(scheme) {
-                    matched = Some(scheme);
-                    break;
-                }
-            }
-        }
-        if let Some(scheme) = matched {
-            index += scheme.len();
-            continue;
-        }
-        let ch = text[index..].chars().next().unwrap_or_default();
-        output.push(ch);
-        index += ch.len_utf8();
-    }
-    output
 }
 
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
@@ -445,7 +313,7 @@ pub(crate) fn format_reply_context(
         .unwrap_or("")
         .trim();
     if raw.is_empty()
-        || crate::memory::detect_flags(raw)
+        || crate::memory_guard::detect_flags(raw)
             & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET)
             != 0
     {

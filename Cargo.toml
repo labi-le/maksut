@@ -4,6 +4,20 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = { level = "deny", priority = 1 }
+expect_used = { level = "deny", priority = 1 }
+panic = { level = "deny", priority = 1 }
+todo = { level = "deny", priority = 1 }
+unimplemented = { level = "deny", priority = 1 }
+unreachable = { level = "deny", priority = 1 }
+indexing_slicing = { level = "deny", priority = 1 }
+wildcard_enum_match_arm = { level = "deny", priority = 1 }
+fallible_impl_from = { level = "deny", priority = 1 }
+fn_params_excessive_bools = { level = "deny", priority = 1 }
+string_slice = { level = "warn", priority = 1 }
+
 [dependencies]
 teloxide = { version = "0.17", default-features = false, features = ["rustls", "ctrlc_handler"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "fs", "sync", "io-util", "net"] }

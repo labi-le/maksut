@@ -202,13 +202,12 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
 
 pub(crate) fn valid_self_source_url(base: &Path, url: &str) -> bool {
     let url = url.trim();
-    if !url.starts_with("https://github.com/labi-le/maxwell/blob/main/")
-        || url.chars().count() > SELF_URL_MAX_CHARS
-        || url.chars().any(char::is_whitespace)
-    {
+    if url.chars().count() > SELF_URL_MAX_CHARS || url.chars().any(char::is_whitespace) {
         return false;
     }
-    let rest = &url["https://github.com/labi-le/maxwell/blob/main/".len()..];
+    let Some(rest) = url.strip_prefix("https://github.com/labi-le/maxwell/blob/main/") else {
+        return false;
+    };
     let (path, frag) = match rest.split_once('#') {
         Some((path, frag)) => {
             let Some(digits) = frag.strip_prefix('L') else {
@@ -270,8 +269,8 @@ pub(crate) async fn record_self_fact(
         );
     }
     let mask = crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET;
-    if (crate::memory::detect_flags(&topic) & mask) != 0
-        || (crate::memory::detect_flags(&fact) & mask) != 0
+    if (crate::memory_guard::detect_flags(&topic) & mask) != 0
+        || (crate::memory_guard::detect_flags(&fact) & mask) != 0
         || crate::memory::validate_summary(&topic).is_err()
         || crate::memory::validate_summary(&fact).is_err()
     {

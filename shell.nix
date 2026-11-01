@@ -6,6 +6,7 @@ pkgs.mkShell {
     rustc
     rustfmt
     clippy
+    sccache
     pkg-config
     openssl
     sqlite

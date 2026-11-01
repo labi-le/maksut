@@ -85,6 +85,15 @@ pub(crate) struct ToolRegistry {
     pub(crate) specs: Vec<ToolSpec>,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ToolMode {
+    pub(crate) owner: bool,
+    pub(crate) feature_tools: bool,
+    pub(crate) research_mode: bool,
+    pub(crate) allow_sticker: bool,
+    pub(crate) allow_feature: bool,
+}
+
 impl ToolRegistry {
     /// The model may call only these registered tools. There is no generic MCP
     /// bridge, no shell, and no generic filesystem access. `read_url` is the
@@ -166,7 +175,9 @@ impl ToolRegistry {
         ];
         debug_assert!(specs.iter().enumerate().all(|(index, spec)| {
             spec.name == spec.kind.name()
-                && !specs[..index]
+                && !specs
+                    .get(..index)
+                    .unwrap_or_default()
                     .iter()
                     .any(|previous| previous.name == spec.name)
         }));
@@ -195,19 +206,15 @@ impl ToolRegistry {
     /// After a successful research pass the model sees only read-only research
     /// tools. Side effects stay available only when the user asked for them
     /// explicitly; untrusted source text must not be able to trigger them.
-    pub(crate) fn payload_for_mode(
-        &self,
-        owner: bool,
-        feature_tools: bool,
-        research_mode: bool,
-        allow_sticker: bool,
-        allow_feature: bool,
-    ) -> Option<Value> {
+    pub(crate) fn payload_for_mode(&self, mode: ToolMode) -> Option<Value> {
         let tools: Vec<Value> = self
-            .visible(owner)
-            .filter(|spec| feature_tools || !spec.kind.needs_proposal())
+            .visible(mode.owner)
+            .filter(|spec| mode.feature_tools || !spec.kind.needs_proposal())
             .filter(|spec| {
-                !research_mode || spec.kind.allowed_in_research(allow_sticker, allow_feature)
+                !mode.research_mode
+                    || spec
+                        .kind
+                        .allowed_in_research(mode.allow_sticker, mode.allow_feature)
             })
             .map(|spec| {
                 json!({

@@ -159,7 +159,7 @@ fn description_prefix(description: &str) -> &str {
     for (offset, ch) in description.char_indices() {
         units += ch.len_utf16();
         if units > MAX_DESCRIPTION_UTF16 {
-            return &description[..offset];
+            return description.get(..offset).unwrap_or_default();
         }
     }
     description
@@ -242,7 +242,7 @@ fn parse_items(json: &str) -> Option<Vec<CachedMedia>> {
                 }
                 Some(description)
             }
-            _ => return None,
+            Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => return None,
         };
         items.push(CachedMedia {
             kind,

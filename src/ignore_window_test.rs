@@ -1,4 +1,5 @@
 use crate::feature_support::*;
+use crate::memory_guard::injection_attempt;
 use crate::test_support::test_pool;
 use crate::*;
 

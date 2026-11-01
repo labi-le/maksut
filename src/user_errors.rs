@@ -167,7 +167,12 @@ pub(crate) fn rejected_media_upload(error: &RequestError) -> bool {
     match error {
         RequestError::Api(ApiError::ImageProcessFailed) => true,
         RequestError::Api(ApiError::Unknown(description)) => format_rejection(description),
-        _ => false,
+        RequestError::Api(_)
+        | RequestError::MigrateToChatId(_)
+        | RequestError::RetryAfter(_)
+        | RequestError::Network(_)
+        | RequestError::InvalidJson { .. }
+        | RequestError::Io(_) => false,
     }
 }
 
@@ -182,27 +187,51 @@ fn format_rejection(description: &str) -> bool {
 }
 
 fn api_detail(error: &ApiError) -> &'static str {
-    match error {
-        ApiError::WrongFileId | ApiError::WrongFileIdOrUrl | ApiError::FileIdInvalid => {
-            "Invalid file ID"
-        }
-        ApiError::RequestEntityTooLarge => "File too large",
-        ApiError::ImageProcessFailed => "Media format rejected",
-        ApiError::NotEnoughRightsToPostMessages
-        | ApiError::NotEnoughRightsToPinMessage
-        | ApiError::NotEnoughRightsToManagePins
-        | ApiError::NotEnoughRightsToChangeChatPermissions
-        | ApiError::NotEnoughRightsToRestrict => "Insufficient rights",
-        ApiError::BotBlocked => "Bot blocked",
-        ApiError::BotKicked
-        | ApiError::BotKickedFromSupergroup
-        | ApiError::BotKickedFromChannel => "Bot kicked",
-        ApiError::ChatNotFound => "Chat unavailable",
-        ApiError::InvalidToken => "Bot authorization failed",
-        ApiError::Unknown(description) if format_rejection(description) => "Media format rejected",
-        ApiError::Unknown(description) => unknown_api_detail(description),
-        _ => "Unknown Telegram rejection",
+    if matches!(
+        error,
+        ApiError::WrongFileId | ApiError::WrongFileIdOrUrl | ApiError::FileIdInvalid
+    ) {
+        return "Invalid file ID";
     }
+    if matches!(error, ApiError::RequestEntityTooLarge) {
+        return "File too large";
+    }
+    if matches!(error, ApiError::ImageProcessFailed) {
+        return "Media format rejected";
+    }
+    if matches!(
+        error,
+        ApiError::NotEnoughRightsToPostMessages
+            | ApiError::NotEnoughRightsToPinMessage
+            | ApiError::NotEnoughRightsToManagePins
+            | ApiError::NotEnoughRightsToChangeChatPermissions
+            | ApiError::NotEnoughRightsToRestrict
+    ) {
+        return "Insufficient rights";
+    }
+    if matches!(error, ApiError::BotBlocked) {
+        return "Bot blocked";
+    }
+    if matches!(
+        error,
+        ApiError::BotKicked | ApiError::BotKickedFromSupergroup | ApiError::BotKickedFromChannel
+    ) {
+        return "Bot kicked";
+    }
+    if matches!(error, ApiError::ChatNotFound) {
+        return "Chat unavailable";
+    }
+    if matches!(error, ApiError::InvalidToken) {
+        return "Bot authorization failed";
+    }
+    if let ApiError::Unknown(description) = error {
+        return if format_rejection(description) {
+            "Media format rejected"
+        } else {
+            unknown_api_detail(description)
+        };
+    }
+    "Unknown Telegram rejection"
 }
 
 fn unknown_api_detail(description: &str) -> &'static str {
@@ -214,7 +243,12 @@ fn unknown_api_detail(description: &str) -> &'static str {
             description
                 .get(..prefix.len())
                 .filter(|leading| leading.eq_ignore_ascii_case(prefix))
-                .map(|_| description[prefix.len()..].trim_start())
+                .map(|_| {
+                    description
+                        .get(prefix.len()..)
+                        .unwrap_or_default()
+                        .trim_start()
+                })
         })
         .unwrap_or(description);
 
@@ -246,9 +280,9 @@ fn unknown_api_detail(description: &str) -> &'static str {
         if description
             .get(..phrase.len())
             .is_some_and(|leading| leading.eq_ignore_ascii_case(phrase))
-            && description[phrase.len()..]
-                .chars()
-                .next()
+            && description
+                .get(phrase.len()..)
+                .and_then(|tail| tail.chars().next())
                 .is_none_or(|next| next.is_ascii_whitespace() || matches!(next, ':' | '.' | ';'))
         {
             return detail;

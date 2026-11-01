@@ -118,26 +118,30 @@ fn html_is_too_complex(html: &str) -> bool {
     let mut depth = 0usize;
     let mut max_depth = 0usize;
     let mut elements = 0usize;
-    while i < bytes.len() {
-        if bytes[i] != b'<' {
+    while let Some(&byte) = bytes.get(i) {
+        if byte != b'<' {
             i += 1;
             continue;
         }
-        if html[i..].starts_with("<!--") {
-            i = html[i + 4..]
-                .find("-->")
+        let rest = html.get(i..).unwrap_or_default();
+        if rest.starts_with("<!--") {
+            i = rest
+                .get(4..)
+                .and_then(|tail| tail.find("-->"))
                 .map_or(bytes.len(), |end| i + 4 + end + 3);
             continue;
         }
-        if html[i..].starts_with("<![CDATA[") {
-            i = html[i + 9..]
-                .find("]]>")
+        if rest.starts_with("<![CDATA[") {
+            i = rest
+                .get(9..)
+                .and_then(|tail| tail.find("]]>"))
                 .map_or(bytes.len(), |end| i + 9 + end + 3);
             continue;
         }
         if matches!(bytes.get(i + 1), Some(b'!') | Some(b'?')) {
-            i = html[i + 2..]
-                .find('>')
+            i = rest
+                .get(2..)
+                .and_then(|tail| tail.find('>'))
                 .map_or(bytes.len(), |end| i + 2 + end + 1);
             continue;
         }
@@ -147,19 +151,22 @@ fn html_is_too_complex(html: &str) -> bool {
             i += 1;
         }
         let name_start = i;
-        while i < bytes.len()
-            && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'-' | b':' | b'_'))
-        {
+        while let Some(&byte) = bytes.get(i) {
+            if !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b':' | b'_')) {
+                break;
+            }
             i += 1;
         }
         if name_start == i {
             continue;
         }
-        let name = html[name_start..i].to_ascii_lowercase();
+        let name = html
+            .get(name_start..i)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         let mut quote = None;
         let mut self_closing = false;
-        while i < bytes.len() {
-            let byte = bytes[i];
+        while let Some(&byte) = bytes.get(i) {
             if let Some(active) = quote {
                 if byte == active {
                     quote = None;
@@ -168,10 +175,10 @@ fn html_is_too_complex(html: &str) -> bool {
                 quote = Some(byte);
             } else if byte == b'>' {
                 let mut previous = i;
-                while previous > 0 && bytes[previous - 1].is_ascii_whitespace() {
+                while previous > 0 && bytes.get(previous - 1).is_some_and(u8::is_ascii_whitespace) {
                     previous -= 1;
                 }
-                self_closing = previous > 0 && bytes[previous - 1] == b'/';
+                self_closing = previous > 0 && bytes.get(previous - 1) == Some(&b'/');
                 break;
             }
             i += 1;

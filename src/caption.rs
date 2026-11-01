@@ -47,7 +47,10 @@ pub(crate) fn source_comment(text: &str, url: &Url) -> Option<String> {
     let mut removed = None;
     let mut offset = 0;
     for word in text.split_whitespace() {
-        let start = offset + text[offset..].find(word).unwrap_or(0);
+        let start = offset
+            + text
+                .get(offset..)
+                .map_or(0, |rest| rest.find(word).unwrap_or(0));
         let end = start + word.len();
         offset = end;
         let trimmed = word
@@ -58,7 +61,10 @@ pub(crate) fn source_comment(text: &str, url: &Url) -> Option<String> {
         }
     }
     let mut comment = match removed {
-        Some((start, end)) => format!("{}{}", &text[..start], &text[end..]),
+        Some((start, end)) => match (text.get(..start), text.get(end..)) {
+            (Some(head), Some(tail)) => format!("{head}{tail}"),
+            _ => text.to_owned(),
+        },
         None => text.to_owned(),
     };
     // Removing the link can leave a doubled separator; keep line breaks but tidy spaces.

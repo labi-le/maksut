@@ -1340,7 +1340,7 @@ fn researched_notification_includes_research_text_and_plan_buttons() {
         capped.encode_utf16().count()
     );
     assert!(capped.contains("[обрезано]"));
-    assert_eq!(crate::chat_style::split_message(&capped).len(), 1);
+    assert_eq!(crate::chat_text::split_message(&capped).len(), 1);
     assert!(crate::self_improve::notification_markup(&oversized).is_some());
 }
 

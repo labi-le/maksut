@@ -145,7 +145,7 @@ pub(crate) async fn handle_message(
     } else {
         text
     };
-    let mut flags = crate::memory::detect_flags(raw_log_text);
+    let mut flags = crate::memory_guard::detect_flags(raw_log_text);
     if text.trim().is_empty() && (current_media.is_some() || reply_media.is_some() || has_sticker) {
         flags |= crate::memory::FLAG_JUNK;
     }
@@ -173,7 +173,7 @@ pub(crate) async fn handle_message(
         }
         let group = message.chat.is_group() || message.chat.is_supergroup();
         if group
-            && crate::memory::injection_attempt(raw_log_text)
+            && crate::memory_guard::injection_attempt(raw_log_text)
             && group_enabled(&cfg.database, message.chat.id)
                 .await
                 .is_ok_and(|enabled| enabled)

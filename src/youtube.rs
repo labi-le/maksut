@@ -149,9 +149,9 @@ pub(crate) fn choose_youtube_mp4(info: &Value, max_bytes: u64) -> Option<String>
         }
     }
     let (_, video_index, audio_index) = best?;
-    let video = youtube_format_id(&formats[video_index])?;
+    let video = youtube_format_id(formats.get(video_index)?)?;
     Some(match audio_index {
-        Some(index) => format!("{video}+{}", youtube_format_id(&formats[index])?),
+        Some(index) => format!("{video}+{}", youtube_format_id(formats.get(index)?)?),
         None => video.to_string(),
     })
 }
@@ -186,11 +186,12 @@ pub(crate) async fn probe_youtube_mp4(
     let Ok(child) = cmd.spawn() else {
         return Ok(None);
     };
-    let mut process = DownloadProcess::new(child);
-    let Some(stdout) = process.child.as_mut().and_then(|child| child.stdout.take()) else {
+    let Ok(mut process) = DownloadProcess::new(child) else {
         return Ok(None);
     };
-    let mut stdout = stdout.take(MAX_METADATA_BYTES + 1);
+    let Ok(mut stdout) = process.take_stdout(MAX_METADATA_BYTES + 1) else {
+        return Ok(None);
+    };
     let probe_deadline = deadline.min(time::Instant::now() + YOUTUBE_PROBE_TIMEOUT);
     let Some((bytes, status)) = time::timeout_at(probe_deadline, async {
         let mut bytes = Vec::new();

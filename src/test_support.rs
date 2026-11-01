@@ -751,7 +751,11 @@ impl ToolRegistry {
     }
 
     pub(crate) fn payload_for(&self, owner: bool, feature_tools: bool) -> Option<Value> {
-        self.payload_for_mode(owner, feature_tools, false, false, false)
+        self.payload_for_mode(ToolMode {
+            owner,
+            feature_tools,
+            ..ToolMode::default()
+        })
     }
 }
 
