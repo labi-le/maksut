@@ -2,7 +2,7 @@
 name = "maksut"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.94"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

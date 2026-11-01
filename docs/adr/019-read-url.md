@@ -28,8 +28,8 @@ schemes to every group member, which is unacceptable in the bot container.
   reqwest client. Redirects are followed manually, at most five, and every hop
   is validated again. No cookies, authorization headers, proxy, or browser
   session are used. The custom guard remains because the researched
-  `reqwest-ssrf-guard` requires reqwest 0.13 and rustc 1.87, while this project
-  is on reqwest 0.12 and Rust 1.85.
+  `reqwest-ssrf-guard` requires reqwest 0.13, while this project pins
+  reqwest 0.12.
 - Fetch at most 2 MiB, with a 15-second per-hop timeout, a 20-second total
   budget (DNS, redirects, body), and a 24,000-character output cap. The title
   is capped at 200 characters and control characters are stripped before it
