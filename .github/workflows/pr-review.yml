@@ -4,8 +4,9 @@ name: pr-review
 # (see docs/guides/review-bot.md). The bot account that authors `farm/*` PRs is
 # not allowed to review itself, so this workflow posts as the reviewer account.
 #
-# The checkout is the BASE revision on purpose: code from the pull request head
-# must never run with REVIEWER_TOKEN in scope.
+# The checkout is the repository's default branch on purpose: code from the
+# pull request head must never run with REVIEWER_TOKEN in scope. The base SHA a
+# pull request branched from may predate the reviewer itself and is not used.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -28,10 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check out the base revision
+      - name: Check out the reviewer revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:

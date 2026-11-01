@@ -21,13 +21,14 @@ to push code, only to read a pull request and publish a review.
   collaborator with a **classic** `repo`-scoped PAT. Fine-grained tokens owned by
   a personal account cannot be scoped to repositories that account does not own.
 - The review runs in GitHub Actions (`.github/workflows/pr-review.yml`), not in
-  `buer` and not in a second roboomp stack. The checkout is the **base** revision:
-  pull-request head code never runs with the PAT in scope, which is the same
-  reason `buer` keeps its PAT inside a separate proxy container.
+  `buer` and not in a second roboomp stack. The checkout is the repository's
+  **default branch**: pull-request head code never runs with the PAT in scope,
+  which is the same reason `buer` keeps its PAT inside a separate proxy
+  container.
 - `tools/pr_review.py` (Python standard library only) reads the PR through the
   REST API, caps the diff at 120 000 characters, and asks the LiteLLM gateway for
   one strict-JSON review that carries `severity`, `file`, `line`, `claim`, and
-  `evidence` per finding. `AGENTS.md` from the base checkout is part of the
+  `evidence` per finding. `AGENTS.md` from that checkout is part of the
   prompt; the pull request text is declared untrusted data.
 - The published event is `REQUEST_CHANGES` when a P0/P1 finding exists or the
   model's verdict asks for changes, otherwise `APPROVE`. Reviews are body-only:
