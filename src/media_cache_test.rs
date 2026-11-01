@@ -591,12 +591,9 @@ async fn features_cache_initialization_failures_are_not_silently_ignored() {
 async fn features_unverified_legacy_video_cache_requires_fresh_download() {
     use sha2::Digest;
     let fixture = FeatureFixture::new(&["mp4"], "exit 0").await;
-    let legacy = format!(
-        "{:x}",
-        sha2::Sha256::digest(
-            format!("maksut/media-cache/v1\0{}\0{LINK}", fixture.api.bot.token()).as_bytes()
-        )
-    );
+    let legacy = crate::media_cache::hex_lower(&sha2::Sha256::digest(
+        format!("maksut/media-cache/v1\0{}\0{LINK}", fixture.api.bot.token()).as_bytes(),
+    ));
     sqlx::query(
         "INSERT INTO media_cache (chat_id, cache_key, created_at, items_json)
             VALUES (1, ?, unixepoch(), ?)",
@@ -632,4 +629,15 @@ async fn features_unverified_legacy_video_cache_requires_fresh_download() {
         .iter()
         .filter(|request| request.is_media())
         .all(|request| request.uploads.is_empty()));
+}
+
+// The key is persisted in `media_cache`, so its exact bytes are a compatibility
+// contract: an encoding or prefix change silently strands every stored row.
+#[test]
+fn cache_key_bytes_stay_stable_for_stored_rows() {
+    let url = Url::parse("https://example.com/a").unwrap();
+    assert_eq!(
+        crate::media_cache::cache_key("token", &url),
+        "dd650b85e70188f6389dada576ebea27478eeb71ee24c0cc99043243a53f3154"
+    );
 }
