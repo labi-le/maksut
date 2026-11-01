@@ -31,11 +31,11 @@ pub(crate) fn cache_key(bot_token: &str, url: &Url) -> String {
 // sha2 0.11 dropped `LowerHex` for the digest array; the key is persisted in
 // `media_cache`, so the encoding has to stay lowercase hex.
 pub(crate) fn hex_lower(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+        // Writing into a String is infallible; the result carries no signal.
+        let _ = write!(out, "{byte:02x}");
     }
     out
 }

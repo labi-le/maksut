@@ -329,7 +329,10 @@ pub(crate) async fn compact_chat(
             .join(",");
         let query =
             format!("UPDATE chat_messages SET compacted_at = ? WHERE id IN ({placeholders})");
-        let mut request = sqlx::query(&query).bind(now);
+        // `placeholders` is built from the chunk length alone, never from a
+        // message body, so the statement shape is fixed and injection-free;
+        // sqlx 0.9 requires that audit to be stated explicitly.
+        let mut request = sqlx::query(sqlx::AssertSqlSafe(query)).bind(now);
         for id in chunk {
             request = request.bind(id);
         }
