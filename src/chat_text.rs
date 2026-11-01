@@ -45,20 +45,6 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
     chunks
 }
 
-/// Lowercases the whole reply, except for URLs whose path may be case-sensitive.
-pub(crate) fn lowercase_reply(text: &str) -> String {
-    text.split_inclusive(char::is_whitespace)
-        .map(|token| {
-            let trimmed = token.trim_start_matches(|ch: char| !ch.is_alphanumeric());
-            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-                token.to_owned()
-            } else {
-                token.to_lowercase()
-            }
-        })
-        .collect()
-}
-
 /// Cuts at the last whitespace before `max_chars` so a shortened reply never
 /// ends mid-word.
 pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {

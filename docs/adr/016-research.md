@@ -1,5 +1,7 @@
 # 2026-10-29 — Multi-query research tool
 
+> Superseded in part by [ADR 020](020-reply-casing.md): `style_research_reply` no longer lowercases the body or the source titles. Paragraph handling, citation sanitizing, the source block and the 4800/6000 character bounds below are unchanged.
+
 ## Context
 
 `web_search` was the only search tool. It returns one provider response,

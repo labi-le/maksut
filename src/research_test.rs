@@ -74,19 +74,19 @@ fn research_style_preserves_paragraphs_and_appends_sources() {
         &sources,
     )
     .unwrap();
-    assert!(reply.contains("первый абзац [1]."), "{reply}");
+    assert!(reply.contains("Первый абзац [1]."), "{reply}");
     assert!(!reply.contains("[99]"), "{reply}");
-    assert!(reply.contains("второй - абзац"), "{reply}");
+    assert!(reply.contains("Второй - абзац"), "{reply}");
     assert!(
-        reply.contains("третий https://Example.com/Path [2]"),
+        reply.contains("Третий https://Example.com/Path [2]"),
         "{reply}"
     );
     assert!(
-        reply.contains("источники:\n[1] rust telegram - https://example.com/rust"),
+        reply.contains("источники:\n[1] Rust Telegram - https://example.com/rust"),
         "{reply}"
     );
     assert!(
-        reply.contains("[2] teloxide - https://github.com/teloxide/teloxide"),
+        reply.contains("[2] Teloxide - https://github.com/teloxide/teloxide"),
         "{reply}"
     );
     assert!(!reply.contains("[3]"), "{reply}");
@@ -113,7 +113,7 @@ fn research_style_without_citations_uses_first_sources_and_bounds_length() {
         reply.contains(long_url.as_str()),
         "URL must not be truncated"
     );
-    assert!(reply.contains("[1] first - "), "{}", reply);
+    assert!(reply.contains("[1] First - "), "{}", reply);
 }
 
 #[tokio::test]
@@ -218,14 +218,14 @@ async fn research_collects_dedupes_and_cites_sources() {
     assert!(
         reply
             .text
-            .contains("[1] rust & telegram (1) - https://example.com/rust?b=2&a=1"),
+            .contains("[1] Rust & Telegram (1) - https://example.com/rust?b=2&a=1"),
         "{}",
         reply.text
     );
     assert!(
         reply
             .text
-            .contains("[2] teloxide - https://github.com/teloxide/teloxide"),
+            .contains("[2] Teloxide - https://github.com/teloxide/teloxide"),
         "{}",
         reply.text
     );
@@ -364,12 +364,12 @@ async fn research_without_citations_still_adds_a_source_block() {
         reply.text
     );
     assert!(
-        reply.text.contains("[1] first - https://example.com/one"),
+        reply.text.contains("[1] First - https://example.com/one"),
         "{}",
         reply.text
     );
     assert!(
-        reply.text.contains("[2] second - https://example.org/two"),
+        reply.text.contains("[2] Second - https://example.org/two"),
         "{}",
         reply.text
     );

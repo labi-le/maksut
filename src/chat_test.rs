@@ -49,20 +49,6 @@ fn chat_prompt_needs_the_name_in_groups() {
 }
 
 #[test]
-fn replies_are_lowercased_except_urls() {
-    assert_eq!(lowercase_reply("Привет! Как Дела?"), "привет! как дела?");
-    assert_eq!(
-        lowercase_reply("Смотри https://Example.com/Path"),
-        "смотри https://Example.com/Path"
-    );
-    assert_eq!(
-        lowercase_reply("(https://Ex.com/Path)"),
-        "(https://Ex.com/Path)"
-    );
-    assert_eq!(lowercase_reply("Москва — Это Город"), "москва — это город");
-}
-
-#[test]
 fn replies_are_short_and_without_a_trailing_period() {
     assert_eq!(style_reply("Привет. Как дела."), "Привет. Как дела");
     assert_eq!(
