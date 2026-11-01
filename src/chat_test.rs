@@ -49,7 +49,7 @@ fn chat_prompt_needs_the_name_in_groups() {
 }
 
 #[test]
-fn replies_are_short_and_without_a_trailing_period() {
+fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
     assert_eq!(style_reply("Привет. Как дела."), "Привет. Как дела");
     assert_eq!(
         style_reply("Привет, Вадик. Как дела?"),
