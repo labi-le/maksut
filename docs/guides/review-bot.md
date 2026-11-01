@@ -33,17 +33,26 @@ A model answer that fails schema validation is retried once with the rejection r
 
 ## Blocking merges
 
-The review event alone does not stop a merge; GitHub needs branch protection to act on it:
+The review event alone does not stop a merge; GitHub needs branch protection to act on it. This payload requires one approving review, dismisses stale approvals, and also requires the `review` job itself, so a reviewer that crashes blocks the merge instead of letting it through:
 
 ```sh
-gh api -X PUT repos/labi-le/maxwell/branches/main/protection \
-  -f 'required_status_checks=' \
-  -F 'enforce_admins=false' \
-  -F 'required_pull_request_reviews[required_approving_review_count]=1' \
-  -F 'restrictions=' 
+cat >/tmp/maxwell-protection.json <<'JSON'
+{
+  "required_status_checks": {"strict": true, "contexts": ["review"]},
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 1,
+    "dismiss_stale_reviews": true
+  },
+  "restrictions": null
+}
+JSON
+gh api -X PUT repos/labi-le/maxwell/branches/main/protection --input /tmp/maxwell-protection.json
 ```
 
-`REQUEST_CHANGES` blocks the merge while it stands; a clean `APPROVE` satisfies the one-approval rule. Leave `dismiss_stale_reviews` off only if the same head SHA is enough evidence — the workflow re-reviews every push, so enabling dismissal is safe and stricter.
+Run it only after `REVIEWER_TOKEN` works: until the reviewer can submit an `APPROVE`, every pull request is blocked. The required `review` check also blocks fork pull requests, which never receive the secrets; keep the requirement off if forks should merge without the bot.
+
+`REQUEST_CHANGES` blocks the merge while it stands; a clean `APPROVE` satisfies the one-approval rule, and the workflow re-reviews every push so a dismissed stale approval is replaced automatically.
 
 ## Failure modes
 
