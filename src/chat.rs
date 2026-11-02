@@ -19,6 +19,9 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) image: Option<&'a ChatImage>,
     pub(crate) followup: bool,
     pub(crate) reply_context: Option<&'a str>,
+    /// Present in live replies so tool passes can ack in Telegram; callers
+    /// without a Bot API mock pass `None`.
+    pub(crate) bot: Option<&'a Bot>,
 }
 
 pub(crate) struct ChatReply {
@@ -136,6 +139,7 @@ pub(crate) async fn reply_with_chat(
         image: downloaded_image.as_ref(),
         followup: input.followup,
         reply_context: input.reply_context.as_deref(),
+        bot: Some(bot),
     };
     let turn = &turn;
     let catalog = cfg.sticker_catalog.read().await;
@@ -388,6 +392,7 @@ pub(crate) async fn chat_reply_with_proposal(
         user_id: turn.user_id,
         sender_name: turn.sender_name,
         message_id: turn.message_id,
+        bot: turn.bot,
         read_url_targets: read_url_targets.as_slice(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);

@@ -37,6 +37,8 @@ mod chat_text;
 pub(crate) use chat_text::*;
 mod chat_tools;
 pub(crate) use chat_tools::*;
+mod reaction;
+pub(crate) use reaction::*;
 mod research;
 pub(crate) use research::*;
 mod search;

@@ -18,6 +18,7 @@ pub(crate) struct ToolContext<'a> {
     pub(crate) user_id: UserId,
     pub(crate) sender_name: &'a str,
     pub(crate) message_id: i32,
+    pub(crate) bot: Option<&'a Bot>,
     pub(crate) read_url_targets: &'a [Url],
 }
 
@@ -331,6 +332,11 @@ pub(crate) async fn run_tool_call(
                     })
                     .unwrap_or_default();
                 let budget = SEARCH_CALLS_PER_REPLY.saturating_sub(state.search_calls);
+                // Ack before the search fanout: the sender should see the
+                // request was picked up while the dossier is still being built.
+                if let Some(bot) = ctx.bot {
+                    mark_research(bot, ctx.chat_id, MessageId(ctx.message_id)).await;
+                }
                 match ctx
                     .chat
                     .research(ctx.user_id, question, &queries, budget)
