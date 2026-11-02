@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -35,9 +37,117 @@ GITHUB_ACCEPT = "application/vnd.github+json"
 
 MAX_DIFF_CHARS = 120_000
 MAX_AGENTS_CHARS = 24_000
+MAX_GUIDE_CHARS = 16_000
+MAX_TOOL_FILE_CHARS = 16_000
+MAX_TOOL_CALLS = 6
 MAX_PR_BODY_CHARS = 6_000
 MAX_REVIEW_BODY_CHARS = 60_000
 MAX_LLM_ATTEMPTS = 2
+
+DIFF_FILE_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$", re.MULTILINE)
+FORBIDDEN_READ_PARTS = frozenset({".git", ".env", ".secrets", "cookies", "self-improve", "self_improve", "target"})
+ALLOWED_READ_NAMES = frozenset({"Dockerfile", ".dockerignore"})
+ALLOWED_READ_SUFFIXES = frozenset({".rs", ".py", ".md", ".toml", ".yml", ".yaml", ".json", ".sh", ".nix", ".txt"})
+
+GUIDE_RULES = (
+    ("docs/guides/review-bot.md", (".github/workflows/pr-review.yml", "tools/pr_review.py", "tools/test_pr_review.py")),
+    (
+        "docs/guides/security.md",
+        (
+            "src/links",
+            "src/read_url",
+            "src/images",
+            "src/image_fetch",
+            "src/tool_registry",
+            "src/memory",
+            "src/cookies",
+            "Dockerfile",
+            "compose.yaml",
+            ".dockerignore",
+        ),
+    ),
+    (
+        "docs/guides/media.md",
+        (
+            "src/links",
+            "src/ytdlp",
+            "src/youtube",
+            "src/tiktok",
+            "src/twitter",
+            "src/instagram",
+            "src/pinterest",
+            "src/images",
+            "src/image_fetch",
+            "src/media",
+            "src/album",
+            "src/caption",
+            "src/download",
+            "src/ffmpeg",
+            "src/probe",
+            "tools/twitter_images.py",
+        ),
+    ),
+    (
+        "docs/guides/chat.md",
+        (
+            "src/chat",
+            "src/search",
+            "src/research",
+            "src/read_url",
+            "src/memory",
+            "src/tool_registry",
+            "src/sticker",
+            "sticker_sets.txt",
+            "sticker_descriptions.json",
+        ),
+    ),
+    (
+        "docs/guides/self-improve.md",
+        (
+            "src/self_improve",
+            "src/improve_",
+            "src/code_inspect",
+            "tools/self_improve",
+            "tools/auto_deploy.py",
+            "tools/omp_worker.py",
+            "tools/test_self_improve",
+            "tools/test_auto_deploy.py",
+            "tools/test_omp_worker.py",
+            ".github/workflows/publish-image.yml",
+            "packaging/",
+            "self_improve/",
+        ),
+    ),
+    (
+        "docs/guides/cookies.md",
+        (
+            "src/cookies",
+            "src/cookie_refresh",
+            "tools/export_chrome_cookies.py",
+            "tools/cookie_refresh",
+            "tools/test_cookie",
+            "cookie_refresh/",
+        ),
+    ),
+)
+
+READ_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_file",
+        "description": "Read a UTF-8 file from the base repository checkout by relative path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path inside the repository.",
+                }
+            },
+            "required": ["path"],
+        },
+    },
+}
 
 SEVERITIES = ("P0", "P1", "P2", "P3")
 BLOCKING = frozenset({"P0", "P1"})
@@ -53,8 +163,11 @@ Work in two passes and keep them distinct:
 2. PERFORMANCE: avoidable allocation, copying or work on runtime paths, unbounded
    buffers, lock scope across `.await`, subprocess and network budget.
 
-The repository rules in the AGENTS.md section below are binding. Use them, but do
-not restate them as findings; report only what this diff gets wrong.
+The repository rules in AGENTS.md and any preloaded guide sections below are
+binding. When AGENTS.md points to another guide or ADR under `docs/`, or when you
+need to verify a caller, type, or invariant in `src/` or `tools/` outside the diff
+hunks, call `read_file` before judging. Do not restate rules as findings; report
+only what this diff gets wrong.
 
 Rules for findings:
 - Every finding must be provable from the diff or from code the diff touches.
@@ -145,22 +258,22 @@ class GitHub:
 class Gateway:
     """OpenAI-compatible chat completion against the LiteLLM gateway."""
 
-    def __init__(self, base_url=DEFAULT_LLM_BASE, api_key="", model=DEFAULT_LLM_MODEL, timeout=600):
+    def __init__(self, base_url=DEFAULT_LLM_BASE, api_key="", model=DEFAULT_LLM_MODEL, timeout=600, root="."):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.root = root
 
-    def complete(self, prompt):
+    def _chat(self, messages, allow_tools):
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "temperature": 0.2,
             "max_tokens": 8000,
         }
+        if allow_tools:
+            payload["tools"] = [READ_FILE_TOOL]
         status, body, _ = _request(
             f"{self.base_url}/chat/completions",
             token=self.api_key,
@@ -172,12 +285,58 @@ class Gateway:
         if status != 200:
             raise ReviewError(f"gateway: HTTP {status}: {body[:200]}")
         try:
-            content = json.loads(body)["choices"][0]["message"].get("content")
+            message = json.loads(body)["choices"][0]["message"]
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ReviewError("gateway: malformed completion payload") from error
-        if not isinstance(content, str) or not content.strip():
-            raise ReviewError("gateway: empty completion")
-        return content
+        if not isinstance(message, dict):
+            raise ReviewError("gateway: malformed completion payload")
+        return message
+
+    def complete(self, prompt):
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        remaining_calls = MAX_TOOL_CALLS
+        while True:
+            message = self._chat(messages, allow_tools=remaining_calls > 0)
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list) or not tool_calls or remaining_calls <= 0:
+                content = message.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise ReviewError("gateway: empty completion")
+                return content
+            selected = tool_calls[:remaining_calls]
+            remaining_calls -= len(selected)
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.get("content") or "",
+                    "tool_calls": selected,
+                }
+            )
+            for call in selected:
+                call_id = str((call or {}).get("id") or "call_0")
+                function = (call or {}).get("function") or {}
+                name = str(function.get("name") or "")
+                raw_args = function.get("arguments") or "{}"
+                try:
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                except ValueError:
+                    args = {}
+                req_path = str((args or {}).get("path") or "") if isinstance(args, dict) else ""
+                content = (
+                    read_repo_file(req_path, root=self.root, limit=MAX_TOOL_FILE_CHARS)
+                    if name == "read_file"
+                    else f"error: unknown tool '{name}'"
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": content,
+                    }
+                )
 
 
 def read_text(path, limit):
@@ -192,7 +351,77 @@ def read_text(path, limit):
     return text
 
 
-def build_prompt(pull, diff, agents, model):
+def diff_paths(diff):
+    seen = []
+    for match in DIFF_FILE_RE.finditer(diff):
+        for candidate in (match.group(2), match.group(1)):
+            path = candidate.strip()
+            if path and path != "/dev/null" and path not in seen:
+                seen.append(path)
+    return seen
+
+
+def select_guides(paths):
+    if not paths:
+        return []
+    guides = ["docs/guides/workflow.md"]
+    for guide, prefixes in GUIDE_RULES:
+        if any(path == prefix or path.startswith(prefix) for path in paths for prefix in prefixes):
+            if guide not in guides:
+                guides.append(guide)
+    for path in paths:
+        if path.startswith("docs/guides/") and path.endswith(".md") and path not in guides:
+            guides.append(path)
+    return guides
+
+
+def load_guides(diff, root=".", limit=MAX_GUIDE_CHARS):
+    root_path = pathlib.Path(root)
+    loaded = []
+    for rel_path in select_guides(diff_paths(diff)):
+        text = read_text(str(root_path / rel_path), limit)
+        if text:
+            loaded.append((rel_path, text))
+    return loaded
+
+
+def read_repo_file(rel_path, *, root=".", limit=MAX_TOOL_FILE_CHARS):
+    cleaned = rel_path.strip().lstrip("/")
+    if not cleaned:
+        return "error: path is empty"
+    base = pathlib.Path(root).resolve()
+    candidate = base / cleaned
+    try:
+        walk = base
+        for part in pathlib.Path(cleaned).parts:
+            if part in ("", "."):
+                continue
+            if part == "..":
+                return f"error: '{cleaned}' is outside the repository"
+            walk = walk / part
+            if walk.is_symlink():
+                return f"error: '{cleaned}' is not accessible"
+        resolved = candidate.resolve()
+    except OSError:
+        return f"error: '{cleaned}' could not be resolved"
+    if resolved == base or base not in resolved.parents:
+        return f"error: '{cleaned}' is outside the repository"
+    rel_parts = resolved.relative_to(base).parts
+    if any(
+        part in FORBIDDEN_READ_PARTS
+        or (part.startswith(".") and part not in (".github", ".dockerignore"))
+        for part in rel_parts
+    ):
+        return f"error: '{cleaned}' is forbidden"
+    if resolved.name not in ALLOWED_READ_NAMES and resolved.suffix.lower() not in ALLOWED_READ_SUFFIXES:
+        return f"error: '{cleaned}' has an unsupported file type"
+    if not resolved.is_file():
+        return f"error: '{cleaned}' does not exist"
+    text = read_text(str(resolved), limit)
+    return text if text else f"error: '{cleaned}' is empty or unreadable"
+
+
+def build_prompt(pull, diff, agents, model, guides=()):
     body = str(pull.get("body") or "").strip()
     if len(body) > MAX_PR_BODY_CHARS:
         body = body[:MAX_PR_BODY_CHARS] + "\n[тело PR обрезано]"
@@ -202,18 +431,23 @@ def build_prompt(pull, diff, agents, model):
     files = pull.get("changed_files")
     additions = pull.get("additions")
     deletions = pull.get("deletions")
-    return "\n\n".join(
+    sections = [
+        f"# Pull request #{pull.get('number')}: {pull.get('title') or ''}\n"
+        f"files changed: {files}, +{additions}/-{deletions}\n"
+        f"head: {pull.get('head', {}).get('sha', '')}\n"
+        f"base: {pull.get('base', {}).get('ref', '')}",
+        f"# Тело PR\n{body or '(пусто)'}",
+        f"# AGENTS.md (доверенный контекст из базовой ревизии)\n{agents or '(не найден)'}",
+    ]
+    for guide_path, guide_text in guides:
+        sections.append(f"# {guide_path} (доверенный контекст из базовой ревизии)\n{guide_text}")
+    sections.extend(
         [
-            f"# Pull request #{pull.get('number')}: {pull.get('title') or ''}\n"
-            f"files changed: {files}, +{additions}/-{deletions}\n"
-            f"head: {pull.get('head', {}).get('sha', '')}\n"
-            f"base: {pull.get('base', {}).get('ref', '')}",
-            f"# Тело PR\n{body or '(пусто)'}",
-            f"# AGENTS.md (доверенный контекст из базовой ревизии)\n{agents or '(не найден)'}",
             f"# Diff\n```diff\n{diff}```",
             f"Ответь одним JSON-объектом без пояснений. Модель: {model}.",
         ]
     )
+    return "\n\n".join(sections)
 
 
 def _strip_fence(text):
@@ -347,7 +581,8 @@ class Reviewer:
         if not diff.strip():
             return self._skip("empty diff")
         agents = read_text("AGENTS.md", MAX_AGENTS_CHARS)
-        prompt = build_prompt(pull, diff, agents, self.model)
+        guides = load_guides(diff)
+        prompt = build_prompt(pull, diff, agents, self.model, guides=guides)
         review = None
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
             answer = self.complete(prompt)

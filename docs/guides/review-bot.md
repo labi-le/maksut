@@ -12,7 +12,7 @@ Every pull request in this repository is opened by the `farm/*` bot account (`in
 
 1. Reads the PR (`GET /repos/{repo}/pulls/{n}`) and its diff (`Accept: application/vnd.github.v3.diff`), capped at 120 000 characters.
 2. Skips silently when the token is empty (fork pull requests never receive repository secrets), when the PR is a draft, when the reviewer is the author (GitHub forbids approving your own PR), or when the reviewer already reviewed this exact head SHA — a re-run never duplicates a review, and a push produces a new one.
-3. Asks the gateway for one strict-JSON review with `severity`/`file`/`line`/`claim`/`evidence` per finding. The prompt carries `AGENTS.md` from that checkout and requires two passes, architecture and performance; the PR text is declared untrusted data.
+3. Asks the gateway for one strict-JSON review with `severity`/`file`/`line`/`claim`/`evidence` per finding. The prompt carries `AGENTS.md` plus every `docs/guides/*.md` whose trigger matches a path in the diff (mapped from the `AGENTS.md` guide table), and exposes a read-only `read_file` tool (up to 6 calls per review, 16 000 characters per file, restricted to non-secret repository files in the base checkout) so the model can inspect `docs/adr/*`, other guides, or callers in `src/` and `tools/` on demand; the PR text is declared untrusted data.
 4. Publishes `REQUEST_CHANGES` when any P0/P1 finding exists or the model's verdict says so, otherwise `APPROVE`, with the summary and findings rendered as a Markdown body. An approval with no findings carries an empty body. This is a body-only review: inline comments are not posted.
 
 A model answer that fails schema validation is retried once with the rejection reason appended; a second failure fails the job instead of approving anything. GitHub, gateway, and parsing failures exit non-zero for the same reason.
@@ -54,7 +54,7 @@ What keeps the token away from pull-request code:
 - the workflow runs on `pull_request` for same-repository branches; fork pull requests never receive repository secrets, and the job exits before touching the network;
 - it checks out the **default branch**, never the pull request head, with `persist-credentials: false`;
 - its own `GITHUB_TOKEN` is limited to `contents: read` and is not used by the script;
-- the pull request text is untrusted input to the model only. The model's answer must parse as JSON with `severity`/`file`/`line`/`claim`/`evidence`; nothing from the pull request is executed.
+- the pull request text is untrusted input to the model only. `read_file` resolves paths inside the base checkout, rejects symlinks, hidden paths (except `.github` and `.dockerignore`), and secret/state directories (`.git`, `.env`, `.secrets`, `cookies`, `self-improve`, `self_improve`, `target`), and nothing from the pull request is executed.
 
 ## Blocking merges
 
@@ -94,6 +94,6 @@ With `enforce_admins: false` an administrator can still merge without the approv
 
 ## Limits and costs
 
-- Diff content is capped at 120 000 characters, the PR body at 6 000, `AGENTS.md` at 24 000, and the published body at 60 000; anything larger is truncated with a visible marker so the finding set is honest about its own coverage.
-- One review per head SHA per repository: at most one gateway call per push, plus one retry when the answer is malformed.
+- Diff content is capped at 120 000 characters, the PR body at 6 000, `AGENTS.md` at 24 000, each preloaded guide or `read_file` response at 16 000 (up to 6 `read_file` calls per review), and the published body at 60 000; anything larger is truncated with a visible marker so the finding set is honest about its own coverage.
+- One review per head SHA per repository: one gateway conversation per push (typically a single call when preloaded guides suffice, plus up to 6 `read_file` tool rounds when the model inspects extra files), plus one retry when the final answer is malformed.
 - The workflow inherits the repository's Actions minutes; `labi-le/maxwell` is public, so they are free.
