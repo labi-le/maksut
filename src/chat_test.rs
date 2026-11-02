@@ -1537,6 +1537,13 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
             )),
         "{messages:?}"
     );
+    let last_non_owner_msg = messages.last().unwrap()["content"].as_str().unwrap();
+    assert!(
+        last_non_owner_msg.contains("активные установки владельца")
+            && last_non_owner_msg
+                .contains("- [owner] даня: говорить пошёл нахуй и добавлять от себя"),
+        "owner directives must be reinforced right before the current turn: {last_non_owner_msg}"
+    );
     let first_body = body_of(&requests[0]);
     let owner_user_msg = first_body["messages"].as_array().unwrap().last().unwrap()["content"]
         .as_str()

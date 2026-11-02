@@ -18,20 +18,11 @@ pub(crate) struct ChatTurn<'a> {
     /// without a Bot API mock pass `None`.
     pub(crate) bot: Option<&'a Bot>,
 }
-
+#[derive(Default)]
 pub(crate) struct ChatReply {
     pub(crate) text: String,
     pub(crate) sticker: Option<FileId>,
     pub(crate) decision: Option<crate::self_improve::PendingDecision>,
-}
-impl ChatReply {
-    fn empty() -> Self {
-        Self {
-            text: String::new(),
-            sticker: None,
-            decision: None,
-        }
-    }
 }
 
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
@@ -43,12 +34,9 @@ impl Drop for AbortOnDrop {
 }
 
 async fn record_assistant_reply(pool: &SqlitePool, chat_id: ChatId, text: &str, message_id: i32) {
-    let _ = crate::memory::record_message(
-        pool,
-        RecordMessage::new(chat_id, 0, "максут", "assistant", text)
-            .with_message_id(Some(message_id)),
-    )
-    .await;
+    let msg = RecordMessage::new(chat_id, 0, "максут", "assistant", text)
+        .with_message_id(Some(message_id));
+    let _ = crate::memory::record_message(pool, msg).await;
 }
 
 #[tracing::instrument(skip_all)]
@@ -95,13 +83,12 @@ pub(crate) async fn reply_with_chat(
         return;
     };
     drop(image_permit);
-    let typing = if !input.followup {
-        let _ = bot
-            .send_chat_action(message.chat.id, ChatAction::Typing)
-            .await;
-        let typing_bot = bot.clone();
-        let typing_chat = message.chat.id;
-        Some(AbortOnDrop(tokio::spawn(async move {
+    let typing = (!input.followup).then(|| {
+        let (typing_bot, typing_chat) = (bot.clone(), message.chat.id);
+        AbortOnDrop(tokio::spawn(async move {
+            let _ = typing_bot
+                .send_chat_action(typing_chat, ChatAction::Typing)
+                .await;
             loop {
                 time::sleep(Duration::from_secs(config().chat.typing_keepalive_secs)).await;
                 if typing_bot
@@ -112,10 +99,8 @@ pub(crate) async fn reply_with_chat(
                     break;
                 }
             }
-        })))
-    } else {
-        None
-    };
+        }))
+    });
     let fallback_prompt;
     let effective_prompt = if input.warn_missing_image && downloaded_image.is_none() {
         fallback_prompt = format!("{}\n[не удалось загрузить вложение]", input.prompt);
@@ -236,7 +221,7 @@ pub(crate) async fn chat_reply_with_proposal(
 ) -> Result<ChatReply, String> {
     if turn.followup && is_stop_followup(turn.prompt) {
         chat.clear_followup(turn.chat_id).await;
-        return Ok(ChatReply::empty());
+        return Ok(ChatReply::default());
     }
     let prompt = if turn.prompt.trim().is_empty() {
         if turn.followup {
@@ -251,7 +236,7 @@ pub(crate) async fn chat_reply_with_proposal(
         .await
         .map_err(|_| "context".to_string())?;
     if is_repeated_user_spam(turn.owner, turn.user_id.0 as i64, prompt, &recent) {
-        return Ok(ChatReply::empty());
+        return Ok(ChatReply::default());
     }
     let self_memory = crate::code_inspect::load_self_memory(pool)
         .await
@@ -290,7 +275,7 @@ pub(crate) async fn chat_reply_with_proposal(
         messages.push(json!({"role": "system", "content": notice}));
     }
     let mut memory_text = String::new();
-    if let Some(self_memory) = self_memory {
+    if let Some(self_memory) = &self_memory {
         memory_text.push_str(&format!(
             "<self_memory type=\"data\" source=\"self_memory\">\n{self_memory}\n</self_memory>\n\n"
         ));
@@ -354,6 +339,16 @@ pub(crate) async fn chat_reply_with_proposal(
     if let Some(reply_ctx) = turn.reply_context {
         user_text.push_str(reply_ctx);
         user_text.push('\n');
+    }
+    if let Some(self_memory) = &self_memory {
+        let directives: String = self_memory
+            .lines()
+            .filter(|l| l.starts_with("- [owner]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !directives.is_empty() {
+            user_text.push_str(&format!("активные установки владельца (приоритет выше тона прошлых сообщений, применяй буквально):\n{directives}\n"));
+        }
     }
     let speaker_line = crate::memory::format_line_with_owner(
         turn.sender_name,

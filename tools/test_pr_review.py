@@ -282,7 +282,8 @@ class GatewayToolLoopTests(unittest.TestCase):
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": "",
+                                "content": None,
+                                "provider_specific_fields": {"thought_signature": "sig-1"},
                                 "tool_calls": [
                                     {
                                         "id": "call_1",
@@ -293,6 +294,16 @@ class GatewayToolLoopTests(unittest.TestCase):
                                         },
                                     }
                                 ],
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
                             }
                         }
                     ]
@@ -321,11 +332,15 @@ class GatewayToolLoopTests(unittest.TestCase):
             finally:
                 pr_review._request = original
             self.assertEqual(json.loads(answer), CLEAN)
-            self.assertEqual(len(seen_payloads), 2)
+            self.assertEqual(len(seen_payloads), 3)
+            self.assertEqual(seen_payloads[0]["tool_choice"], "auto")
+            assistant_msg = seen_payloads[1]["messages"][-2]
+            self.assertEqual(assistant_msg["provider_specific_fields"], {"thought_signature": "sig-1"})
             tool_msg = seen_payloads[1]["messages"][-1]
             self.assertEqual(tool_msg["role"], "tool")
             self.assertEqual(tool_msg["tool_call_id"], "call_1")
             self.assertEqual(tool_msg["content"], "guide rule 42")
+            self.assertNotIn("tools", seen_payloads[2])
 
 class RunTests(unittest.TestCase):
     def test_clean_review_is_approved_and_submitted(self):
