@@ -1726,7 +1726,7 @@ async fn plain_reply_does_not_react_to_the_message() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn web_search_marks_the_message_once_per_reply() {
+async fn web_search_marks_the_message_on_every_pass() {
     let dir = tempfile::tempdir().unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
@@ -1780,17 +1780,20 @@ async fn web_search_marks_the_message_once_per_reply() {
         .iter()
         .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
         .collect();
-    assert_eq!(reactions.len(), 1, "{calls:?}");
-    let body: Value = serde_json::from_str(&reactions[0].1).unwrap();
-    assert_eq!(body["message_id"], 7);
-    assert_eq!(body["reaction"][0]["emoji"], "👀");
+    assert_eq!(reactions.len(), 2, "{calls:?}");
+    for (_, raw) in &reactions {
+        let body: Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(body["chat_id"], 1);
+        assert_eq!(body["message_id"], 7);
+        assert_eq!(body["reaction"][0]["emoji"], "👀");
+    }
     server.abort();
     llm.task.abort();
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn read_url_marks_the_message_once_per_reply() {
+async fn read_url_marks_the_message_on_every_pass() {
     let dir = tempfile::tempdir().unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
@@ -1843,11 +1846,13 @@ async fn read_url_marks_the_message_once_per_reply() {
         .iter()
         .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
         .collect();
-    assert_eq!(reactions.len(), 1, "{calls:?}");
-    let body: Value = serde_json::from_str(&reactions[0].1).unwrap();
-    assert_eq!(body["chat_id"], 1);
-    assert_eq!(body["message_id"], 7);
-    assert_eq!(body["reaction"][0]["emoji"], "👀");
+    assert_eq!(reactions.len(), 2, "{calls:?}");
+    for (_, raw) in &reactions {
+        let body: Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(body["chat_id"], 1);
+        assert_eq!(body["message_id"], 7);
+        assert_eq!(body["reaction"][0]["emoji"], "👀");
+    }
     server.abort();
     llm.task.abort();
 }
