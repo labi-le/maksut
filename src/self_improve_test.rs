@@ -1389,6 +1389,28 @@ fn owner_command_collects_every_id() {
 }
 
 #[test]
+fn owner_command_keeps_the_typed_case_but_matches_ignoring_it() {
+    use crate::improve_commands::{lookup_in_tasks, TaskIdMatch};
+
+    let full_id = "plan-1793567438-1002045081420-214537";
+    let typed = "PLAN-1793567438-1002045081420-214537";
+    let command = crate::self_improve::parse_owner_command(&format!("одобри #{typed}")).unwrap();
+    assert_eq!(command.targets, vec![typed]);
+
+    let tasks = vec![(
+        0i64,
+        full_id.to_string(),
+        json!({"status": "proposed"}),
+        false,
+    )];
+    match lookup_in_tasks(&tasks, typed, &|_| true) {
+        TaskIdMatch::Found(id) => assert_eq!(id, full_id),
+        TaskIdMatch::Ambiguous(ids) => panic!("ambiguous: {ids:?}"),
+        TaskIdMatch::Missing => panic!("uppercase id must still select the task"),
+    }
+}
+
+#[test]
 fn decision_markup_rejects_ids_that_cannot_fit() {
     let issue = |id: String| crate::self_improve::PendingDecision {
         id,
