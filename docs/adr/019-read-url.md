@@ -30,6 +30,18 @@ schemes to every group member, which is unacceptable in the bot container.
   session are used. The custom guard remains because the researched
   `reqwest-ssrf-guard` requires reqwest 0.13, while this project pins
   reqwest 0.12.
+- Requests present the Firefox 147 / Linux x86_64 profile and the navigation
+  header set a browser sends (`Accept`, `Accept-Language`, `Sec-Fetch-Dest`,
+  `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `Sec-Fetch-User`, and
+  `Upgrade-Insecure-Requests`) from `src/browser.rs`; DuckDuckGo `web_search`
+  sends the same set. `Upgrade-Insecure-Requests` is unconditional because the
+  preloadable-HSTS exception cannot be evaluated here. It is also sent on the
+  deliberate `https`→`http` retry, where a host that upgrades on this
+  preference can refuse the retry; accepted because that fallback only serves
+  hosts whose TLS already failed. Sites that filter only
+  on `User-Agent` otherwise answer the honest `Maksut/0.1` string with a block
+  page. This is header emulation only: still no cookies, authorization headers,
+  proxy, or browser session.
 - Fetch at most 2 MiB, with a 15-second per-hop timeout, a 20-second total
   budget (DNS, redirects, body), and a 24,000-character output cap. The title
   is capped at 200 characters and control characters are stripped before it
@@ -55,6 +67,8 @@ schemes to every group member, which is unacceptable in the bot container.
   `.env`, cookies, the database, SSH keys, or internal services.
 - `read_url` is read-only and remains available in research mode; it is not a
   way to trigger downloads or owner actions.
+- Header emulation does not defeat JS challenges or TLS fingerprinting; sites
+  that rely on those checks still reject `read_url`, as before.
 - PDF/DOCX conversion, JS rendering, authenticated pages, and paywalled pages
   are explicitly out of scope for this iteration. They can be added behind the
   same URL guard and size limits.

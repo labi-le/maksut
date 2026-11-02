@@ -61,6 +61,7 @@ mod diagnostics;
 pub(crate) use diagnostics::*;
 mod links;
 pub(crate) use links::*;
+mod browser;
 mod media;
 mod read_url;
 mod read_url_html;
@@ -204,6 +205,8 @@ async fn callback_endpoint(
     handle_callback_query(bot, query, cfg).await
 }
 
+#[cfg(test)]
+mod browser_test;
 #[cfg(test)]
 mod caption_test;
 #[cfg(test)]

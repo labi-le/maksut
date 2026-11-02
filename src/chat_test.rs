@@ -143,6 +143,35 @@ fn search_results_are_extracted_and_decoded() {
 }
 
 #[tokio::test]
+async fn duckduckgo_search_sends_browser_navigation_headers() {
+    let server = mock_server(vec![
+        r#"<a rel="nofollow" class="result__a" href="https://example.com/page">Example</a>"#.into(),
+    ])
+    .await;
+    let client = SearchClient {
+        url: server.url.clone(),
+        provider: SearchProvider::DuckDuckGo,
+        tavily_key: None,
+        http: reqwest::Client::new(),
+    };
+    let hits = client.search_hits("rust", 5).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    let request = server.requests.lock().unwrap()[0].to_ascii_lowercase();
+    for header in [
+        "user-agent: mozilla/5.0 (x11; linux x86_64; rv:147.0) gecko/20100101 firefox/147.0",
+        "accept-language: ru,en;q=0.8",
+        "sec-fetch-dest: document",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-site: none",
+        "sec-fetch-user: ?1",
+        "upgrade-insecure-requests: 1",
+    ] {
+        assert!(request.contains(header), "{header} missing from {request}");
+    }
+    server.task.abort();
+}
+
+#[tokio::test]
 async fn chat_reply_includes_previous_chat_messages() {
     let dir = tempfile::tempdir().unwrap();
     let pool = open_database(&format!(

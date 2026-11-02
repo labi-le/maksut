@@ -1,3 +1,4 @@
+use crate::browser::navigation_headers;
 use crate::permitted_ipv4;
 use crate::prelude::*;
 pub(crate) use crate::read_url_html::*;
@@ -19,7 +20,6 @@ const READ_URL_FOOTER_BUDGET_CHARS: usize = 4000;
 // of elements and nesting depth before handing HTML to readability.
 pub(crate) const READ_URL_MAX_HTML_ELEMENTS: usize = 20_000;
 pub(crate) const READ_URL_MAX_HTML_DEPTH: usize = 128;
-const READ_URL_USER_AGENT: &str = "Maksut/0.1 (+https://github.com/labi-le/maxwell)";
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReadPage {
@@ -110,14 +110,7 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
             Ok(Err(error)) => return Err(error),
             Err(_) => return Err(ReadUrlError::Timeout),
         };
-        let request = client
-            .get(url.clone())
-            .header(
-                reqwest::header::ACCEPT,
-                "text/html,application/xhtml+xml,application/json,text/plain;q=0.8,*/*;q=0.5",
-            )
-            .header(reqwest::header::ACCEPT_LANGUAGE, "ru,en;q=0.8")
-            .header(reqwest::header::USER_AGENT, READ_URL_USER_AGENT);
+        let request = navigation_headers(client.get(url.clone()));
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);

@@ -1,11 +1,10 @@
+use crate::browser::navigation_headers;
 use crate::prelude::*;
 use serde_json::json;
 
 const SEARCH_RESULTS: usize = 5;
 const SEARCH_RESULT_CHARS: usize = 2500;
 const MAX_SEARCH_BYTES: usize = 512 * 1024;
-const SEARCH_USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum SearchProvider {
@@ -200,10 +199,7 @@ impl SearchClient {
     async fn ddg_search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, SearchFailure> {
         let mut url = self.url.clone();
         url.query_pairs_mut().append_pair("q", query);
-        let response = self
-            .http
-            .get(url)
-            .header("user-agent", SEARCH_USER_AGENT)
+        let response = navigation_headers(self.http.get(url))
             .send()
             .await
             .map_err(Self::map_error)?;
