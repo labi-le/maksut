@@ -39,6 +39,11 @@ log `image ... is not published yet: manifest unknown`.
   timer: it checks `self-improve/off` first, extracts `tools/auto_deploy.py`
   from `origin/main`, and executes that copy. Deploy logic therefore follows the
   repository, never the working tree.
+- The listener process itself is the one piece of deploy code that cannot
+  follow `origin/main` on its own: `systemctl --user restart
+  maksut-deploy-hook` is required after a merge that changes
+  `tools/deploy_hook.py` (the units' `git show` only covers
+  `tools/auto_deploy.py`).
 - The timer becomes a safety net instead of the trigger:
   `OnUnitActiveSec=30min` in `packaging/maksut-auto-deploy.timer`, covering lost
   deliveries and failed runs.
