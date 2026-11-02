@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.94"
 
+[profile.release]
+strip = "debuginfo"
+
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 unwrap_used = { level = "deny", priority = 1 }

@@ -1,7 +1,22 @@
+# syntax=docker/dockerfile:1
 FROM rust:1.98.1-bookworm AS build
 WORKDIR /app
-COPY . .
-RUN cargo build --release --bin maksut
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
+    CARGO_INCREMENTAL=0
+COPY Cargo.toml Cargo.lock ./
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    mkdir src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo build --release --locked --bin maksut \
+    && rm -rf src target/release/maksut target/release/deps/maksut* target/release/.fingerprint/maksut-*
+COPY docs/communication-guide.md ./docs/communication-guide.md
+COPY src ./src
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    touch src/main.rs \
+    && cargo build --release --locked --bin maksut \
+    && rm -rf target/release/deps target/release/build target/release/.fingerprint
 
 FROM node:22-bookworm-slim
 RUN apt-get update \
@@ -23,9 +38,9 @@ ENV PATH="/opt/yt-dlp/bin:${PATH}" \
     STICKER_SETS_FILE=/opt/maksut/sticker_sets.txt \
     STICKER_DESCRIPTIONS_FILE=/opt/maksut/sticker_descriptions.json
 COPY --from=build /app/target/release/maksut /usr/local/bin/maksut
-COPY --from=build /app/tools/twitter_images.py /opt/maksut/twitter_images.py
-COPY --from=build /app/sticker_sets.txt /opt/maksut/sticker_sets.txt
-COPY --from=build /app/sticker_descriptions.json /opt/maksut/sticker_descriptions.json
+COPY tools/twitter_images.py /opt/maksut/twitter_images.py
+COPY sticker_sets.txt /opt/maksut/sticker_sets.txt
+COPY sticker_descriptions.json /opt/maksut/sticker_descriptions.json
 USER 1000:1000
 WORKDIR /data
 CMD ["/usr/local/bin/maksut"]

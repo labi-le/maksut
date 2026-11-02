@@ -22,3 +22,15 @@ cookies/
 /tools/test_*.py
 .secrets/
 self-improve/
+src/*_test.rs
+src/test_support.rs
+src/feature_support.rs
+.github/
+packaging/
+self_improve/
+README.md
+AGENTS.md
+compose.yaml
+shell.nix
+docs/guides/
+docs/adr/
