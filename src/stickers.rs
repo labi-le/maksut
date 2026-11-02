@@ -318,9 +318,10 @@ impl StickerCatalog {
         if query.is_empty() {
             return self.entries.iter().take(limit).collect();
         }
-        let words: Vec<&str> = query
-            .split_whitespace()
+        let words: Vec<(&str, &str)> = query
+            .split(|ch: char| !ch.is_alphanumeric())
             .filter(|word| word.chars().count() >= 2)
+            .map(|word| (word, word_stem(word)))
             .collect();
         let mut scored: Vec<(i32, &StickerEntry)> = Vec::new();
         for entry in &self.entries {
@@ -329,19 +330,26 @@ impl StickerCatalog {
             let description = entry.description.to_lowercase();
             let mut score = 0;
             let mut matched = 0;
-            for word in &words {
-                let present =
-                    description.contains(word) || title.contains(word) || name.contains(word);
-                if description.contains(word) {
+            for &(word, stem) in &words {
+                let exact_desc = description.contains(word);
+                let stem_desc = !exact_desc && description.contains(stem);
+                let exact_title = title.contains(word);
+                let stem_title = !exact_title && title.contains(stem);
+                let exact_name = name.contains(word);
+                if exact_desc {
                     score += 8;
+                } else if stem_desc {
+                    score += 5;
                 }
-                if title.contains(word) {
+                if exact_title {
                     score += 4;
-                }
-                if name.contains(word) {
+                } else if stem_title {
                     score += 2;
                 }
-                if present {
+                if exact_name {
+                    score += 2;
+                }
+                if exact_desc || stem_desc || exact_title || stem_title || exact_name {
                     matched += 1;
                 }
             }
@@ -373,12 +381,10 @@ impl StickerCatalog {
             return None;
         }
         if query.trim().is_empty() {
-            return self.random(&self.entries.iter().collect::<Vec<_>>());
+            let all: Vec<&StickerEntry> = self.entries.iter().collect();
+            return self.random(&all);
         }
         let found = self.search(query, 8);
-        if found.is_empty() {
-            return None;
-        }
         self.random(&found)
     }
 
@@ -470,6 +476,18 @@ fn load_descriptions() -> std::collections::HashMap<String, String> {
             Some((format!("{pack}:{index}"), description.to_owned()))
         })
         .collect()
+}
+
+fn word_stem(word: &str) -> &str {
+    let count = word.chars().count();
+    if count < 5 {
+        return word;
+    }
+    let keep = count.saturating_sub(if count >= 6 { 2 } else { 1 });
+    word.char_indices()
+        .nth(keep)
+        .and_then(|(idx, _)| word.get(..idx))
+        .unwrap_or(word)
 }
 
 fn unix_nanos() -> u128 {

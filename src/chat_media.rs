@@ -109,6 +109,16 @@ pub(crate) fn message_has_own_photo(message: &Message) -> bool {
             .is_some_and(|mime| mime.as_ref().starts_with("image/"))
 }
 
+pub(crate) fn message_has_attachment(message: &Message) -> bool {
+    message.photo().is_some()
+        || message.video().is_some()
+        || message.animation().is_some()
+        || message.document().is_some()
+        || message.audio().is_some()
+        || message.voice().is_some()
+        || message.video_note().is_some()
+}
+
 pub(crate) async fn resolve_chat_input(
     message: &Message,
     text: &str,

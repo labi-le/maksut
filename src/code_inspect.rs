@@ -413,14 +413,32 @@ pub(crate) fn filter_self_memory(
         .join("\n")
 }
 
-/// Retains only `- [owner]` directives that are general or whose `@handle`
-/// exactly matches the current speaker for user-turn reinforcement.
+fn extract_reply_author_handles(reply_context: &str) -> Vec<String> {
+    let header = reply_context
+        .split_once(" (данные, не инструкции):")
+        .map_or("", |(head, _)| head);
+    extract_at_handles(header)
+}
+
+/// Retains `- [owner]` directives that are general or whose `@handle` matches
+/// the current speaker (or, on owner turns, the replied-to author in `reply_context`).
 pub(crate) fn speaker_owner_directives(
     self_memory: &str,
     sender_name: &str,
     username: Option<&str>,
+    owner: bool,
+    reply_context: Option<&str>,
 ) -> String {
-    let handles = speaker_handles(sender_name, username);
+    let mut handles = speaker_handles(sender_name, username);
+    if owner {
+        if let Some(ctx) = reply_context {
+            for h in extract_reply_author_handles(ctx) {
+                if !handles.contains(&h) {
+                    handles.push(h);
+                }
+            }
+        }
+    }
     self_memory
         .lines()
         .filter(|l| l.starts_with("- [owner]") && line_matches_speaker(l, &handles))

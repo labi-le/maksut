@@ -103,9 +103,10 @@ fn catalog_searches_descriptions_and_emoji() {
         ("funny-cat", "pack", "мемы", "😂", "смешной кот смеётся"),
     ]);
     assert_eq!(catalog.search("грустный кот", 10)[0].file_id.0, "sad-cat");
+    assert_eq!(catalog.search("грустная кошка", 10)[0].file_id.0, "sad-cat");
     assert_eq!(catalog.search("😂", 10)[0].file_id.0, "funny-cat");
     assert_eq!(catalog.get("pack:1").unwrap().file_id.0, "sad-cat");
-    assert!(catalog.pick("грустный").is_some());
+    assert!(catalog.pick("грустная").is_some());
     assert!(catalog.pick("").is_some());
     assert!(catalog.pick("зелёный слоник").is_none());
 }
