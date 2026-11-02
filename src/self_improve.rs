@@ -1,7 +1,5 @@
-use crate::memory::unix_now;
 use crate::prelude::*;
 use crate::settings::Settings;
-use serde_json::json;
 
 pub(crate) use crate::improve_commands::*;
 pub(crate) use crate::improve_store::*;
@@ -17,6 +15,38 @@ where
     T: Send + 'static,
 {
     tokio::task::spawn_blocking(task).await.ok()
+}
+
+/// The model writes the issue title at the owner's approval; the host
+/// orchestrator that creates the issue stays agent-free, so the bot is the only
+/// place with a model client.
+async fn approval_title(cfg: &Settings, dir: &Path, target: &str) -> String {
+    let Some(chat) = cfg.chat.as_ref() else {
+        return String::new();
+    };
+    let dir = dir.to_owned();
+    let target = target.to_owned();
+    let goal = run_blocking(move || approval_goal(&dir, &target))
+        .await
+        .flatten();
+    match goal {
+        Some(goal) => chat.feature_title(&goal).await.unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+async fn command_approval_title(cfg: &Settings, dir: &Path, command: &OwnerCommand) -> String {
+    match command.action {
+        OwnerAction::Approve => match command.targets.first() {
+            Some(target) => approval_title(cfg, dir, target).await,
+            None => String::new(),
+        },
+        OwnerAction::Reject
+        | OwnerAction::Cancel
+        | OwnerAction::PriorityTop
+        | OwnerAction::PriorityBottom
+        | OwnerAction::PrioritySet(_) => String::new(),
+    }
 }
 
 pub(crate) async fn handle_improve(
@@ -69,8 +99,9 @@ pub(crate) async fn handle_improve(
         let command_text = rest.replacen(':', " ", 1);
         let reply = match parse_owner_command(&command_text) {
             Some(command) => {
+                let title = command_approval_title(cfg, &dir, &command).await;
                 let command_dir = dir.clone();
-                run_blocking(move || apply_owner_command(&command_dir, owner, command))
+                run_blocking(move || apply_owner_command(&command_dir, owner, command, &title))
                     .await
                     .unwrap_or_else(|| "Не смог обработать команду.".to_owned())
             }
@@ -114,18 +145,16 @@ pub(crate) async fn handle_improve(
             config().improve.goal_max_chars
         )
     } else {
-        let id = format!("{}-{}", unix_now(), message.id.0);
-        let task = json!({
-            "id": id,
-            "requested_by": owner.0,
-            "chat_id": message.chat.id.0,
-            "goal": goal,
-            "created_at": unix_now(),
-        });
-        let body = task.to_string();
-        let path = dir.join("inbox").join(format!("{id}.json"));
-        match run_blocking(move || atomic_write(&path, body.as_bytes())).await {
-            Some(Ok(())) => format!("принял, задача #{id}"),
+        let chat_id = message.chat.id.0;
+        let username = message.from.as_ref().and_then(|user| user.username.clone());
+        let goal = goal.to_owned();
+        let query_dir = dir.clone();
+        match run_blocking(move || {
+            queue_owner_goal(&query_dir, owner, chat_id, username.as_deref(), &goal)
+        })
+        .await
+        {
+            Some(Ok(id)) => format!("принял, задача #{id}"),
             _ => "Не удалось записать задачу.".to_owned(),
         }
     };
@@ -153,7 +182,8 @@ pub(crate) async fn handle_owner_text(
     };
     let dir = queue_dir(cfg);
     let owner = cfg.owner_id;
-    let reply = run_blocking(move || apply_owner_command(&dir, owner, command))
+    let title = command_approval_title(cfg, &dir, &command).await;
+    let reply = run_blocking(move || apply_owner_command(&dir, owner, command, &title))
         .await
         .unwrap_or_else(|| "Не смог обработать команду.".to_owned());
     let _ = bot
@@ -381,6 +411,11 @@ pub(crate) async fn handle_callback(
     let owner = cfg.owner_id;
     let id = id.to_owned();
     let action = action.to_owned();
+    let title = if action == "approve" {
+        approval_title(cfg, &dir, &id).await
+    } else {
+        String::new()
+    };
     let decision = run_blocking(move || {
         let Some((value, _)) = find_task(&dir, &id) else {
             return "задача уже неактуальна";
@@ -389,7 +424,7 @@ pub(crate) async fn handle_callback(
         if status != "proposed" {
             return "задача уже неактуальна";
         }
-        match record_decision(&dir, &id, status, &action, owner) {
+        match record_decision(&dir, &id, status, &action, owner, &title) {
             Ok(text) | Err(text) => text,
         }
     })

@@ -16,7 +16,7 @@ timeout 120 nix-shell --run "python3 -m unittest discover -s tools -p 'test_*.py
 
 Cargo target directories stay on `pc`, so a stale local `./target` is never a factor. Inside the buer worker the same `cargo-slot` name reaches the host relay through `/run/cargo-slot/socket`; it accepts only workspace paths under `/data/workspaces` and only `cargo` subcommands.
 
-Merging to `main` triggers `.github/workflows/publish-image.yml` (`ghcr.io/labi-le/maxwell:<sha>`) and the host timer `maksut-auto-deploy.timer` (`tools/auto_deploy.py`) fast-forwards the checkout and recreates `maksut` with `--no-build`. When a local uncommitted change needs container verification:
+Merging to `main` triggers `.github/workflows/publish-image.yml` (`ghcr.io/labi-le/maxwell:<sha>`), and the publish workflow's completion webhook makes the host pull that image and recreate `maksut` with `--no-build`, taking `compose.yaml` and the `/var/lib/maksut/code` sources from the same commit ([ADR 024](./docs/adr/024-event-driven-deploy.md), [ADR 023](./docs/adr/023-auto-deploy-from-remote.md)); the webhook is the only trigger, so a missed delivery is recovered by redelivering it on GitHub or by `make deploy-now`. The checkout is fast-forwarded only when it is on `main` and clean, so uncommitted work neither blocks nor leaks into a deploy. When a local uncommitted change needs container verification:
 
 ```bash
 docker compose -f compose.yaml build maksut

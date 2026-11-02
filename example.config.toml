@@ -43,6 +43,7 @@ max_tokens = 900
 status_max_tokens = 1200
 research_max_tokens = 1500
 summary_max_tokens = 600
+feature_title_max_tokens = 100
 typing_keepalive_secs = 4
 cooldown_ms = 3000
 followup_window_secs = 180

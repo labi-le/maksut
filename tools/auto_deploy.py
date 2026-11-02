@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Host-side auto-deploy helper for Maksut.
 
-Fetches `origin/main`, pulls `ghcr.io/labi-le/maxwell:<sha>` once published by
-`.github/workflows/publish-image.yml`, fast-forwards the checkout when it is on
-`main` with a clean working tree, recreates the `maksut` container without
-compiling Rust on the host, and removes the superseded `<previous_sha>` image tag.
+Every deploy is derived from the remote branch alone: the container runs the
+GHCR image for that commit, `compose.yaml` is read from that commit, and the
+sources mounted for `inspect_code` are a `git archive` export of it. The
+checkout is fast-forwarded only as a convenience, so uncommitted host edits can
+neither block a deploy nor leak into the running container.
 """
 from __future__ import annotations
 
 import fcntl
+import io
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 REPO = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maxwell"))
@@ -26,6 +30,11 @@ GIT_TIMEOUT = 60
 PULL_TIMEOUT = 300
 UP_TIMEOUT = 120
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CODE_PATHS = ("src", "tools", "docs", "Cargo.toml", "README.md", "AGENTS.md")
+# Written next to the checkout so relative bind mounts and `env_file` keep
+# resolving against the repository root, then removed.
+COMPOSE_OVERRIDE = ".auto-deploy.compose.yaml"
+UNPUBLISHED_IMAGE_MARKERS = ("manifest unknown", "not found")
 
 
 def log(message: str) -> None:
@@ -49,6 +58,18 @@ def run(
     )
 
 
+def run_bytes(
+    args: list[str], timeout: int = GIT_TIMEOUT, cwd: Path | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        args,
+        cwd=str(cwd or REPO),
+        timeout=timeout,
+        capture_output=True,
+        check=False,
+    )
+
+
 def git_stdout(args: list[str], cwd: Path | None = None) -> str | None:
     try:
         proc = run(["git", *args], timeout=GIT_TIMEOUT, cwd=cwd)
@@ -58,6 +79,14 @@ def git_stdout(args: list[str], cwd: Path | None = None) -> str | None:
     if proc.returncode != 0:
         return None
     return (proc.stdout or "").strip()
+
+
+def last_stderr_line(proc: subprocess.CompletedProcess) -> str:
+    stderr = proc.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    lines = stderr.strip().splitlines()
+    return lines[-1][:200] if lines else "no stderr"
 
 
 def read_deployed_sha(state_dir: Path) -> str:
@@ -77,71 +106,110 @@ def write_deployed_sha(state_dir: Path, sha: str) -> None:
     tmp.chmod(0o600)
     os.replace(tmp, marker)
 
-def last_stderr_line(proc: subprocess.CompletedProcess[str]) -> str:
-    lines = (proc.stderr or "").strip().splitlines()
-    return lines[-1][:200] if lines else "no stderr"
+
+def image_ref(sha: str) -> str:
+    return f"{IMAGE_REPO}:{sha}"
 
 
-def resolve_remote_target(repo: Path, remote: str, branch: str) -> tuple[str, str] | None:
-    current_branch = git_stdout(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo)
-    if current_branch != branch:
-        log(f"skip: checkout is on branch {current_branch!r}, not {branch!r}")
-        return None
-    dirty = git_stdout(["status", "--porcelain", "--untracked-files=no"], cwd=repo)
-    if dirty is None or dirty != "":
-        log("skip: working tree has uncommitted tracked changes")
-        return None
-    if git_stdout(["fetch", "--quiet", remote, branch], cwd=repo) is None:
-        log(f"git fetch {remote} {branch} failed")
-        return None
-    head_sha = git_stdout(["rev-parse", "HEAD"], cwd=repo)
-    remote_sha = git_stdout(["rev-parse", f"{remote}/{branch}"], cwd=repo)
-    if not head_sha or not remote_sha or not SHA_RE.fullmatch(remote_sha):
-        log("unable to resolve HEAD or remote SHA")
-        return None
-    return head_sha, remote_sha
-
-
-def advance_checkout(repo: Path, remote: str, branch: str, head_sha: str, remote_sha: str) -> bool:
-    if head_sha == remote_sha:
-        return True
-    dirty = git_stdout(["status", "--porcelain", "--untracked-files=no"], cwd=repo)
-    if dirty is None or dirty != "":
-        log("skip: working tree became dirty before fast-forward")
-        return False
-    if git_stdout(["merge", "--ff-only", f"{remote}/{branch}"], cwd=repo) is None:
-        log(f"fast-forward to {remote}/{branch} ({remote_sha[:7]}) failed")
-        return False
-    after_sha = git_stdout(["rev-parse", "HEAD"], cwd=repo)
-    if after_sha != remote_sha:
-        log(f"skip: checkout HEAD {after_sha!r} is ahead of {remote}/{branch} ({remote_sha[:7]})")
-        return False
-    log(f"fast-forwarded checkout {head_sha[:7]} -> {remote_sha[:7]}")
-    return True
-
-def pull_image(repo: Path, sha: str) -> bool:
-    image = f"{IMAGE_REPO}:{sha}"
+def pull_image(sha: str) -> bool:
+    image = image_ref(sha)
     try:
-        pull_proc = run(["docker", "pull", "--quiet", image], timeout=PULL_TIMEOUT, cwd=repo)
+        proc = run(["docker", "pull", "--quiet", image], timeout=PULL_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
         log(f"docker pull {image} failed: {type(error).__name__}")
         return False
-    if pull_proc.returncode != 0:
-        log(f"docker pull {image} failed: {last_stderr_line(pull_proc)}")
+    if proc.returncode != 0:
+        detail = last_stderr_line(proc)
+        if any(marker in detail.lower() for marker in UNPUBLISHED_IMAGE_MARKERS):
+            log(f"image {sha[:7]} is not published yet: {detail}")
+        else:
+            log(f"docker pull {image} failed: {detail}")
         return False
     return True
 
 
-def recreate_container(repo: Path, sha: str) -> bool:
+def ensure_code_export(state_dir: Path, sha: str, repo: Path) -> Path | None:
+    """Extract the tracked sources of `sha` for the `/var/lib/maksut/code` mounts."""
+    target = state_dir / "code" / sha
+    if (target / "src").is_dir():
+        return target
+    try:
+        proc = run_bytes(["git", "archive", "--format=tar", sha, "--", *CODE_PATHS], cwd=repo)
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"git archive {sha[:7]} failed: {type(error).__name__}")
+        return None
+    if proc.returncode != 0:
+        log(f"git archive {sha[:7]} failed: {last_stderr_line(proc)}")
+        return None
+    tmp = target.with_name(f".{sha}.tmp-{os.getpid()}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        tmp.mkdir(parents=True)
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout or b"")) as archive:
+            archive.extractall(tmp, filter="data")
+        os.replace(tmp, target)
+    except (OSError, tarfile.TarError) as error:
+        shutil.rmtree(tmp, ignore_errors=True)
+        log(f"code export {sha[:7]} failed: {type(error).__name__}")
+        return None
+    return target
+
+
+def prune_code_exports(state_dir: Path, keep_sha: str) -> None:
+    root = state_dir / "code"
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return
+    for child in children:
+        if child.name != keep_sha:
+            shutil.rmtree(child, ignore_errors=True)
+
+
+def compose_for(repo: Path, sha: str) -> tuple[Path | None, bool]:
+    """Return the compose file of `sha`; the second value marks a temp copy."""
+    try:
+        proc = run_bytes(["git", "show", f"{sha}:{COMPOSE_FILE}"], cwd=repo)
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"skipping {sha[:7]}: git show {type(error).__name__}")
+        return None, False
+    if proc.returncode != 0 or not proc.stdout:
+        log(f"skipping {sha[:7]}: {COMPOSE_FILE} is missing from the commit")
+        return None, False
+    override = repo / COMPOSE_OVERRIDE
+    override.write_bytes(proc.stdout)
+    return override, True
+
+
+def fast_forward_checkout(repo: Path, remote: str, branch: str, target_sha: str) -> None:
+    """Advance the checkout when that is free of surprises; never touch local edits."""
+    current_branch = git_stdout(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo)
+    if current_branch != branch:
+        log(f"checkout left as is: on {current_branch!r}, not {branch!r}")
+        return
+    if git_stdout(["rev-parse", "HEAD"], cwd=repo) == target_sha:
+        return
+    dirty = git_stdout(["status", "--porcelain", "--untracked-files=no"], cwd=repo)
+    if dirty is None or dirty != "":
+        log("checkout left as is: uncommitted tracked changes")
+        return
+    if git_stdout(["merge", "--ff-only", f"{remote}/{branch}"], cwd=repo) is None:
+        log(f"fast-forward to {remote}/{branch} failed")
+    else:
+        log(f"fast-forwarded checkout to {target_sha[:7]}")
+
+
+def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path) -> bool:
     env = dict(os.environ)
     env["MAKSUT_IMAGE_TAG"] = sha
+    env["MAKSUT_CODE_DIR"] = str(code_dir)
     try:
-        up_proc = run(
+        proc = run(
             [
                 "docker",
                 "compose",
                 "-f",
-                COMPOSE_FILE,
+                str(compose_path),
                 "up",
                 "-d",
                 "--no-build",
@@ -154,17 +222,17 @@ def recreate_container(repo: Path, sha: str) -> bool:
     except (OSError, subprocess.SubprocessError) as error:
         log(f"docker compose up failed: {type(error).__name__}")
         return False
-    if up_proc.returncode != 0:
-        log(f"docker compose up failed: {last_stderr_line(up_proc)}")
+    if proc.returncode != 0:
+        log(f"docker compose up failed: {last_stderr_line(proc)}")
         return False
     return True
 
 
-def remove_image(repo: Path, sha: str) -> None:
+def remove_image(sha: str) -> None:
     if not SHA_RE.fullmatch(sha):
         return
     try:
-        proc = run(["docker", "image", "rm", f"{IMAGE_REPO}:{sha}"], timeout=GIT_TIMEOUT, cwd=repo)
+        proc = run(["docker", "image", "rm", image_ref(sha)], timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
         log(f"docker image rm {sha[:7]} failed: {type(error).__name__}")
         return
@@ -180,24 +248,37 @@ def deploy_once(
 ) -> bool:
     if (state_dir / "off").exists():
         return False
-    resolved = resolve_remote_target(repo, remote, branch)
-    if resolved is None:
+    if git_stdout(["fetch", "--quiet", remote, branch], cwd=repo) is None:
+        log(f"git fetch {remote} {branch} failed")
         return False
-    head_sha, target_sha = resolved
+    target_sha = git_stdout(["rev-parse", f"{remote}/{branch}"], cwd=repo)
+    if not target_sha or not SHA_RE.fullmatch(target_sha):
+        log(f"unable to resolve {remote}/{branch}")
+        return False
     previous_sha = read_deployed_sha(state_dir)
     if previous_sha == target_sha:
-        if head_sha != target_sha:
-            advance_checkout(repo, remote, branch, head_sha, target_sha)
+        fast_forward_checkout(repo, remote, branch, target_sha)
         return False
-    if not pull_image(repo, target_sha):
+    if not pull_image(target_sha):
         return False
-    if not advance_checkout(repo, remote, branch, head_sha, target_sha):
+    code_dir = ensure_code_export(state_dir, target_sha, repo)
+    if code_dir is None:
+        log(f"skipping {target_sha[:7]}: no code export for the mounted sources")
         return False
-    if not recreate_container(repo, target_sha):
+    fast_forward_checkout(repo, remote, branch, target_sha)
+    compose_path, temporary = compose_for(repo, target_sha)
+    if compose_path is None:
         return False
+    try:
+        if not recreate_container(repo, target_sha, code_dir, compose_path):
+            return False
+    finally:
+        if temporary:
+            compose_path.unlink(missing_ok=True)
     write_deployed_sha(state_dir, target_sha)
+    prune_code_exports(state_dir, target_sha)
     if previous_sha and previous_sha != target_sha:
-        remove_image(repo, previous_sha)
+        remove_image(previous_sha)
     log(f"deployed {target_sha[:7]}")
     return True
 

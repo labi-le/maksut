@@ -1,6 +1,6 @@
 use crate::improve_store::{
-    atomic_write, find_in_tasks, read_queue_tasks, record_decision, short_task_id, task_path,
-    valid_id,
+    atomic_write, decision_marker, find_in_tasks, read_queue_tasks, record_decision, short_task_id,
+    task_path, valid_id,
 };
 use crate::prelude::*;
 use serde_json::json;
@@ -228,7 +228,32 @@ fn priority_of(task: &(i64, String, Value, bool)) -> Option<i64> {
     task.2.get("priority").and_then(Value::as_i64)
 }
 
-pub(crate) fn apply_owner_command(dir: &Path, owner: UserId, command: OwnerCommand) -> String {
+/// The goal an approve command resolves to, unless a decision was already
+/// recorded. The bot summarizes it into the issue title before the marker is
+/// written, so the host orchestrator stays free of model calls.
+pub(crate) fn approval_goal(dir: &Path, target: &str) -> Option<String> {
+    let tasks = read_queue_tasks(dir);
+    let TaskIdMatch::Found(id) = lookup_in_tasks(&tasks, target, &|_| true) else {
+        return None;
+    };
+    let (value, _) = find_in_tasks(&tasks, &id)?;
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("");
+    if status != "proposed" || decision_marker(dir, &id, status).is_some() {
+        return None;
+    }
+    value
+        .get("goal")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|goal| !goal.is_empty())
+}
+
+pub(crate) fn apply_owner_command(
+    dir: &Path,
+    owner: UserId,
+    command: OwnerCommand,
+    title: &str,
+) -> String {
     if command.action == OwnerAction::Cancel {
         return cancel_tasks(dir, owner, &command.targets);
     }
@@ -253,11 +278,11 @@ pub(crate) fn apply_owner_command(dir: &Path, owner: UserId, command: OwnerComma
             .unwrap_or("unknown")
     };
     match command.action {
-        OwnerAction::Approve => match record_decision(dir, &id, status, "approve", owner) {
+        OwnerAction::Approve => match record_decision(dir, &id, status, "approve", owner, title) {
             Ok(reply) => format!("{}: #{}", reply, id),
             Err(reason) => format!("#{}: {}.", id, reason),
         },
-        OwnerAction::Reject => match record_decision(dir, &id, status, "reject", owner) {
+        OwnerAction::Reject => match record_decision(dir, &id, status, "reject", owner, "") {
             Ok(reply) => format!("{}: #{}", reply, id),
             Err(reason) => format!("#{}: {}.", id, reason),
         },
@@ -335,7 +360,7 @@ pub(crate) fn cancel_tasks(dir: &Path, owner: UserId, targets: &[String]) -> Str
             ));
             continue;
         }
-        match record_decision(dir, &id, status, "reject", owner) {
+        match record_decision(dir, &id, status, "reject", owner, "") {
             Ok(_) => {
                 cancelled_ids.insert(id.clone());
                 cancelled.push(id);
