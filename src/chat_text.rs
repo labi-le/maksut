@@ -1,5 +1,6 @@
-//! Text primitives shared by reply styling: chunking to Telegram's limit,
-//! bounded truncation, and scheme/control-character hygiene.
+//! Text primitives and reply shaping shared by reply styling: chunking to
+//! Telegram's limit, bounded truncation, scheme/control-character hygiene, and
+//! prose/code flattening for plain-text delivery.
 
 use crate::config::config;
 
@@ -43,6 +44,90 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
         chunks.push(current);
     }
     chunks
+}
+
+/// Flattens prose runs to single lines while fenced code blocks keep their
+/// line breaks, indentation and backticks: a code answer is unreadable once
+/// every line is glued together. Prose loses em dashes and gains repository
+/// blob links; code is left verbatim.
+pub(crate) fn flatten_reply_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prose = String::new();
+    let mut in_code = false;
+    let mut fence_ticks = 0;
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if in_code {
+            push_line(&mut out, line.trim_end());
+            in_code = !is_fence_close(line, fence_ticks);
+        } else if let Some(ticks) = fence_open_ticks(line) {
+            flush_prose(&mut out, &mut prose);
+            push_line(&mut out, line.trim_end());
+            in_code = true;
+            fence_ticks = ticks;
+        } else {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                if !prose.is_empty() {
+                    prose.push(' ');
+                }
+                prose.push_str(trimmed);
+            }
+        }
+    }
+    flush_prose(&mut out, &mut prose);
+    out
+}
+
+/// `true` when `text` ends inside an unclosed fenced code block, so trailing
+/// prose punctuation must not be stripped from code.
+pub(crate) fn ends_inside_fence(text: &str) -> bool {
+    let mut in_code = false;
+    let mut fence_ticks = 0;
+    for line in text.lines() {
+        if in_code {
+            in_code = !is_fence_close(line, fence_ticks);
+        } else if let Some(ticks) = fence_open_ticks(line) {
+            in_code = true;
+            fence_ticks = ticks;
+        }
+    }
+    in_code
+}
+
+/// Backtick count of an opening fence line (at least three), or `None` for
+/// prose. Four-backtick fences wrap examples that contain three-backtick ones,
+/// so the closing line must match this length.
+fn fence_open_ticks(line: &str) -> Option<usize> {
+    let trimmed = line.trim_start();
+    let ticks = trimmed.len() - trimmed.trim_start_matches('`').len();
+    (ticks >= 3).then_some(ticks)
+}
+
+/// `true` for a line that closes a fence opened with `open_ticks` backticks:
+/// a run of at least that many backticks and nothing else.
+fn is_fence_close(line: &str, open_ticks: usize) -> bool {
+    let trimmed = line.trim();
+    trimmed.len() >= open_ticks && trimmed.bytes().all(|byte| byte == b'`')
+}
+
+fn push_line(out: &mut String, line: &str) {
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(line);
+}
+
+fn flush_prose(out: &mut String, prose: &mut String) {
+    if prose.is_empty() {
+        return;
+    }
+    if prose.contains(['—', '–']) {
+        *prose = prose.replace(['—', '–'], "-");
+    }
+    let expanded = expand_repo_blob_links(prose);
+    push_line(out, &expanded);
+    prose.clear();
 }
 
 /// Cuts at the last whitespace before `max_chars` so a shortened reply never

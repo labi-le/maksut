@@ -1,4 +1,4 @@
-use crate::chat_text::{expand_repo_blob_links, shorten, truncate_text};
+use crate::chat_text::{ends_inside_fence, flatten_reply_text, shorten, truncate_text};
 use crate::config::config;
 use crate::research::ResearchSource;
 
@@ -208,24 +208,19 @@ fn render_sources_block(
     lines.join("\n")
 }
 
-/// Chat style: single-line, no trailing period, and bounded to one Telegram
-/// message (`config().chat.reply_max_chars`). Casing belongs to the model: the
-/// prompt asks for mostly lowercase, but delivery never rewrites the answer's
-/// case.
+/// Chat style: prose collapses to single lines, fenced code blocks keep their
+/// own lines, and the whole reply is bounded to one Telegram message
+/// (`config().chat.reply_max_chars`). Casing belongs to the model: the prompt
+/// asks for mostly lowercase, but delivery never rewrites the answer's case.
 pub(crate) fn style_reply(text: &str) -> String {
-    let joined = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let expanded = expand_repo_blob_links(&joined.replace(['—', '–'], "-"));
-    shorten(&expanded, config().chat.reply_max_chars)
-        .trim()
-        .trim_end_matches(['.', '…'])
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let flattened = flatten_reply_text(text);
+    let styled = shorten(&flattened, config().chat.reply_max_chars).trim();
+    let styled = if ends_inside_fence(styled) {
+        styled
+    } else {
+        styled.trim_end_matches(['.', '…'])
+    };
+    styled.to_owned()
 }
 
 pub(crate) fn is_pass_reply(text: &str) -> bool {
