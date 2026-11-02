@@ -22,22 +22,22 @@ docker compose -f compose.yaml up --build -d
 docker compose -f compose.yaml logs -f maksut
 ```
 
-Обновление и остановка (не используйте `docker compose down -v`, чтобы не удалить volume `maksut_data` с SQLite-базой):
+Обновление и остановка (при пуше в `main` GitHub Actions сам публикует образ `ghcr.io/labi-le/maxwell:<sha>`; сделайте пакет `maxwell` публичным в настройках GitHub Packages или выполните один раз `gh auth token | docker login ghcr.io -u labi-le --password-stdin` на хосте, после чего `maksut-auto-deploy.timer` сам делает `docker pull`, `git merge --ff-only` и `docker compose up -d --no-build maksut`; не используйте `docker compose down -v`, чтобы не удалить volume `maksut_data` с SQLite-базой):
 
 ```sh
-docker compose -f compose.yaml up --build -d
+docker compose -f compose.yaml pull maksut && docker compose -f compose.yaml up -d --no-build maksut
 docker compose -f compose.yaml down
 ```
 
 Для смены `BOT_TOKEN`, `OWNER_ID` или путей в `.env` пересоздайте контейнер через `docker compose -f compose.yaml up -d --force-recreate` (`env_file` читает переменные из `.env`, экспортированные в оболочке значения их не переопределяют). Обычное обновление `cookies.txt` перезапуска не требует.
 
-Запуск хостового оркестратора самоулучшения:
+Запуск хостового оркестратора самоулучшения и таймера автодеплоя из GHCR:
 
 ```sh
-cp packaging/maksut-self-improve.service ~/.config/systemd/user/
+cp packaging/maksut-self-improve.service packaging/maksut-auto-deploy.service packaging/maksut-auto-deploy.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now maksut-self-improve.service
-journalctl --user -u maksut-self-improve.service -f
+systemctl --user enable --now maksut-self-improve.service maksut-auto-deploy.timer
+journalctl --user -u maksut-self-improve.service -u maksut-auto-deploy.service -f
 ```
 
 Для локальной разработки используется `shell.nix`:

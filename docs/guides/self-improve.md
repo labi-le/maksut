@@ -1,6 +1,6 @@
 # Feature request intake and GitHub issue orchestrator
 
-> **When to read this:** Read before touching `src/self_improve.rs`, `src/improve_store.rs`, `src/improve_views.rs`, `src/improve_commands.rs`, `src/code_inspect.rs`, `tools/self_improve_orchestrator.py`, or `packaging/maksut-self-improve.service`.
+> **When to read this:** Read before touching `src/self_improve.rs`, `src/improve_store.rs`, `src/improve_views.rs`, `src/improve_commands.rs`, `src/code_inspect.rs`, `tools/self_improve_orchestrator.py`, `tools/auto_deploy.py`, `.github/workflows/publish-image.yml`, or `packaging/maksut-*`.
 
 ## Architecture: Telegram feature intake -> GitHub issue (`roboomp`)
 
@@ -27,12 +27,15 @@ The self-improvement intake is split across two isolated processes so the Telegr
 - **Task ID matching:** IDs such as `plan-1793270374-1002045081420-214537` display as `#214537` (`short_task_id`). Owner commands accept the full ID, the short numeric tail (`214537`), or any unique numeric prefix/suffix (`37`). Ambiguous fragments return the candidate list instead of guessing or claiming the task is missing.
 - **Batch cancel:** `отмени #id1 #id2` (or `/improve cancel <id>`) cancels pending tasks (`inbox` or waiting at `proposed`) in a single reply; already-finished tasks are reported separately.
 - **Priority:** `подними #id`, `опусти #id`, `приоритет #id <n>` (clamped to `-1000..=1000`, `/improve priority <id> [n]`). Both `inbox` and `outbox` sort by `(-priority, filename)`.
-- **Kill switch:** `/improve off` writes `self-improve/off`, pausing the orchestrator loop until the file is removed.
-## Running the orchestrator on the host
+- **Kill switch:** `/improve off` writes `self-improve/off`, pausing both the orchestrator loop and `tools/auto_deploy.py` until the file is removed.
+
+## Running the orchestrator and GHCR auto-deploy on the host
+
+After the first `.github/workflows/publish-image.yml` run creates the `ghcr.io/labi-le/maxwell` package, either set its package visibility to **Public** in GitHub Package Settings (recommended — the image contains only compiled artifacts from the public repository) or authenticate Docker on the host once with `gh auth token | docker login ghcr.io -u labi-le --password-stdin`.
 
 ```sh
-cp packaging/maksut-self-improve.service ~/.config/systemd/user/
+cp packaging/maksut-self-improve.service packaging/maksut-auto-deploy.service packaging/maksut-auto-deploy.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now maksut-self-improve.service
-journalctl --user -u maksut-self-improve.service -f
+systemctl --user enable --now maksut-self-improve.service maksut-auto-deploy.timer
+journalctl --user -u maksut-self-improve.service -u maksut-auto-deploy.service -f
 ```

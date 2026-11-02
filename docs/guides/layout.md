@@ -57,6 +57,8 @@ Every module is declared in `src/main.rs` and shares imports through `src/prelud
 - `tools/export_chrome_cookies.py` (`test_export_chrome_cookies.py`): runs on `pc` or `notebook` over SSH; decrypts Chrome's SQLite cookie store (`v10`/`v11`) via the host keyring and outputs a filtered Netscape cookie jar on stdout
 - `tools/cookie_refresh_service.py` (`test_cookie_refresh_service.py`): HTTP sidecar (`cookie_refresh/Dockerfile`, `:8080`) that SSHes to `pc` and `notebook`, picks the freshest Chrome profile containing cookies for the requested source, and atomically writes `cookies.txt` (`0600`)
 - `tools/self_improve_orchestrator.py` (`test_self_improve_orchestrator.py`): host-side systemd user service (`packaging/maksut-self-improve.service`); polls `self-improve/inbox`, writes `status: "proposed"` to `outbox`, and on owner approval (`approvals/`) opens a GitHub issue via `gh` (`status: "issue_created"`)
+- `tools/auto_deploy.py` (`test_auto_deploy.py`): host-side oneshot service triggered by `packaging/maksut-auto-deploy.timer`; fetches `origin/main`, pulls `ghcr.io/labi-le/maxwell:<sha>` built by `.github/workflows/publish-image.yml`, fast-forwards the checkout only once that image is available, recreates `maksut` with `--no-build`, records `self-improve/deployed_sha`, and removes the superseded `<previous_sha>` image tag
+- `tools/pr_review.py` (`test_pr_review.py`): GitHub Actions PR reviewer (`.github/workflows/pr-review.yml`) that posts automated architecture + performance reviews using `REVIEWER_TOKEN`
 - `tools/omp_worker.py` (`test_omp_worker.py`): standalone sandbox helper that runs an `omp` agent inside a disposable read-only Docker container connected only to `maksut-self-improve-internal` (`self_improve/proxy.Dockerfile` + `self_improve/proxy.py`); retained as an isolated utility while live feature intake routes through GitHub issues (`tools/self_improve_orchestrator.py`)
 - `tools/build_sticker_index.py`: host-side utility using Telegram MCP and a vision model to refresh `sticker_sets.txt` and `sticker_descriptions.json`
 
@@ -67,4 +69,4 @@ Every module is declared in `src/main.rs` and shares imports through `src/prelud
 - `shell.nix`: local development shell (`cargo`, `rustc`, `rustfmt`, `clippy`, `sqlite`, `python3`, `ffmpeg`, `yt-dlp`)
 - `docs/communication-guide.md`: **READ-ONLY** operating specification compiled into the binary via `include_str!`
 - `docs/guides/`: task-triggered engineering guides
-- `docs/adr/`: numbered architecture decision records (`001` to `021`)
+- `docs/adr/`: numbered architecture decision records (`001` to `022`)
