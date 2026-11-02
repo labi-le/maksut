@@ -1,0 +1,22 @@
+[Unit]
+Description=Maksut GitHub deploy webhook (publish-image completion -> deploy)
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/labile/projects/maxwell
+Environment=PATH=/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AUTO_DEPLOY_REPO=/home/labile/projects/maxwell
+Environment=AUTO_DEPLOY_STATE_DIR=/home/labile/projects/maxwell/self-improve
+Environment=MAKSUT_HOOK_HOST=127.0.0.1
+Environment=MAKSUT_HOOK_PORT=6551
+Environment=MAKSUT_HOOK_PATH=/webhook/maksut-deploy
+Environment=MAKSUT_HOOK_SECRET_FILE=/home/labile/projects/maxwell/.secrets/deploy-hook.secret
+ExecStart=/run/current-system/sw/bin/python3 /home/labile/projects/maxwell/tools/deploy_hook.py
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

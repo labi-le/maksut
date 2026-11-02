@@ -1,9 +1,9 @@
 [Unit]
-Description=Poll origin/main and auto-deploy Maksut from GHCR
+Description=Fallback deploy poll for Maksut (the GitHub webhook does the normal deploy)
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=45s
+OnUnitActiveSec=30min
 AccuracySec=5s
 Persistent=true
 

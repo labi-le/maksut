@@ -22,7 +22,7 @@ docker compose -f compose.yaml up --build -d
 docker compose -f compose.yaml logs -f maksut
 ```
 
-Обновление и остановка (при пуше в `main` GitHub Actions сам публикует образ `ghcr.io/labi-le/maxwell:<sha>`; сделайте пакет `maxwell` публичным в настройках GitHub Packages или выполните один раз `gh auth token | docker login ghcr.io -u labi-le --password-stdin` на хосте, после чего `maksut-auto-deploy.timer` сам делает `docker pull`, `git merge --ff-only` и `docker compose up -d --no-build maksut`; не используйте `docker compose down -v`, чтобы не удалить volume `maksut_data` с SQLite-базой):
+Обновление и остановка (при пуше в `main` GitHub Actions сам публикует образ `ghcr.io/labi-le/maxwell:<sha>`; сделайте пакет `maxwell` публичным в настройках GitHub Packages или выполните один раз `gh auth token | docker login ghcr.io -u labi-le --password-stdin` на хосте, после чего вебхук publish-image (`tools/deploy_hook.py`) сам делает `docker pull` и `docker compose up -d --no-build maksut` по `origin/main`, а `maksut-auto-deploy.timer` раз в 30 минут страхует пропущенные доставки (образ, `compose.yaml` и исходники для `inspect_code` берутся из одного коммита, незакоммиченные правки чекаута деплой не блокируют и в контейнер не попадают; [ADR 023](docs/adr/023-auto-deploy-from-remote.md)); не используйте `docker compose down -v`, чтобы не удалить volume `maksut_data` с SQLite-базой):
 
 ```sh
 docker compose -f compose.yaml pull maksut && docker compose -f compose.yaml up -d --no-build maksut

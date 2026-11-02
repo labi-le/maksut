@@ -1,9 +1,15 @@
 import importlib.util
+import io
 import os
 import pathlib
 import subprocess
+import tarfile
 import tempfile
 import unittest
+
+IMAGE = "ghcr.io/labi-le/maxwell"
+# Pinned literally so a narrowed export list cannot silently drop a mounted path.
+EXPORTED_PATHS = ("src", "tools", "docs", "Cargo.toml", "README.md", "AGENTS.md")
 
 
 def load_module(tmp: str):
@@ -16,7 +22,7 @@ def load_module(tmp: str):
     os.environ["AUTO_DEPLOY_STATE_DIR"] = str(state)
     os.environ["AUTO_DEPLOY_REMOTE"] = "origin"
     os.environ["AUTO_DEPLOY_BRANCH"] = "main"
-    os.environ["AUTO_DEPLOY_IMAGE_REPO"] = "ghcr.io/labi-le/maxwell"
+    os.environ["AUTO_DEPLOY_IMAGE_REPO"] = IMAGE
     spec = importlib.util.spec_from_file_location(
         "auto_deploy", pathlib.Path(__file__).with_name("auto_deploy.py")
     )
@@ -25,152 +31,224 @@ def load_module(tmp: str):
     return module, repo, state
 
 
+def tar_with(files: dict[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        for name, text in files.items():
+            raw = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(raw)
+            archive.addfile(info, io.BytesIO(raw))
+    return buffer.getvalue()
+
+
+class FakeGitAndDocker:
+    """Answers the exact command shapes `auto_deploy.py` issues."""
+
+    def __init__(
+        self,
+        *,
+        branch: str = "main",
+        dirty: str = "",
+        head_sha: str = "a" * 40,
+        remote_sha: str = "b" * 40,
+        pull_ok: bool = True,
+        pull_stderr: str = "",
+        merge_ok: bool = True,
+        compose_in_commit: bool = True,
+        archive_ok: bool = True,
+        up_ok: bool = True,
+    ):
+        self.branch = branch
+        self.dirty = dirty
+        self.head_sha = head_sha
+        self.remote_sha = remote_sha
+        self.pull_ok = pull_ok
+        self.pull_stderr = pull_stderr
+        self.merge_ok = merge_ok
+        self.compose_in_commit = compose_in_commit
+        self.archive_ok = archive_ok
+        self.up_ok = up_ok
+        self.calls: list[list[str]] = []
+        self.envs: list[dict[str, str]] = []
+
+    def run(self, args, timeout=60, cwd=None, env=None):
+        self.calls.append(list(args))
+        if env is not None:
+            self.envs.append(dict(env))
+        if args == ["git", "fetch", "--quiet", "origin", "main"]:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args == ["git", "rev-parse", "origin/main"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{self.remote_sha}\n", stderr="")
+        if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{self.branch}\n", stderr="")
+        if args == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return subprocess.CompletedProcess(args, 0, stdout=self.dirty, stderr="")
+        if args == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{self.head_sha}\n", stderr="")
+        if args == ["git", "merge", "--ff-only", "origin/main"]:
+            if not self.merge_ok:
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="merge refused")
+            self.head_sha = self.remote_sha
+            return subprocess.CompletedProcess(args, 0, stdout="Fast-forward\n", stderr="")
+        if args[:3] == ["docker", "pull", "--quiet"]:
+            code = 0 if self.pull_ok else 1
+            return subprocess.CompletedProcess(args, code, stdout="", stderr=self.pull_stderr)
+        if args[:3] == ["docker", "compose", "-f"]:
+            code = 0 if self.up_ok else 1
+            return subprocess.CompletedProcess(args, code, stdout="Started\n", stderr="")
+        if args[:3] == ["docker", "image", "rm"]:
+            return subprocess.CompletedProcess(args, 0, stdout="Untagged\n", stderr="")
+        raise AssertionError(f"unexpected command: {args}")
+
+    def run_bytes(self, args, timeout=60, cwd=None):
+        self.calls.append(list(args))
+        if args[:3] == ["git", "archive", "--format=tar"]:
+            if not self.archive_ok:
+                return subprocess.CompletedProcess(args, 128, stdout=b"", stderr=b"pathspec did not match")
+            payload = tar_with({"src/main.rs": "fn main() {}\n", "docs/guide.md": "# guide\n"})
+            return subprocess.CompletedProcess(args, 0, stdout=payload, stderr=b"")
+        if args[0] == "git" and args[1] == "show":
+            if not self.compose_in_commit:
+                return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"missing")
+            return subprocess.CompletedProcess(
+                args, 0, stdout=b"name: maksut\nservices:\n  maksut:\n    image: x\n", stderr=b""
+            )
+        raise AssertionError(f"unexpected byte command: {args}")
+
+    def named(self, prefix):
+        return [call for call in self.calls if call[: len(prefix)] == prefix]
+
+
+def install(module, fake):
+    module.run = fake.run
+    module.run_bytes = fake.run_bytes
+    return fake
+
+
 class AutoDeployTests(unittest.TestCase):
-    def test_deploys_when_remote_advances_and_prunes_previous_image(self):
+    def test_dirty_checkout_still_deploys_the_remote_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             module, repo, state = load_module(tmp)
-            prev_sha = "0" * 40
-            old_sha = "a" * 40
-            new_sha = "b" * 40
-            module.write_deployed_sha(state, prev_sha)
-            order = []
-
-            merged = False
-
-            def fake_run(args, timeout=60, cwd=None, env=None):
-                nonlocal merged
-                order.append(args)
-                if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
-                if args == ["git", "status", "--porcelain", "--untracked-files=no"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "fetch", "--quiet", "origin", "main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "rev-parse", "HEAD"]:
-                    current = new_sha if merged else old_sha
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{current}\n", stderr="")
-                if args == ["git", "rev-parse", "origin/main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{new_sha}\n", stderr="")
-                if args == ["docker", "pull", "--quiet", f"ghcr.io/labi-le/maxwell:{new_sha}"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{new_sha}\n", stderr="")
-                if args == ["git", "merge", "--ff-only", "origin/main"]:
-                    merged = True
-                    return subprocess.CompletedProcess(args, 0, stdout="Fast-forward\n", stderr="")
-                if args[:3] == ["docker", "compose", "-f"]:
-                    self.assertEqual(env.get("MAKSUT_IMAGE_TAG"), new_sha)
-                    self.assertIn("--no-build", args)
-                    return subprocess.CompletedProcess(args, 0, stdout="Started\n", stderr="")
-                if args == ["docker", "image", "rm", f"ghcr.io/labi-le/maxwell:{prev_sha}"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="Untagged\n", stderr="")
-                self.fail(f"unexpected command: {args}")
-
-            module.run = fake_run
+            fake = install(
+                module,
+                FakeGitAndDocker(dirty=" M src/chat.rs\n", head_sha="a" * 40, remote_sha="b" * 40),
+            )
             self.assertTrue(module.deploy_once(repo, state))
-            self.assertEqual(module.read_deployed_sha(state), new_sha)
-            # Image pull happens before checkout fast-forward, and old image tag is removed after up.
-            pull_idx = order.index(["docker", "pull", "--quiet", f"ghcr.io/labi-le/maxwell:{new_sha}"])
-            ff_idx = order.index(["git", "merge", "--ff-only", "origin/main"])
-            rm_idx = order.index(["docker", "image", "rm", f"ghcr.io/labi-le/maxwell:{prev_sha}"])
-            self.assertLess(pull_idx, ff_idx)
-            self.assertLess(ff_idx, rm_idx)
+            self.assertEqual(fake.named(["git", "merge"]), [])
+            self.assertEqual(module.read_deployed_sha(state), "b" * 40)
+            export = state / "code" / ("b" * 40)
+            self.assertEqual((export / "src" / "main.rs").read_text(), "fn main() {}\n")
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            self.assertIn("--no-build", ups[0])
+            self.assertTrue(ups[0][3].endswith(module.COMPOSE_OVERRIDE))
+            env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
+            self.assertEqual(env["MAKSUT_IMAGE_TAG"], "b" * 40)
+            self.assertEqual(env["MAKSUT_CODE_DIR"], str(export))
+            self.assertFalse((repo / module.COMPOSE_OVERRIDE).exists())
+            self.assertIn(
+                ["git", "archive", "--format=tar", "b" * 40, "--", *EXPORTED_PATHS],
+                fake.calls,
+            )
+            self.assertIn(["git", "show", f"{'b' * 40}:compose.yaml"], fake.calls)
 
-            # A second pass at the same SHA does not pull or recreate again.
-            order.clear()
-
-            def fake_run_same(args, timeout=60, cwd=None, env=None):
-                order.append(args)
-                if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
-                if args == ["git", "status", "--porcelain", "--untracked-files=no"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "fetch", "--quiet", "origin", "main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args in (
-                    ["git", "rev-parse", "HEAD"],
-                    ["git", "rev-parse", "origin/main"],
-                ):
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{new_sha}\n", stderr="")
-                self.fail(f"unexpected command on idempotent run: {args}")
-
-            module.run = fake_run_same
-            self.assertFalse(module.deploy_once(repo, state))
-            self.assertFalse(any(cmd[0] == "docker" for cmd in order))
-
-    def test_waits_without_fast_forwarding_or_updating_marker_when_pull_fails(self):
+    def test_clean_checkout_is_fast_forwarded_and_the_old_state_is_pruned(self):
         with tempfile.TemporaryDirectory() as tmp:
             module, repo, state = load_module(tmp)
             old_sha = "a" * 40
-            new_sha = "c" * 40
+            module.write_deployed_sha(state, old_sha)
+            stale = state / "code" / old_sha
+            stale.mkdir(parents=True)
+            (stale / "src").mkdir()
+            fake = install(module, FakeGitAndDocker(head_sha=old_sha, remote_sha="b" * 40))
+            self.assertTrue(module.deploy_once(repo, state))
+            merge_index = fake.calls.index(["git", "merge", "--ff-only", "origin/main"])
+            up_index = next(
+                index for index, call in enumerate(fake.calls) if call[:3] == ["docker", "compose", "-f"]
+            )
+            self.assertLess(merge_index, up_index)
+            self.assertIn(["docker", "image", "rm", f"{IMAGE}:{old_sha}"], fake.calls)
+            self.assertFalse(stale.exists())
+            self.assertIn(["git", "archive", "--format=tar", "b" * 40, "--", *EXPORTED_PATHS], fake.calls)
 
-            def fake_run(args, timeout=60, cwd=None, env=None):
-                if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
-                if args == ["git", "status", "--porcelain", "--untracked-files=no"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "fetch", "--quiet", "origin", "main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "rev-parse", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{old_sha}\n", stderr="")
-                if args == ["git", "rev-parse", "origin/main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{new_sha}\n", stderr="")
-                if args == ["docker", "pull", "--quiet", f"ghcr.io/labi-le/maxwell:{new_sha}"]:
-                    return subprocess.CompletedProcess(args, 1, stdout="", stderr="manifest unknown")
-                self.fail(f"unexpected command (must not merge --ff-only before pull succeeds): {args}")
-
-            module.run = fake_run
+    def test_unpublished_image_waits_without_touching_the_container(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            fake = install(
+                module, FakeGitAndDocker(pull_ok=False, pull_stderr="manifest unknown")
+            )
             self.assertFalse(module.deploy_once(repo, state))
             self.assertEqual(module.read_deployed_sha(state), "")
+            self.assertEqual(fake.named(["docker", "compose"]), [])
+            self.assertFalse((state / "code").exists())
 
-    def test_skips_when_checkout_is_dirty_or_on_feature_branch_or_paused(self):
+    def test_same_sha_does_not_pull_or_recreate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            module.write_deployed_sha(state, "b" * 40)
+            fake = install(module, FakeGitAndDocker(remote_sha="b" * 40, head_sha="b" * 40))
+            self.assertFalse(module.deploy_once(repo, state))
+            self.assertEqual(fake.named(["docker"]), [])
+            self.assertEqual(fake.named(["git", "merge"]), [])
+
+    def test_idle_tick_catches_a_behind_checkout_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            module.write_deployed_sha(state, "b" * 40)
+            fake = install(module, FakeGitAndDocker(remote_sha="b" * 40, head_sha="a" * 40))
+            self.assertFalse(module.deploy_once(repo, state))
+            self.assertIn(["git", "merge", "--ff-only", "origin/main"], fake.calls)
+            self.assertEqual(fake.named(["docker"]), [])
+
+    def test_feature_branch_checkout_is_left_alone_but_the_deploy_proceeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            fake = install(module, FakeGitAndDocker(branch="wip"))
+            self.assertTrue(module.deploy_once(repo, state))
+            self.assertEqual(fake.named(["git", "merge"]), [])
+            self.assertEqual(len(fake.named(["docker", "compose"])), 1)
+
+    def test_missing_code_export_aborts_the_deploy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            fake = install(module, FakeGitAndDocker(archive_ok=False))
+            self.assertFalse(module.deploy_once(repo, state))
+            self.assertEqual(module.read_deployed_sha(state), "")
+            self.assertEqual(fake.named(["docker", "compose"]), [])
+
+    def test_missing_compose_in_the_commit_aborts_the_deploy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            fake = install(module, FakeGitAndDocker(compose_in_commit=False))
+            self.assertFalse(module.deploy_once(repo, state))
+            self.assertEqual(module.read_deployed_sha(state), "")
+            self.assertEqual(fake.named(["docker", "compose"]), [])
+
+    def test_failed_compose_up_keeps_the_marker_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            module.write_deployed_sha(state, "a" * 40)
+            fake = install(module, FakeGitAndDocker(up_ok=False))
+            self.assertFalse(module.deploy_once(repo, state))
+            self.assertEqual(module.read_deployed_sha(state), "a" * 40)
+            self.assertEqual(fake.named(["docker", "image", "rm"]), [])
+            self.assertFalse((repo / module.COMPOSE_OVERRIDE).exists())
+
+    def test_failed_fast_forward_still_deploys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            fake = install(module, FakeGitAndDocker(merge_ok=False))
+            self.assertTrue(module.deploy_once(repo, state))
+            self.assertEqual(module.read_deployed_sha(state), "b" * 40)
+
+    def test_kill_switch_skips_every_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             module, repo, state = load_module(tmp)
             (state / "off").write_text("")
-            module.run = lambda *a, **kw: self.fail("must not run commands when off")
+            fake = install(module, FakeGitAndDocker())
             self.assertFalse(module.deploy_once(repo, state))
-            (state / "off").unlink()
-
-            # Feature branch skip
-            module.run = lambda args, **kw: subprocess.CompletedProcess(
-                args, 0, stdout="feature-branch\n", stderr=""
-            )
-            self.assertFalse(module.deploy_once(repo, state))
-
-            # Dirty tracked files skip
-            def dirty_run(args, **kw):
-                if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
-                if args == ["git", "status", "--porcelain", "--untracked-files=no"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=" M src/chat.rs\n", stderr="")
-                self.fail(f"unexpected command on dirty tree: {args}")
-
-            module.run = dirty_run
-            self.assertFalse(module.deploy_once(repo, state))
-
-            # Ahead of origin/main (merge --ff-only is no-op, HEAD stays ahead) must not redeploy
-            ahead_sha = "f" * 40
-            remote_sha = "e" * 40
-            module.write_deployed_sha(state, remote_sha)
-            ahead_calls = []
-
-            def ahead_run(args, **kw):
-                ahead_calls.append(args)
-                if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
-                if args == ["git", "status", "--porcelain", "--untracked-files=no"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "fetch", "--quiet", "origin", "main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-                if args == ["git", "rev-parse", "HEAD"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{ahead_sha}\n", stderr="")
-                if args == ["git", "rev-parse", "origin/main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout=f"{remote_sha}\n", stderr="")
-                if args == ["git", "merge", "--ff-only", "origin/main"]:
-                    return subprocess.CompletedProcess(args, 0, stdout="Already up to date.\n", stderr="")
-                self.fail(f"unexpected command when ahead of remote: {args}")
-
-            module.run = ahead_run
-            self.assertFalse(module.deploy_once(repo, state))
-            self.assertFalse(any(cmd[0] == "docker" for cmd in ahead_calls))
+            self.assertEqual(fake.calls, [])
 
 
 if __name__ == "__main__":

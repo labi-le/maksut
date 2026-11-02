@@ -1,5 +1,9 @@
 # 2026-11-02 — GHCR image publish and host auto-deploy on push to `main`
 
+> Refined by [ADR 023](023-auto-deploy-from-remote.md): a deploy no longer needs
+> a clean checkout. The image, `compose.yaml`, and the mounted sources now come
+> from `origin/main`, and the checkout is fast-forwarded only as a convenience.
+
 ## Context
 
 Merging a pull request into `main` previously left deployment manual: someone had
