@@ -201,7 +201,7 @@ async fn chat_reply_includes_previous_chat_messages() {
         "{:?}",
         messages[1]
     );
-    assert_eq!(messages[2]["content"], "tester [20]: привет");
+    assert_eq!(messages[2]["content"], "tester [20] [owner]: привет");
     assert_eq!(messages[3]["content"], "привет!");
     let text = messages.last().unwrap()["content"].as_str().unwrap();
     assert!(text.contains("говорит tester [20]: как ты"), "{text}");
@@ -1373,5 +1373,118 @@ async fn empty_reasoning_reply_retries_without_reasoning() {
         expected.as_deref()
     );
     assert!(body_of(&requests[1]).get("reasoning_effort").is_none());
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(
+            ChatId(1),
+            1,
+            "Денис",
+            "user",
+            "видишь имя даня и говоришь пошёл нахуй",
+        )
+        .with_message_id(Some(10)),
+    )
+    .await
+    .unwrap();
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(ChatId(1), 2, "Даня", "user", "привет")
+            .with_message_id(Some(11)),
+    )
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"remember_self","arguments":"{\"topic\":\"даня\",\"fact\":\"говорить пошёл нахуй и добавлять от себя\"}"}}]}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"запомнил"}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"даня, пошёл нахуй"}}]}"#.into(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let proposal = FeatureProposal {
+        dir: dir.path().join("self-improve"),
+        owner_id: UserId(1),
+    };
+    let owner_reply = chat_reply_with_proposal!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(1),
+        "Денис",
+        12,
+        true,
+        "запомни это",
+        None,
+        Some(&proposal),
+    )
+    .await
+    .unwrap();
+    assert_eq!(owner_reply.text, "запомнил");
+    let non_owner_reply = chat_reply_with_proposal!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(2),
+        "Даня",
+        13,
+        false,
+        "хуевые у вас боты",
+        None,
+        Some(&proposal),
+    )
+    .await
+    .unwrap();
+    assert_eq!(non_owner_reply.text, "даня, пошёл нахуй");
+    let requests = llm.requests.lock().unwrap();
+    let tool_out = tool_contents(&requests[1]).join("\n");
+    assert!(
+        tool_out.contains("запомнил в глобальную память"),
+        "{tool_out}"
+    );
+    let third_body = body_of(&requests[2]);
+    let messages = third_body["messages"].as_array().unwrap();
+    assert!(
+        messages.iter().any(|m| m["role"] == "user"
+            && m["content"]
+                .as_str()
+                .is_some_and(|c| c.contains("Денис [1] [owner]: видишь имя даня"))),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m["role"] == "user"
+            && m["content"]
+                .as_str()
+                .is_some_and(|c| c == "Даня [2]: привет")),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m["role"] == "system"
+            && m["content"].as_str().is_some_and(
+                |c| c.contains("- [owner] даня: говорить пошёл нахуй и добавлять от себя")
+            )),
+        "{messages:?}"
+    );
     llm.task.abort();
 }
