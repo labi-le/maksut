@@ -30,6 +30,7 @@ pub(crate) struct ToolState {
     pub(crate) status_view: String,
     pub(crate) research: ResearchState,
     pub(crate) research_calls: usize,
+    pub(crate) acked: bool,
     pub(crate) search_calls: usize,
     pub(crate) read_url_calls: usize,
     pub(crate) inspect_calls: usize,
@@ -49,6 +50,7 @@ impl ToolState {
             status_view: "details".to_owned(),
             research: ResearchState::default(),
             research_calls: 0,
+            acked: false,
             search_calls: 0,
             read_url_calls: 0,
             inspect_calls: 0,
@@ -58,6 +60,19 @@ impl ToolState {
             allow_feature,
         }
     }
+}
+
+/// Acknowledges the first search pass of a reply in Telegram. Later passes stay
+/// silent: the same `👀` is already on the message and one call is enough.
+async fn ack_search(ctx: &ToolContext<'_>, state: &mut ToolState) {
+    if state.acked {
+        return;
+    }
+    let Some(bot) = ctx.bot else {
+        return;
+    };
+    state.acked = true;
+    mark_search(bot, ctx.chat_id, MessageId(ctx.message_id)).await;
 }
 
 pub(crate) async fn run_tool_call(
@@ -295,6 +310,7 @@ pub(crate) async fn run_tool_call(
                 "лимит поиска на ответ".to_string()
             } else {
                 state.search_calls += 1;
+                ack_search(ctx, state).await;
                 let recency = args
                     .get("recency")
                     .and_then(Value::as_str)
@@ -332,11 +348,7 @@ pub(crate) async fn run_tool_call(
                     })
                     .unwrap_or_default();
                 let budget = SEARCH_CALLS_PER_REPLY.saturating_sub(state.search_calls);
-                // Ack before the search fanout: the sender should see the
-                // request was picked up while the dossier is still being built.
-                if let Some(bot) = ctx.bot {
-                    mark_research(bot, ctx.chat_id, MessageId(ctx.message_id)).await;
-                }
+                ack_search(ctx, state).await;
                 match ctx
                     .chat
                     .research(ctx.user_id, question, &queries, budget)
