@@ -248,33 +248,60 @@ pub(crate) async fn record_self_fact(
 ) -> Result<(), String> {
     let topic: String = topic
         .trim()
+        .replace("[owner]", "[ owner ]")
         .replace('\n', " ")
         .chars()
         .take(SELF_TOPIC_MAX_CHARS)
         .collect();
     let fact: String = fact
         .trim()
+        .replace("[owner]", "[ owner ]")
         .replace('\n', " ")
         .chars()
         .take(SELF_FACT_MAX_CHARS)
         .collect();
     let source_url = source_url.trim();
-    if topic.is_empty() || fact.is_empty() {
-        return Err("укажи topic и fact".into());
+    if topic.is_empty() {
+        return Err("укажи topic".into());
     }
-    if !valid_self_source_url(base, source_url) {
-        return Err(
-            "source_url должен быть ссылкой https://github.com/labi-le/maxwell/blob/main/<path>[#L<n>]"
-                .into(),
-        );
+    if fact.is_empty() {
+        if !source_url.is_empty() {
+            return Err("укажи fact".into());
+        }
+        sqlx::query("DELETE FROM bot_self_memory WHERE topic = ?")
+            .bind(&topic)
+            .execute(pool)
+            .await
+            .map_err(|_| "не удалось обновить память".to_string())?;
+        return Ok(());
     }
     let mask = crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET;
-    if (crate::memory_guard::detect_flags(&topic) & mask) != 0
-        || (crate::memory_guard::detect_flags(&fact) & mask) != 0
-        || crate::memory::validate_summary(&topic).is_err()
-        || crate::memory::validate_summary(&fact).is_err()
-    {
-        return Err("факт отклонён фильтром безопасности".into());
+    if source_url.is_empty() {
+        let lowered_topic = topic.to_lowercase();
+        let lowered_fact = fact.to_lowercase();
+        if (crate::memory_guard::detect_flags(&topic) & crate::memory::FLAG_SECRET) != 0
+            || (crate::memory_guard::detect_flags(&fact) & crate::memory::FLAG_SECRET) != 0
+            || lowered_topic.contains("http://")
+            || lowered_topic.contains("https://")
+            || lowered_fact.contains("http://")
+            || lowered_fact.contains("https://")
+        {
+            return Err("заметка отклонена фильтром безопасности".into());
+        }
+    } else {
+        if !valid_self_source_url(base, source_url) {
+            return Err(
+                "source_url должен быть ссылкой https://github.com/labi-le/maxwell/blob/main/<path>[#L<n>]"
+                    .into(),
+            );
+        }
+        if (crate::memory_guard::detect_flags(&topic) & mask) != 0
+            || (crate::memory_guard::detect_flags(&fact) & mask) != 0
+            || crate::memory::validate_summary(&topic).is_err()
+            || crate::memory::validate_summary(&fact).is_err()
+        {
+            return Err("факт отклонён фильтром безопасности".into());
+        }
     }
     let now = crate::memory::unix_now();
     sqlx::query(
@@ -308,7 +335,13 @@ pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>
     }
     let mut out = String::new();
     for (topic, fact, source_url) in rows {
-        let line = format!("- {topic}: {fact} ({source_url})\n");
+        let topic = topic.replace("[owner]", "[ owner ]");
+        let fact = fact.replace("[owner]", "[ owner ]");
+        let line = if source_url.trim().is_empty() {
+            format!("- [owner] {topic}: {fact}\n")
+        } else {
+            format!("- {topic}: {fact} ({source_url})\n")
+        };
         if out.chars().count() + line.chars().count() > SELF_MEMORY_MAX_CHARS && !out.is_empty() {
             break;
         }

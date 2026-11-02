@@ -155,7 +155,7 @@ impl ToolRegistry {
             },
             ToolSpec {
                 name: ToolKind::RememberSelf.name(),
-                description: "Save a verified fact about the bot's own code/architecture into global self-memory so future chats do not have to re-discover it. Call only after verifying the fact with inspect_code, and pass the exact GitHub blob URL from inspect_code.",
+                description: "Save an owner directive/note for chat conversations (leave source_url empty) or a verified fact about the bot's own code/architecture (pass the exact GitHub blob URL from inspect_code after calling inspect_code). Pass an empty fact with no source_url to delete a saved topic.",
                 parameters: remember_self_parameters,
                 visibility: ToolVisibility::Owner,
                 kind: ToolKind::RememberSelf,
@@ -249,11 +249,11 @@ fn remember_self_parameters() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "topic": {"type": "string", "description": "Short topic key, e.g. «память чата» or «лимит видео»"},
-            "fact": {"type": "string", "description": "Verified concise fact from the code (plain text, no URLs)"},
-            "source_url": {"type": "string", "description": "Exact https://github.com/labi-le/maxwell/blob/main/<path>[#L<line>] link from inspect_code"}
+            "topic": {"type": "string", "description": "Short topic key, e.g. «даня», «стиль в чате», or «память чата»"},
+            "fact": {"type": "string", "description": "Owner note/directive for chat replies, or verified concise fact from the code (plain text, no URLs; empty string deletes the topic)"},
+            "source_url": {"type": "string", "description": "Optional exact https://github.com/labi-le/maxwell/blob/main/<path>[#L<line>] link from inspect_code (required for code facts, omit or leave empty for owner directives/notes)"}
         },
-        "required": ["topic", "fact", "source_url"],
+        "required": ["topic", "fact"],
     })
 }
 

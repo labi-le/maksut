@@ -27,7 +27,7 @@ no-bridge boundary and expose `.env`, cookies, keys, and the self-improve queue.
   not instructions.
 - The shared prompt tells the model to inspect code before answering questions
   about how the bot works or proposing changes and to cite file/line URLs, while
-  `OWNER_CODE_PROMPT` instructs the owner's turns to persist verified facts via `remember_self`.
+  `OWNER_CODE_PROMPT` instructs the owner's turns to persist verified code facts (with a GitHub `source_url`) or conversational owner directives/notes (without `source_url`, rendered as `[owner]`) via `remember_self`.
 
 ## Consequences
 

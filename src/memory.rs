@@ -194,7 +194,22 @@ pub(crate) async fn load_memory(
 }
 
 pub(crate) fn format_line(author_name: &str, author_id: i64, text: &str) -> String {
-    format!("{author_name} [{author_id}]: {}", text.replace('\n', " "))
+    format_line_with_owner(author_name, author_id, false, text)
+}
+
+pub(crate) fn format_line_with_owner(
+    author_name: &str,
+    author_id: i64,
+    owner: bool,
+    text: &str,
+) -> String {
+    // Only the formatter may emit `[owner]`; neutralize it inside user-controlled text.
+    let name = author_name
+        .replace("[owner]", "[ owner ]")
+        .replace('\n', " ");
+    let body = text.replace("[owner]", "[ owner ]").replace('\n', " ");
+    let role_tag = if owner { " [owner]" } else { "" };
+    format!("{name} [{author_id}]{role_tag}: {body}")
 }
 
 pub(crate) fn validate_summary(summary: &str) -> Result<String, String> {

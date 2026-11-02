@@ -224,24 +224,34 @@ pub(crate) async fn run_tool_call(
         Some(ToolKind::RememberSelf) => {
             if state.remember_calls >= REMEMBER_SELF_CALLS_PER_REPLY {
                 "лимит записи в память на ответ".to_string()
-            } else if state.inspect_calls == 0 {
-                "сначала проверь код через inspect_code, потом сохраняй факт".to_string()
             } else {
-                state.remember_calls += 1;
                 let topic = args.get("topic").and_then(Value::as_str).unwrap_or("");
                 let fact = args.get("fact").and_then(Value::as_str).unwrap_or("");
-                let source_url = args.get("source_url").and_then(Value::as_str).unwrap_or("");
-                match crate::code_inspect::record_self_fact(
-                    ctx.pool,
-                    &ctx.chat.code_dir,
-                    topic,
-                    fact,
-                    source_url,
-                )
-                .await
-                {
-                    Ok(()) => "запомнил в глобальную память о себе".to_string(),
-                    Err(reason) => reason,
+                let source_url = args
+                    .get("source_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if !source_url.is_empty() && state.inspect_calls == 0 {
+                    "сначала проверь код через inspect_code, потом сохраняй факт со ссылкой"
+                        .to_string()
+                } else {
+                    state.remember_calls += 1;
+                    match crate::code_inspect::record_self_fact(
+                        ctx.pool,
+                        &ctx.chat.code_dir,
+                        topic,
+                        fact,
+                        source_url,
+                    )
+                    .await
+                    {
+                        Ok(()) if fact.trim().is_empty() => {
+                            "удалил запись из глобальной памяти".to_string()
+                        }
+                        Ok(()) => "запомнил в глобальную память".to_string(),
+                        Err(reason) => reason,
+                    }
                 }
             }
         }
