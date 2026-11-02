@@ -6,6 +6,8 @@ fn inspect_prefers_matches_and_respects_allowlist() {
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::write(dir.path().join("src/chat.rs"), "fn answer() {}\n").unwrap();
     std::fs::write(dir.path().join("secret.env"), "answer=secret\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+    std::fs::write(dir.path().join("docs/guide.md"), "answer in docs\n").unwrap();
     let result = inspect(dir.path(), "answer", None);
     assert!(
         result.contains(
@@ -14,6 +16,9 @@ fn inspect_prefers_matches_and_respects_allowlist() {
         "{result}"
     );
     assert!(!result.contains("secret"), "{result}");
+    let src_pos = result.find("src/chat.rs:1").unwrap();
+    let docs_pos = result.find("docs/guide.md:1").unwrap();
+    assert!(src_pos < docs_pos, "src/ must sort before docs/: {result}");
 }
 
 #[cfg(unix)]

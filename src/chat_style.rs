@@ -1,4 +1,4 @@
-use crate::chat_text::{shorten, truncate_text};
+use crate::chat_text::{expand_repo_blob_links, shorten, truncate_text};
 use crate::config::config;
 use crate::research::ResearchSource;
 
@@ -219,8 +219,8 @@ pub(crate) fn style_reply(text: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    shorten(&joined, config().chat.reply_max_chars)
-        .replace(['—', '–'], "-")
+    let expanded = expand_repo_blob_links(&joined.replace(['—', '–'], "-"));
+    shorten(&expanded, config().chat.reply_max_chars)
         .trim()
         .trim_end_matches(['.', '…'])
         .split_whitespace()
