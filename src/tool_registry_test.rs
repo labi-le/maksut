@@ -33,6 +33,9 @@ fn builtin_visibility_matches_current_roles() {
         "read_url",
         "propose_feature",
         "feature_status",
+        "inspect_code",
+        "find_stickers",
+        "send_sticker",
     ] {
         assert!(
             registry.find(name, false).is_some(),
@@ -43,13 +46,7 @@ fn builtin_visibility_matches_current_roles() {
             "{name} must be visible to the owner"
         );
     }
-    for name in [
-        "find_stickers",
-        "send_sticker",
-        "feature_confirmation",
-        "inspect_code",
-        "remember_self",
-    ] {
+    for name in ["feature_confirmation", "remember_self"] {
         assert!(
             registry.find(name, false).is_none(),
             "{name} must be hidden from non-owners"
@@ -70,6 +67,9 @@ fn builtin_visibility_matches_current_roles() {
             "read_url".to_string(),
             "propose_feature".to_string(),
             "feature_status".to_string(),
+            "inspect_code".to_string(),
+            "find_stickers".to_string(),
+            "send_sticker".to_string(),
         ],
     );
     assert_eq!(
@@ -94,6 +94,9 @@ fn builtin_visibility_matches_current_roles() {
             "research".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
+            "inspect_code".to_string(),
+            "find_stickers".to_string(),
+            "send_sticker".to_string(),
         ],
     );
     assert_eq!(
@@ -124,7 +127,8 @@ fn research_mode_hides_side_effect_tools() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
-            "read_url".to_string()
+            "read_url".to_string(),
+            "inspect_code".to_string(),
         ],
     );
     assert_eq!(
@@ -139,6 +143,7 @@ fn research_mode_hides_side_effect_tools() {
             "web_search".to_string(),
             "research".to_string(),
             "read_url".to_string(),
+            "inspect_code".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
         ],
@@ -156,6 +161,7 @@ fn research_mode_hides_side_effect_tools() {
             "research".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
+            "inspect_code".to_string(),
         ],
     );
 }
@@ -182,18 +188,14 @@ fn builtin_names_match_their_kinds_and_visibility() {
             "feature_confirmation",
             ToolVisibility::Owner,
         ),
-        (ToolKind::InspectCode, "inspect_code", ToolVisibility::Owner),
+        (ToolKind::InspectCode, "inspect_code", ToolVisibility::All),
         (
             ToolKind::RememberSelf,
             "remember_self",
             ToolVisibility::Owner,
         ),
-        (
-            ToolKind::FindStickers,
-            "find_stickers",
-            ToolVisibility::Owner,
-        ),
-        (ToolKind::SendSticker, "send_sticker", ToolVisibility::Owner),
+        (ToolKind::FindStickers, "find_stickers", ToolVisibility::All),
+        (ToolKind::SendSticker, "send_sticker", ToolVisibility::All),
     ];
     let specs: Vec<_> = registry.visible(true).collect();
     assert_eq!(specs.len(), expected.len());

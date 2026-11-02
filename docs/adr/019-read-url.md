@@ -31,14 +31,18 @@ schemes to every group member, which is unacceptable in the bot container.
   `reqwest-ssrf-guard` requires reqwest 0.13, while this project pins
   reqwest 0.12.
 - Requests present the Firefox 147 / Linux x86_64 profile and the navigation
-  header set a browser sends (`Accept`, `Accept-Language`, `Sec-Fetch-Dest`,
+  header set a browser sends (`Accept-Language`, `Sec-Fetch-Dest`,
   `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `Sec-Fetch-User`, and
-  `Upgrade-Insecure-Requests`) from `src/browser.rs`; DuckDuckGo `web_search`
-  sends the same set. `Upgrade-Insecure-Requests` is unconditional because the
-  preloadable-HSTS exception cannot be evaluated here. It is also sent on the
-  deliberate `https`→`http` retry, where a host that upgrades on this
-  preference can refuse the retry; accepted because that fallback only serves
-  hosts whose TLS already failed. Sites that filter only
+  `Upgrade-Insecure-Requests`) from `src/browser.rs`; `read_url` and the public
+  HTML search engines (DuckDuckGo, Startpage, Mojeek, Ecosia) send it, and
+  `read_url` keeps its Markdown-first `Accept`. The `Sec-Fetch-*` quartet is
+  sent only over https, as browsers do; a plain-http target, including the
+  downgrade retry, carries just the identity and upgrade headers.
+  `Upgrade-Insecure-Requests` is unconditional because the preloadable-HSTS
+  exception cannot be evaluated here. It is also sent on the deliberate
+  `https`→`http` retry, where a host that upgrades on this preference can
+  refuse the retry; accepted because that fallback only serves hosts whose TLS
+  already failed. Sites that filter only
   on `User-Agent` otherwise answer the honest `Maksut/0.1` string with a block
   page. This is header emulation only: still no cookies, authorization headers,
   proxy, or browser session.
@@ -50,8 +54,11 @@ schemes to every group member, which is unacceptable in the bot container.
   markup. Non-prose elements are removed with `dom_query`, then
   `dom_smoothie`/readability extracts the main article and renders Markdown.
   Headers and footers are kept because they often carry the article title,
-  byline, and attribution. JSON and text are returned directly; PDFs and other
-  binaries are rejected for now.
+  byline, and attribution. Trailing selectors (`:1-120`, `:-80`, `:raw`) slice
+  cached pages without re-fetching; recognized sites (GitHub blob/issue/PR,
+  Reddit, Wikipedia, Hacker News, crates.io, PyPI) and RSS/Atom feeds use
+  dedicated clean renderers (`src/read_url_sites.rs`). PDFs and other binaries
+  are rejected for now.
 - Text is decoded from the declared charset or detected with
   `chardetng`/`encoding_rs`, so windows-1251 and similar pages do not turn into
   mojibake.

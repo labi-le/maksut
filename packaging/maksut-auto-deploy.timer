@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll origin/main and auto-deploy Maksut from GHCR
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=45s
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

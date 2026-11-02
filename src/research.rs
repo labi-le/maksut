@@ -122,7 +122,9 @@ async fn collect_research(
         let handle = tasks.spawn(async move {
             (
                 index,
-                client.search_hits(&query, RESEARCH_RESULTS_PER_QUERY).await,
+                client
+                    .public_web_search(&query, RESEARCH_RESULTS_PER_QUERY, None)
+                    .await,
             )
         });
         task_indices.insert(handle.id(), index);

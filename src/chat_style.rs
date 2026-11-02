@@ -1,4 +1,4 @@
-use crate::chat_text::{lowercase_reply, shorten, truncate_text};
+use crate::chat_text::{shorten, truncate_text};
 use crate::research::ResearchSource;
 
 const MAX_REPLY_CHARS: usize = crate::chat_text::TELEGRAM_MESSAGE_CHARS;
@@ -77,14 +77,13 @@ fn strip_name(text: &str, name: &str) -> (String, bool) {
     (kept.join(" "), true)
 }
 
-/// Research style: paragraphs and citation markers survive, but the body is
-/// bounded and the bot always appends a verified source list.
+/// Research style: paragraphs, casing and citation markers survive untouched,
+/// but the body is bounded and the bot always appends a verified source list.
 pub(crate) fn style_research_reply(
     text: &str,
     sources: &[ResearchSource],
 ) -> Result<String, String> {
-    let lowered = lowercase_reply(text);
-    let normalized = lowered.replace('\r', "");
+    let normalized = text.replace('\r', "");
     let mut body = String::new();
     let mut blank = 0;
     for line in normalized.lines() {
@@ -178,7 +177,7 @@ fn render_sources_block(
         let Some(source) = sources.iter().find(|source| source.id == *id) else {
             continue;
         };
-        let title = source.title.to_lowercase().replace(['—', '–'], "-");
+        let title = source.title.replace(['—', '–'], "-");
         let prefix = format!("[{id}] ");
         let suffix = format!(" - {}", source.url);
         let full = format!("{prefix}{title}{suffix}");
@@ -203,11 +202,11 @@ fn render_sources_block(
     lines.join("\n")
 }
 
-/// Chat style: lowercase, single-line, no trailing period, and bounded to one
-/// Telegram message (`MAX_REPLY_CHARS`).
+/// Chat style: single-line, no trailing period, and bounded to one Telegram
+/// message (`MAX_REPLY_CHARS`). Casing belongs to the model: the prompt asks for
+/// mostly lowercase, but delivery never rewrites the answer's case.
 pub(crate) fn style_reply(text: &str) -> String {
-    let lowered = lowercase_reply(text);
-    let joined = lowered
+    let joined = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())

@@ -62,18 +62,37 @@ impl Settings {
                     .ok()
                     .filter(|value| !value.trim().is_empty());
                 let provider = match env::var("SEARCH_PROVIDER")
-                    .unwrap_or_else(|_| "firecrawl".into())
+                    .unwrap_or_else(|_| "auto".into())
                     .as_str()
                 {
+                    "auto" => SearchProvider::Auto,
+                    "public" => SearchProvider::Public,
+                    "parallel" => SearchProvider::Parallel,
+                    "exa" => SearchProvider::Exa,
                     "firecrawl" => SearchProvider::Firecrawl,
                     "tavily" => SearchProvider::Tavily,
                     "ddg" | "duckduckgo" => SearchProvider::DuckDuckGo,
-                    _ => return Err("SEARCH_PROVIDER must be firecrawl, tavily, or ddg".into()),
+                    "startpage" => SearchProvider::Startpage,
+                    "mojeek" => SearchProvider::Mojeek,
+                    "ecosia" => SearchProvider::Ecosia,
+                    _ => {
+                        return Err(
+                            "SEARCH_PROVIDER must be auto, public, parallel, exa, firecrawl, tavily, ddg, startpage, mojeek, or ecosia"
+                                .into(),
+                        )
+                    }
                 };
                 let search_default = match provider {
-                    SearchProvider::Firecrawl => "https://api.firecrawl.dev/v1/search",
+                    SearchProvider::Auto | SearchProvider::Public | SearchProvider::Firecrawl => {
+                        crate::search::DEFAULT_FIRECRAWL_URL
+                    }
+                    SearchProvider::Parallel => crate::search::DEFAULT_PARALLEL_MCP_URL,
+                    SearchProvider::Exa => crate::search::DEFAULT_EXA_MCP_URL,
                     SearchProvider::Tavily => "https://api.tavily.com/search",
                     SearchProvider::DuckDuckGo => DEFAULT_SEARCH_URL,
+                    SearchProvider::Startpage => crate::search::DEFAULT_STARTPAGE_URL,
+                    SearchProvider::Mojeek => crate::search::DEFAULT_MOJEEK_URL,
+                    SearchProvider::Ecosia => crate::search::DEFAULT_ECOSIA_URL,
                 };
                 let search =
                     env::var("LLM_SEARCH_URL").unwrap_or_else(|_| search_default.to_string());

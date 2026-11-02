@@ -284,7 +284,17 @@ pub(crate) async fn run_tool_call(
                 "лимит поиска на ответ".to_string()
             } else {
                 state.search_calls += 1;
-                let output = ctx.chat.web_search(query).await;
+                let recency = args
+                    .get("recency")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let search_limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5)
+                    .clamp(1, 10) as usize;
+                let output = ctx.chat.web_search_with(query, recency, search_limit).await;
                 for url in crate::read_url::prompt_urls(&output) {
                     if state.discovered_urls.len() < 64 && !state.discovered_urls.contains(&url) {
                         state.discovered_urls.push(url);

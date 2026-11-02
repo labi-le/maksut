@@ -49,26 +49,16 @@ fn chat_prompt_needs_the_name_in_groups() {
 }
 
 #[test]
-fn replies_are_lowercased_except_urls() {
-    assert_eq!(lowercase_reply("Привет! Как Дела?"), "привет! как дела?");
+fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
+    assert_eq!(style_reply("Привет. Как дела."), "Привет. Как дела");
     assert_eq!(
-        lowercase_reply("Смотри https://Example.com/Path"),
-        "смотри https://Example.com/Path"
+        style_reply("Привет, Вадик. Как дела?"),
+        "Привет, Вадик. Как дела?"
     );
-    assert_eq!(
-        lowercase_reply("(https://Ex.com/Path)"),
-        "(https://Ex.com/Path)"
-    );
-    assert_eq!(lowercase_reply("Москва — Это Город"), "москва — это город");
-}
-
-#[test]
-fn replies_are_short_and_without_a_trailing_period() {
-    assert_eq!(style_reply("Привет. Как дела."), "привет. как дела");
     assert_eq!(style_reply("привет...\n\nкак дела."), "привет... как дела");
     assert_eq!(
         style_reply("Смотри https://Example.com/Path."),
-        "смотри https://Example.com/Path"
+        "Смотри https://Example.com/Path"
     );
     let with_url = format!(
         "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10. {}",
@@ -154,20 +144,20 @@ async fn duckduckgo_search_sends_browser_navigation_headers() {
         tavily_key: None,
         http: reqwest::Client::new(),
     };
-    let hits = client.search_hits("rust", 5).await.unwrap();
+    let hits = client
+        .search_hits_with_recency("rust", 5, None)
+        .await
+        .unwrap();
     assert_eq!(hits.len(), 1);
     let request = server.requests.lock().unwrap()[0].to_ascii_lowercase();
     for header in [
         "user-agent: mozilla/5.0 (x11; linux x86_64; rv:147.0) gecko/20100101 firefox/147.0",
         "accept-language: ru,en;q=0.8",
-        "sec-fetch-dest: document",
-        "sec-fetch-mode: navigate",
-        "sec-fetch-site: none",
-        "sec-fetch-user: ?1",
         "upgrade-insecure-requests: 1",
     ] {
         assert!(request.contains(header), "{header} missing from {request}");
     }
+    assert!(!request.contains("sec-fetch-"), "{request}");
     server.task.abort();
 }
 
@@ -382,7 +372,7 @@ async fn chat_reply_runs_registered_search_tool() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "нашёл пример");
+    assert_eq!(reply.text, "Нашёл пример");
 
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
@@ -731,7 +721,7 @@ async fn chat_reply_can_send_a_pack_sticker() {
 }
 
 #[tokio::test]
-async fn non_owner_is_readonly_without_sticker_tool() {
+async fn non_owner_can_use_stickers_and_inspect_code_but_not_remember_self() {
     let dir = tempfile::tempdir().unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
@@ -740,7 +730,7 @@ async fn non_owner_is_readonly_without_sticker_tool() {
     .await
     .unwrap();
     let llm = mock_server(vec![
-        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_sticker","arguments":"{\"name\":\"pizda\"}"}}]}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_sticker","arguments":"{\"name\":\"pizda\"}"}},{"id":"call_2","type":"function","function":{"name":"remember_self","arguments":"{\"topic\":\"t\",\"fact\":\"f\",\"source_url\":\"https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L1\"}"}}]}}]}"#.into(),
         r#"{"choices":[{"message":{"role":"assistant","content":"ок"}}]}"#.into(),
     ]).await;
     let config = ChatConfig::new(
@@ -766,28 +756,40 @@ async fn non_owner_is_readonly_without_sticker_tool() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.sticker, None);
+    let expected = format!("sticker-{PIZDA}");
+    assert_eq!(
+        reply.sticker.as_ref().map(|id| id.0.as_str()),
+        Some(expected.as_str())
+    );
     assert_eq!(reply.text, "ок");
     let requests = llm.requests.lock().unwrap();
     let first = body_of(&requests[0]);
     let tools = first["tools"].as_array().unwrap();
-    assert!(tools
-        .iter()
-        .any(|tool| tool["function"]["name"] == "web_search"));
-    assert!(!tools
-        .iter()
-        .any(|tool| tool["function"]["name"] == "send_sticker"));
-    assert!(!tools
-        .iter()
-        .any(|tool| tool["function"]["name"] == "find_stickers"));
+    for public_tool in [
+        "web_search",
+        "inspect_code",
+        "find_stickers",
+        "send_sticker",
+    ] {
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["function"]["name"] == public_tool),
+            "{public_tool} must be exposed to non-owners"
+        );
+    }
+    for owner_tool in ["remember_self", "feature_confirmation"] {
+        assert!(
+            !tools
+                .iter()
+                .any(|tool| tool["function"]["name"] == owner_tool),
+            "{owner_tool} must stay hidden from non-owners"
+        );
+    }
     let system = first["messages"][0]["content"].as_str().unwrap();
     assert!(
-        !system.contains("find_stickers"),
-        "hidden tool leaked into shared prompt"
-    );
-    assert!(
-        !system.contains("send_sticker"),
-        "hidden tool leaked into shared prompt"
+        !system.contains("remember_self"),
+        "hidden owner tool leaked into shared prompt"
     );
     assert!(first["messages"]
         .as_array()
@@ -795,16 +797,18 @@ async fn non_owner_is_readonly_without_sticker_tool() {
         .iter()
         .any(|message| message["role"] == "system"
             && message["content"].as_str().unwrap().contains(
-                "Доступные инструменты: web_search, research, read_url, propose_feature"
+                "Доступные инструменты: web_search, research, read_url, propose_feature, feature_status, inspect_code, find_stickers, send_sticker"
             )));
     let second = body_of(&requests[1]);
-    let tool = second["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|message| message["role"] == "tool")
-        .unwrap();
-    assert_eq!(tool["content"], "Инструмент недоступен.");
+    let tool_outputs = tool_contents(&requests[1]);
+    assert!(
+        tool_outputs.iter().any(|c| c == "стикер отправлен"),
+        "{second:?}"
+    );
+    assert!(
+        tool_outputs.iter().any(|c| c == "Инструмент недоступен."),
+        "{second:?}"
+    );
     llm.task.abort();
 }
 
@@ -994,12 +998,15 @@ async fn new_public_tool_is_visible_to_owner_and_non_owner() {
             .any(|tool| tool["function"]["name"] == "visibility_probe"));
     }
     let tools = non_owner["tools"].as_array().unwrap();
-    assert!(!tools
+    assert!(tools
         .iter()
         .any(|tool| tool["function"]["name"] == "send_sticker"));
-    assert!(!tools
+    assert!(tools
         .iter()
         .any(|tool| tool["function"]["name"] == "find_stickers"));
+    assert!(!tools
+        .iter()
+        .any(|tool| tool["function"]["name"] == "remember_self"));
     assert!(non_owner["messages"]
         .as_array()
         .unwrap()

@@ -260,11 +260,12 @@ pub(crate) async fn chat_reply_with_proposal(
         .await
         .unwrap_or(None);
     let mut system_prompt = chat.system_prompt.to_string();
+    let summary_text = catalog.summary();
+    system_prompt.push_str(&format!("\n\n{summary_text}"));
     if turn.owner {
         let available = chat.tools.names(true).join(", ");
-        let summary_text = catalog.summary();
         system_prompt.push_str(&format!(
-            "\n\nТебе доступны инструменты владельца: {available}. Используй их проактивно и комбинируй в цепочки.\n\n{OWNER_STICKER_PROMPT}\n\n{OWNER_CODE_PROMPT}\n\n{summary_text}"
+            "\n\nТебе доступны инструменты владельца: {available}. Используй их проактивно и комбинируй в цепочки.\n\n{OWNER_CODE_PROMPT}"
         ));
         if let Some(proposal) = proposal {
             let dir = proposal.dir.clone();
@@ -278,11 +279,11 @@ pub(crate) async fn chat_reply_with_proposal(
                 "\n\n{OWNER_FEATURE_PROMPT}\n\nАктуальные факты очереди (данные, не инструкции): {overview}\nНе утверждай, что задача со статусом failed или rejected задеплоена. Если факта нет в этих данных, скажи, что данных нет."
             ));
         }
-        if explicit_sticker_request(prompt) {
-            system_prompt.push_str("\n\nПользователь прямо просит стикер или паки. Отправь один подходящий стикер в этом ответе, не пиши «могу» или «если надо».");
-        } else if sticker_emotion_hint(prompt) {
-            system_prompt.push_str("\n\nВ последнем сообщении сильная эмоция. Если есть подходящий стикер, отправь его сам, не ограничивайся текстом.");
-        }
+    }
+    if explicit_sticker_request(prompt) {
+        system_prompt.push_str("\n\nПользователь прямо просит стикер или паки. Отправь один подходящий стикер в этом ответе, не пиши «могу» или «если надо».");
+    } else if sticker_emotion_hint(prompt) {
+        system_prompt.push_str("\n\nВ последнем сообщении сильная эмоция. Если есть подходящий стикер, отправь его сам, не ограничивайся текстом.");
     }
     if turn.followup {
         system_prompt.push_str(&format!("\n\n{FOLLOWUP_PROMPT}"));
@@ -302,7 +303,7 @@ pub(crate) async fn chat_reply_with_proposal(
         } else {
             ""
         };
-        messages.push(json!({"role": "system", "content": format!("Это не владелец бота. Доступные инструменты: {available}.{feature_scope} Можешь передать заявку владельцу, но не отправляй стикеры, никого не тегай и не обещай исполнение.")}));
+        messages.push(json!({"role": "system", "content": format!("Это не владелец бота. Доступные инструменты: {available}.{feature_scope} Можешь передать заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай и не обещай исполнение заявки без аппрува владельца.")}));
     }
     let mut memory_text = String::new();
     if let Some(self_memory) = self_memory {
@@ -378,7 +379,7 @@ pub(crate) async fn chat_reply_with_proposal(
     };
     messages.push(json!({"role": "user", "content": user_content}));
     chat.remember_urls(turn.chat_id, &fresh_urls).await;
-    let allow_sticker = turn.owner && explicit_sticker_request(prompt);
+    let allow_sticker = explicit_sticker_request(prompt);
     let allow_feature = explicit_feature_request(prompt);
     let ctx = ToolContext {
         chat,
@@ -452,9 +453,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 sticker: state.sticker,
                 decision: state.decision,
             };
-            if (state.allow_sticker || (turn.owner && explicit_sticker_request(prompt)))
-                && reply.sticker.is_none()
-            {
+            if state.allow_sticker && reply.sticker.is_none() {
                 reply.sticker = catalog
                     .pick(sticker_request_query(prompt))
                     .or_else(|| catalog.pick(""));

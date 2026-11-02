@@ -16,13 +16,12 @@ timeout 120 nix-shell --run "python3 -m unittest discover -s tools -p 'test_*.py
 
 Cargo target directories stay on `pc`, so a stale local `./target` is never a factor. Inside the buer worker the same `cargo-slot` name reaches the host relay through `/run/cargo-slot/socket`; it accepts only workspace paths under `/data/workspaces` and only `cargo` subcommands.
 
-When a running bot or sidecar change needs container verification:
+Merging to `main` triggers `.github/workflows/publish-image.yml` (`ghcr.io/labi-le/maxwell:<sha>`) and the host timer `maksut-auto-deploy.timer` (`tools/auto_deploy.py`) fast-forwards the checkout and recreates `maksut` with `--no-build`. When a local uncommitted change needs container verification:
 
 ```bash
 docker compose -f compose.yaml build maksut
 docker compose -f compose.yaml up -d maksut
 ```
-
 Never run `docker compose down -v`: the external volume `maksut_data` holds the live SQLite database (`/data/maksut.db`).
 
 ## Invariants
@@ -30,8 +29,8 @@ Never run `docker compose down -v`: the external volume `maksut_data` holds the 
 These hold everywhere. A change that needs to break one of them needs a different design.
 
 - **`docs/communication-guide.md` is read-only.** It is the operating specification compiled into the binary with `include_str!("../docs/communication-guide.md")`; never edit, reformat, or regenerate it. Change bot behavior in code, `SYSTEM_PROMPT`, tool descriptions, `README.md`, or `docs/`.
-- **Self-improve forbidden paths stay untouched by worker tasks.** Automated worker diffs (if `tools/omp_worker.py` or a future worker is used; live intake only creates GitHub issues) never touch `docs/communication-guide.md`, `AGENTS.md`, `Dockerfile`, `compose.yaml`, `Cargo.lock`, `shell.nix`, `.env`, `.secrets/`, `cookie_refresh/`, `cookie-refresh/`, `packaging/`, `self-improve/`, `self_improve/`, `tools/self_improve_orchestrator.py`, `tools/self_improve_deploy.py`, `tools/omp_worker.py`, or `target/`, or leak `LLM_API_KEY`.
-- **Single authorization point for function tools.** `ToolRegistry::find(name, owner)` in `src/tool_registry.rs` is the only gate between a model tool call and dispatch. Never maintain a separate `ALLOWED_TOOLS` list. `ToolVisibility::All` exposes a tool to every member of every enabled group; owner-only capabilities (`feature_confirmation`, `inspect_code`, `remember_self`, `find_stickers`, `send_sticker`) must stay `ToolVisibility::Owner`, and their instructions belong in owner-only prompt blocks (`OWNER_STICKER_PROMPT`, `OWNER_CODE_PROMPT`, `OWNER_FEATURE_PROMPT`), never in `SYSTEM_PROMPT`.
+- **Self-improve forbidden paths stay untouched by worker tasks.** Automated worker diffs (if `tools/omp_worker.py` or a future worker is used; live intake only creates GitHub issues) never touch `docs/communication-guide.md`, `AGENTS.md`, `Dockerfile`, `compose.yaml`, `Cargo.lock`, `shell.nix`, `.github/`, `.env`, `.secrets/`, `cookie_refresh/`, `cookie-refresh/`, `packaging/`, `self-improve/`, `self_improve/`, `tools/self_improve_orchestrator.py`, `tools/self_improve_deploy.py`, `tools/auto_deploy.py`, `tools/pr_review.py`, `tools/omp_worker.py`, or `target/`, or leak `LLM_API_KEY`.
+- **Single authorization point for function tools.** `ToolRegistry::find(name, owner)` in `src/tool_registry.rs` is the only gate between a model tool call and dispatch. Never maintain a separate `ALLOWED_TOOLS` list. `ToolVisibility::All` exposes a tool to every member of every enabled group (`web_search`, `research`, `read_url`, `propose_feature`, `feature_status`, `inspect_code`, `find_stickers`, `send_sticker`); owner-only capabilities (`feature_confirmation`, `remember_self`) must stay `ToolVisibility::Owner`, and their instructions belong in owner-only prompt blocks (`OWNER_CODE_PROMPT`, `OWNER_FEATURE_PROMPT`), never in `SYSTEM_PROMPT`.
 - **Every external URL and fetched body is untrusted.** Media URLs pass `allowed_url` (`src/links.rs`), CDN image URLs pass `image_cdn_url` and `pinned_client` (`src/images.rs`, `src/image_fetch.rs`), and `read_url` (`src/read_url.rs`) requires an allowed URL match (`allowed_target`) plus public-IPv4 DNS pinning, manual redirect validation (max 5), size caps, and HTML complexity bounds. Never enable `yt-dlp`'s generic extractor (`--ies default,-generic`).
 - **No silent degradation and no secret leaks.** Never send raw `yt-dlp`/`ffmpeg` stderr, API bodies, query strings, `.env`, or `cookies.txt` to Telegram or SQLite (`download_failures` records only static categories, host, and path without query). Every video sent as a video must have an audio stream verified by `ffprobe`.
 - **No `.unwrap()` / `.expect()` on fallible runtime paths** (network, I/O, user input, external JSON/HTML, subprocesses), and **never hold a `std::sync::Mutex` guard across an `.await`**.
@@ -81,13 +80,14 @@ Why each of these rules exists, and what shipping without it cost, is in [`docs/
 | Guide | Load it when |
 |---|---|
 | [`docs/guides/workflow.md`](./docs/guides/workflow.md) | before your FIRST edit to production code, a contract, or a doc agents act on |
+| [`docs/guides/review-bot.md`](./docs/guides/review-bot.md) | touching `.github/workflows/pr-review.yml`, `tools/pr_review.py`, the `REVIEWER_*` secrets, or the reviewer account |
 | [`docs/guides/layout.md`](./docs/guides/layout.md) | orientation: which `src/*.rs` module or `tools/*.py` script owns a concern |
 | [`docs/guides/security.md`](./docs/guides/security.md) | touching URL validation, `read_url`, `pinned_client`, `tool_registry`, `memory` injection flags, cookies, or container/sandbox boundaries |
 | [`docs/guides/media.md`](./docs/guides/media.md) | touching link parsing, `yt-dlp`, YouTube pre-probe, TikTok/X/Instagram/Pinterest photos, `ffprobe`/`ffmpeg` transcoding, albums, captions, `media_cache`, or `download_failures` |
 | [`docs/guides/chat.md`](./docs/guides/chat.md) | touching LLM chat, `SYSTEM_PROMPT`, `web_search`, `research`, `read_url`, `memory_compactor`, `tool_registry`, or sticker triggers/catalog |
-| [`docs/guides/self-improve.md`](./docs/guides/self-improve.md) | touching `src/self_improve.rs`, `src/code_inspect.rs`, `tools/self_improve_orchestrator.py`, `tools/omp_worker.py`, or `self_improve/*` |
+| [`docs/guides/self-improve.md`](./docs/guides/self-improve.md) | touching `src/self_improve.rs`, `src/code_inspect.rs`, `tools/self_improve_orchestrator.py`, `tools/auto_deploy.py`, `tools/omp_worker.py`, `packaging/maksut-*`, or `self_improve/*` |
 | [`docs/guides/cookies.md`](./docs/guides/cookies.md) | touching `src/cookies.rs`, `src/cookie_refresh.rs`, `tools/export_chrome_cookies.py`, `tools/cookie_refresh_service.py`, or `cookie_refresh/Dockerfile` |
-| [`docs/adr/`](./docs/adr/) | checking the historical decision record (`001` to `019`) before proposing or reversing an architectural choice |
+| [`docs/adr/`](./docs/adr/) | checking the historical decision record (`001` and up) before proposing or reversing an architectural choice |
 
 Two rules about the guides themselves:
 
