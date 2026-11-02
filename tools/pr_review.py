@@ -274,6 +274,7 @@ class Gateway:
         }
         if allow_tools:
             payload["tools"] = [READ_FILE_TOOL]
+            payload["tool_choice"] = "auto"
         status, body, _ = _request(
             f"{self.base_url}/chat/completions",
             token=self.api_key,
@@ -300,21 +301,21 @@ class Gateway:
         remaining_calls = MAX_TOOL_CALLS
         while True:
             message = self._chat(messages, allow_tools=remaining_calls > 0)
-            tool_calls = message.get("tool_calls")
-            if not isinstance(tool_calls, list) or not tool_calls or remaining_calls <= 0:
+            tool_calls = message.get("tool_calls") if remaining_calls > 0 else None
+            if not isinstance(tool_calls, list) or not tool_calls:
                 content = message.get("content")
+                if (not isinstance(content, str) or not content.strip()) and remaining_calls > 0:
+                    message = self._chat(messages, allow_tools=False)
+                    content = message.get("content")
                 if not isinstance(content, str) or not content.strip():
                     raise ReviewError("gateway: empty completion")
                 return content
             selected = tool_calls[:remaining_calls]
             remaining_calls -= len(selected)
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.get("content") or "",
-                    "tool_calls": selected,
-                }
-            )
+            assistant_msg = dict(message)
+            assistant_msg["role"] = "assistant"
+            assistant_msg["tool_calls"] = selected
+            messages.append(assistant_msg)
             for call in selected:
                 call_id = str((call or {}).get("id") or "call_0")
                 function = (call or {}).get("function") or {}
@@ -585,8 +586,8 @@ class Reviewer:
         prompt = build_prompt(pull, diff, agents, self.model, guides=guides)
         review = None
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
-            answer = self.complete(prompt)
             try:
+                answer = self.complete(prompt)
                 review = parse_review(answer)
                 break
             except ReviewError as error:
