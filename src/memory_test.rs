@@ -134,6 +134,41 @@ async fn compact_chat_summarizes_old_messages_without_deleting_them() {
 }
 
 #[tokio::test]
+async fn chat_lock_allows_concurrent_turns_while_blocking_compaction_write() {
+    let root = tempfile::tempdir().unwrap();
+    let settings = fake_settings(root.path(), "#!/bin/sh\n").await;
+    let chat_id = ChatId(-1002045081420);
+    let chat_lock_a = settings.chat_lock(chat_id.0).await;
+    let chat_lock_b = settings.chat_lock(chat_id.0).await;
+    let user_a = settings.user_turn_lock(chat_id, UserId(10)).await;
+    let user_b = settings.user_turn_lock(chat_id, UserId(20)).await;
+
+    let read_a = chat_lock_a
+        .try_read()
+        .expect("first participant read guard");
+    let read_b = chat_lock_b
+        .try_read()
+        .expect("second participant concurrent read guard");
+    let write_user_a = user_a.try_write().expect("user A exclusive guard");
+    let _write_user_b = user_b
+        .try_write()
+        .expect("user B concurrent exclusive guard");
+    assert!(
+        user_a.try_write().is_err(),
+        "same participant second burst turn must wait on user_turn_lock"
+    );
+    assert!(
+        chat_lock_a.try_write().is_err(),
+        "memory_compactor write() must wait while any participant turn holds read()"
+    );
+    drop((read_a, read_b, write_user_a));
+    assert!(
+        chat_lock_a.try_write().is_ok(),
+        "memory_compactor write() succeeds once active turns finish"
+    );
+}
+
+#[tokio::test]
 async fn compact_chat_never_summarizes_flagged_injections() {
     let (_dir, pool) = test_pool().await;
     let chat_id = ChatId(2);

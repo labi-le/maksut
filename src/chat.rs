@@ -62,9 +62,9 @@ pub(crate) async fn reply_with_chat(
         return;
     }
     chat.pace(sender.id).await;
-    let user_key = message.chat.id.0 ^ (sender.id.0 as i64).rotate_left(32);
-    let user_lock = cfg.chat_lock(user_key).await;
-    let _user_guard = user_lock.lock().await;
+    let chat_lock = cfg.chat_lock(message.chat.id.0).await;
+    let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
+    let (_chat_guard, _user_guard) = (chat_lock.read().await, user_lock.write().await);
     // Hold the image permit across `chat.acquire()` so downloaded bytes are
     // bounded by `config().chat.image_concurrency + config().chat.concurrency`
     // without occupying a model slot while Telegram serves the file.

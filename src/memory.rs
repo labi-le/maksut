@@ -368,7 +368,7 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
             .unwrap_or_default();
             for chat_id in chats {
                 let lock = cfg.chat_lock(chat_id).await;
-                let _guard = lock.lock().await;
+                let _guard = lock.write().await;
                 for _ in 0..config().memory.compact_passes {
                     match compact_chat(chat, &cfg.database, chat_id).await {
                         Ok(true) => {}
