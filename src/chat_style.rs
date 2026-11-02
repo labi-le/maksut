@@ -6,6 +6,21 @@ const RESEARCH_BODY_CHARS: usize = 4800;
 const RESEARCH_SOURCES_CHARS: usize = 1200;
 const RESEARCH_MAX_CHARS: usize = 6000;
 
+pub(crate) const BOT_NAME_FORMS: &[&str] = &[
+    "максут",
+    "максута",
+    "максуту",
+    "максутом",
+    "максуте",
+    "максутка",
+    "максутки",
+    "максутке",
+    "максутку",
+    "максуткой",
+    "максуток",
+    "maksut",
+];
+
 /// The prompt with the bot name stripped, or `None` when the message was not
 /// addressed to the bot. The private chat counts as addressed, and so does a
 /// reply to one of the bot's own messages in a group.
@@ -22,18 +37,11 @@ pub(crate) fn chat_prompt(
     if private || reply_to_bot {
         return Some(text.to_owned());
     }
-    let mut names = vec![
-        "максут".to_string(),
-        "максутка".to_string(),
-        "maksut".to_string(),
-    ];
-    if !bot_username.is_empty() {
-        names.push(bot_username.to_lowercase());
-    }
+    let bot_name = (!bot_username.is_empty()).then(|| bot_username.to_lowercase());
     let mut cleaned = text.to_owned();
     let mut addressed = false;
-    for name in names {
-        let (rest, found) = strip_name(&cleaned, &name);
+    for name in BOT_NAME_FORMS.iter().copied().chain(bot_name.as_deref()) {
+        let (rest, found) = strip_name(&cleaned, name);
         if found {
             addressed = true;
             cleaned = rest;
@@ -281,7 +289,7 @@ fn normalize_spam_text(text: &str) -> String {
     let trimmed = text.trim_start();
     let body = trimmed.strip_prefix("[переслано]").unwrap_or(trimmed);
     let mut stripped = body.to_owned();
-    for alias in ["максут", "максутка", "maksut"] {
+    for alias in BOT_NAME_FORMS {
         let (rest, found) = strip_name(&stripped, alias);
         if found {
             stripped = rest;

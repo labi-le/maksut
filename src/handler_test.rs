@@ -1141,19 +1141,22 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
     );
     assert_eq!(replies[0].fields["text"], "на скрине в 13 раз дешевле");
     let second_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[1]);
-    let second_user = second_body["messages"].as_array().unwrap().last().unwrap()["content"]
-        .as_str()
-        .unwrap();
+    let second_content = &second_body["messages"].as_array().unwrap().last().unwrap()["content"];
     assert!(
-        !second_user.contains("[не удалось загрузить вложение]"),
-        "follow-up must not append failed-attachment noise when image is absent: {second_user}"
+        second_content
+            .as_array()
+            .is_some_and(|parts| parts.iter().any(|part| part["type"] == "image_url"
+                && part["image_url"]["url"]
+                    .as_str()
+                    .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")))),
+        "follow-up reply to a photo must attach the replied-to photo for vision: {second_content}"
     );
     assert!(
-        !api.snapshot()
+        api.snapshot()
             .await
             .iter()
             .any(|request| request.method == "getfile"),
-        "follow-up reply to a photo must not call getFile on Telegram"
+        "follow-up reply to a photo must call getFile on Telegram"
     );
     api.clear().await;
 

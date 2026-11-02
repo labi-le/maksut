@@ -31,6 +31,18 @@ fn chat_prompt_needs_the_name_in_groups() {
         Some("да почему максут так дебильно фразы строит")
     );
     assert_eq!(
+        chat_prompt("убили максута суки", false, "MyBot", false).as_deref(),
+        Some("убили максута суки")
+    );
+    assert_eq!(
+        chat_prompt("максуту привет", false, "MyBot", false).as_deref(),
+        Some("привет")
+    );
+    assert_eq!(
+        chat_prompt("спроси у максутки", false, "MyBot", false).as_deref(),
+        Some("спроси у")
+    );
+    assert_eq!(
         chat_prompt("максвелл что такое Rust", false, "MyBot", false),
         None
     );
@@ -1855,4 +1867,137 @@ async fn read_url_marks_the_message_on_every_pass() {
     }
     server.abort();
     llm.task.abort();
+}
+
+#[tokio::test]
+async fn vision_tool_round_drops_base64_image_on_second_round_and_retries_server_error() {
+    let (_dir, pool) = test_pool().await;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = Arc::clone(&requests);
+    let responses = Arc::new(std::sync::Mutex::new(vec![
+        (
+            "502 Bad Gateway",
+            r#"{"error":"upstream timeout"}"#.to_owned(),
+        ),
+        (
+            "200 OK",
+            tool_response("web_search", serde_json::json!({"query": "rust"})),
+        ),
+        ("200 OK", reply_response("нашёл ответ")),
+    ]));
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let captured = Arc::clone(&captured);
+            let responses = Arc::clone(&responses);
+            tokio::spawn(async move {
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut chunk).await.unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                    if let Some(head_end) = test_find(&buffer, b"\r\n\r\n") {
+                        let head =
+                            String::from_utf8_lossy(&buffer[..head_end]).to_ascii_lowercase();
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")
+                                    .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        if buffer.len() >= head_end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let req_str = String::from_utf8_lossy(&buffer).into_owned();
+                if req_str.starts_with("POST /chat/completions") {
+                    captured.lock().unwrap().push(req_str);
+                    let (status, body) = responses.lock().unwrap().remove(0);
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                } else {
+                    let html = r#"<a class="result__a" href="https://example.com">Example</a><a class="result__snippet">Snippet</a>"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        html.len(),
+                        html
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+            });
+        }
+    });
+    let url = Url::parse(&format!("http://{address}/")).unwrap();
+    let config = ChatConfig::new(
+        url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        url,
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let image = ChatImage {
+        bytes: b"hello".to_vec(),
+        mime: "image/jpeg".into(),
+    };
+    let reply = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(1),
+        "Денис",
+        10,
+        true,
+        "проверь картинку",
+        Some(&image),
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "нашёл ответ");
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(
+        recorded.len(),
+        3,
+        "first 502 must retry once, then run round 2"
+    );
+    let first_round_body = body_of(&recorded[1]);
+    let first_user_msg = first_round_body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "user")
+        .unwrap();
+    assert!(
+        first_user_msg["content"].is_array(),
+        "round 0 must send multimodal content array with image_url: {first_user_msg}"
+    );
+    let second_round_body = body_of(&recorded[2]);
+    let second_user_msg = second_round_body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "user")
+        .unwrap();
+    assert!(
+        second_user_msg["content"].is_string(),
+        "round 1 after tool call must replace image_url array with plain user_text: {second_user_msg}"
+    );
+    server.abort();
 }
