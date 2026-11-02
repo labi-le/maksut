@@ -3,6 +3,7 @@
 import io
 import json
 import unittest
+from email.message import Message
 from contextlib import redirect_stderr, redirect_stdout
 
 try:
@@ -117,6 +118,24 @@ class ParseTests(unittest.TestCase):
             "findings": [{"severity": "P3", "file": "a.rs", "line": "12", "claim": "c"}],
         })
         self.assertIsNone(pr_review.parse_review(answer)["findings"][0]["line"])
+
+
+class GitHubErrorTests(unittest.TestCase):
+    def test_403_reports_the_permission_github_expects(self):
+        headers = Message()
+        headers["X-Accepted-GitHub-Permissions"] = "pull_requests=write"
+
+        def failed(*args, **kwargs):
+            return 403, '{"message":"Resource not accessible by personal access token"}', headers
+
+        original = pr_review._request
+        pr_review._request = failed
+        try:
+            with self.assertRaises(pr_review.ReviewError) as caught:
+                pr_review.GitHub("token", "labi-le/maxwell")._call("/pulls/31/reviews", method="POST", payload={})
+        finally:
+            pr_review._request = original
+        self.assertIn("accepted: pull_requests=write", str(caught.exception))
 
 
 class EventTests(unittest.TestCase):
