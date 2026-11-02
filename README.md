@@ -37,7 +37,8 @@ docker compose -f compose.yaml down
 cp packaging/maksut-self-improve.service packaging/maksut-auto-deploy.service packaging/maksut-auto-deploy.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now maksut-self-improve.service maksut-auto-deploy.timer
-journalctl --user -u maksut-self-improve.service -u maksut-auto-deploy.service -f
+make deploy-status
+make logs
 ```
 
 Для локальной разработки используется `shell.nix`:

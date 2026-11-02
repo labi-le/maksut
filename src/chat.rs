@@ -80,22 +80,20 @@ pub(crate) async fn reply_with_chat(
         return;
     }
     chat.pace(sender.id).await;
+    let chat_lock = cfg.chat_lock(message.chat.id.0).await;
+    let _chat_guard = chat_lock.lock().await;
     // Hold the image permit across `chat.acquire()` so downloaded bytes are
     // bounded by `CHAT_IMAGE_CONCURRENCY + CHAT_CONCURRENCY` without occupying
     // a model slot while Telegram serves the file.
     let mut image_permit = None;
-    let downloaded_image = if let Some((file_id, mime)) = input.pending_media.as_ref() {
-        if let Some(permit) = acquire_image_permit().await {
-            let image = download_image(bot, file_id, mime).await;
-            if image.is_some() {
-                image_permit = Some(permit);
-            }
-            image
-        } else {
-            None
-        }
-    } else {
-        None
+    let downloaded_image = match input.pending_media.as_ref() {
+        Some((file_id, mime)) => match acquire_image_permit().await {
+            Some(permit) => download_image(bot, file_id, mime)
+                .await
+                .inspect(|_| image_permit = Some(permit)),
+            None => None,
+        },
+        None => None,
     };
     let Some(_permit) = chat.acquire().await else {
         return;
@@ -377,6 +375,7 @@ pub(crate) async fn chat_reply_with_proposal(
         ]),
         None => json!(user_text),
     };
+    let user_msg_idx = messages.len();
     messages.push(json!({"role": "user", "content": user_content}));
     chat.remember_urls(turn.chat_id, &fresh_urls).await;
     let allow_sticker = explicit_sticker_request(prompt);
@@ -471,6 +470,11 @@ pub(crate) async fn chat_reply_with_proposal(
                 };
             }
             return Ok(reply);
+        }
+        if let Some(msg) = messages.get_mut(user_msg_idx) {
+            if msg["content"].is_array() {
+                msg["content"] = json!(user_text.as_str());
+            }
         }
         messages.push(json!({
             "role": "assistant",

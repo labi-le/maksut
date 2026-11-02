@@ -122,6 +122,10 @@ pub(crate) async fn resolve_chat_input(
     let chat = cfg.chat.as_ref()?;
     let current_media = message_image(message);
     let has_current_media = current_media.is_some();
+    let has_reply_photo = !reply_ignored
+        && message
+            .reply_to_message()
+            .is_some_and(message_has_own_photo);
     let media = current_media.or_else(|| {
         (!reply_ignored)
             .then(|| message.reply_to_message().and_then(message_image))
@@ -150,7 +154,7 @@ pub(crate) async fn resolve_chat_input(
     let reply_context = message
         .reply_to_message()
         .and_then(|reply| crate::chat_style::format_reply_context(reply, reply_ignored));
-    let pending_media = media.filter(|_| !followup || has_current_media);
+    let pending_media = media.filter(|_| !followup || has_current_media || has_reply_photo);
     let warn_missing_image = pending_media.is_some() && !bare_sticker_reply;
     Some(ResolvedChatInput {
         prompt,
