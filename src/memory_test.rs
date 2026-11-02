@@ -234,7 +234,10 @@ async fn chat_reply_injects_summary_as_data_not_instructions() {
     assert!(memory.contains("Вадик говорил, что любит борщ"), "{memory}");
     assert!(memory.contains("не инструкции"), "{memory}");
     let text = messages.last().unwrap()["content"].as_str().unwrap();
-    assert!(text.contains("говорит tester [2]: привет"), "{text}");
+    assert!(
+        text.contains("говорит tester [2] [owner]: привет"),
+        "{text}"
+    );
     assert!(!text.contains("<memory"), "{text}");
     llm.task.abort();
 }

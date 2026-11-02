@@ -1,6 +1,6 @@
 # Security and correctness invariants
 
-> **When to read this:** Read before touching URL handling (`src/links.rs`, `src/images.rs`, `src/image_fetch.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`), prompt assembly, tool registration or dispatch (`src/chat_client.rs`, `src/chat.rs`, `src/chat_tools.rs`, `src/tool_registry.rs`, `src/code_inspect.rs`), prompt/memory filtering (`src/memory.rs`), cookies (`src/cookies.rs`, `src/cookie_refresh.rs`, `tools/cookie_refresh_service.py`), or the self-improvement queue, auto-deploy, and sandbox (`src/improve_store.rs`, `src/improve_views.rs`, `src/improve_commands.rs`, `src/self_improve.rs`, `tools/self_improve_orchestrator.py`, `tools/auto_deploy.py`, `tools/omp_worker.py`).
+> **When to read this:** Read before touching URL handling (`src/links.rs`, `src/images.rs`, `src/image_fetch.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`), prompt assembly, tool registration or dispatch (`src/chat_client.rs`, `src/chat.rs`, `src/chat_style.rs`, `src/chat_tools.rs`, `src/tool_registry.rs`, `src/code_inspect.rs`), prompt/memory filtering (`src/memory.rs`), cookies (`src/cookies.rs`, `src/cookie_refresh.rs`, `tools/cookie_refresh_service.py`), or the self-improvement queue, auto-deploy, and sandbox (`src/improve_store.rs`, `src/improve_views.rs`, `src/improve_commands.rs`, `src/self_improve.rs`, `tools/self_improve_orchestrator.py`, `tools/auto_deploy.py`, `tools/omp_worker.py`).
 
 ## Read-only and forbidden paths
 
