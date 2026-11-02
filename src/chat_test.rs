@@ -125,6 +125,23 @@ fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
 }
 
 #[test]
+fn style_reply_keeps_fenced_code_blocks_on_their_own_lines() {
+    let text = "вот пример\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\nготово.";
+    assert_eq!(
+        style_reply(text),
+        "вот пример\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\nготово"
+    );
+    let untouched = "```\nсм. src/chat.rs:10 — тире\n```";
+    assert_eq!(style_reply(untouched), untouched);
+    let nested = "````markdown\n```rust\nfn main() {}\n```\nстрока один\nстрока два\n````";
+    assert_eq!(style_reply(nested), nested);
+    let unclosed = "```bash\ncargo test.";
+    assert_eq!(style_reply(unclosed), unclosed);
+    let prose_only = "первая строка\nвторая строка";
+    assert_eq!(style_reply(prose_only), "первая строка вторая строка");
+}
+
+#[test]
 fn split_message_respects_the_telegram_limit() {
     let short = split_message("первая строка\nвторая");
     assert_eq!(short, vec!["первая строка\nвторая".to_string()]);
