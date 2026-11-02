@@ -65,9 +65,8 @@ pub(crate) async fn reply_with_chat(
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
     let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
     let (_chat_guard, _user_guard) = (chat_lock.read().await, user_lock.write().await);
-    // Hold the image permit across `chat.acquire()` so downloaded bytes are
-    // bounded by `config().chat.image_concurrency + config().chat.concurrency`
-    // without occupying a model slot while Telegram serves the file.
+    // Hold the image permit across `chat.acquire()` so downloaded bytes stay
+    // bounded without occupying a model slot while Telegram serves the file.
     let mut image_permit = None;
     let downloaded_image = match input.pending_media.as_ref() {
         Some((file_id, mime)) => match acquire_image_permit().await {
@@ -261,8 +260,6 @@ pub(crate) async fn chat_reply_with_proposal(
     }
     if explicit_sticker_request(prompt) {
         system_prompt.push_str("\n\nПользователь прямо просит стикер или паки. Отправь один подходящий стикер в этом ответе, не пиши «могу» или «если надо».");
-    } else if sticker_emotion_hint(prompt) {
-        system_prompt.push_str("\n\nВ последнем сообщении сильная эмоция. Если есть подходящий стикер, отправь его сам, не ограничивайся текстом.");
     }
     if turn.followup {
         system_prompt.push_str(&format!("\n\n{FOLLOWUP_PROMPT}"));
@@ -346,9 +343,11 @@ pub(crate) async fn chat_reply_with_proposal(
             self_memory,
             turn.sender_name,
             turn.username,
+            turn.owner,
+            turn.reply_context,
         );
         if !d.is_empty() {
-            user_text.push_str(&format!("обязательная установка владельца для этого ответа (выполни буквально в этом сообщении, включи указанные слова и мат):\n{d}\n"));
+            user_text.push_str(&format!("обязательная установка владельца для этого ответа (выполни буквально в этом сообщении, соблюдай все запреты, обращения и эпитеты):\n{d}\n"));
         }
     }
     let speaker_line = crate::memory::format_line_with_owner(
@@ -358,7 +357,8 @@ pub(crate) async fn chat_reply_with_proposal(
         prompt,
     );
     user_text.push_str(&format!(
-        "актуальная реплика, отвечай только на неё — говорит {speaker_line}"
+        "{}актуальная реплика, отвечай только на неё — говорит {speaker_line}",
+        sticker_turn_hint(prompt)
     ));
     let user_content = match turn.image {
         Some(image) => json!([

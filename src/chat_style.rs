@@ -353,7 +353,7 @@ pub(crate) fn sticker_request_query(text: &str) -> &'static str {
 
 pub(crate) fn sticker_emotion_hint(text: &str) -> bool {
     let text = text.to_lowercase();
-    [
+    const STEMS: &[&str] = &[
         "устал",
         "устала",
         "заколеб",
@@ -361,14 +361,27 @@ pub(crate) fn sticker_emotion_hint(text: &str) -> bool {
         "кайф",
         "радост",
         "смешн",
-        "ору",
         "ржака",
         "груст",
         "деплой",
-        "прод",
-    ]
-    .iter()
-    .any(|word| text.contains(word))
+        "ахах",
+        "хаха",
+        "кринж",
+        "заебись",
+        "ахуен",
+        "охуен",
+        "скучн",
+        "бесит",
+        "горит",
+        "плак",
+        "жесть",
+        "капец",
+        "имба",
+    ];
+    STEMS.iter().any(|stem| text.contains(stem))
+        || text
+            .split(|ch: char| !ch.is_alphanumeric())
+            .any(|w| matches!(w, "ору" | "прод" | "лол" | "кек" | "ура"))
 }
 
 pub(crate) fn display_author_name(user: &teloxide::types::User) -> String {
@@ -389,15 +402,23 @@ pub(crate) fn format_reply_context(
     if reply_ignored {
         return None;
     }
-    let raw = reply
-        .text()
-        .or_else(|| reply.caption())
-        .unwrap_or("")
-        .trim();
-    if raw.is_empty()
-        || crate::memory_guard::detect_flags(raw)
-            & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET)
-            != 0
+    let sticker_fallback;
+    let raw = match reply.text().or_else(|| reply.caption()).map(str::trim) {
+        Some(s) if !s.is_empty() => s,
+        _ if reply.sticker().is_some() => {
+            let emoji = reply
+                .sticker()
+                .and_then(|s| s.emoji.as_deref())
+                .unwrap_or("");
+            sticker_fallback = format!("[стикер {emoji}]");
+            sticker_fallback.trim()
+        }
+        _ if crate::chat_media::message_has_attachment(reply) => "[вложение]",
+        _ => return None,
+    };
+    if crate::memory_guard::detect_flags(raw)
+        & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET)
+        != 0
     {
         return None;
     }
