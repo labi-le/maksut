@@ -1,6 +1,7 @@
 use crate::permitted_ipv4;
 use crate::prelude::*;
 pub(crate) use crate::read_url_html::*;
+pub(crate) use crate::read_url_sites::*;
 use std::sync::{LazyLock, Mutex};
 
 const READ_URL_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -59,20 +60,15 @@ impl ReadUrlError {
             Self::Timeout => "сайт не ответил вовремя".into(),
             Self::TooManyRedirects => "слишком много редиректов".into(),
             Self::Redirect => "некорректный редирект".into(),
-            Self::Http(status) if *status == 401 || *status == 403 => {
-                "сайт требует авторизацию".into()
-            }
-            Self::Http(status) if *status == 404 => "страница не найдена".into(),
+            Self::Http(401 | 403) => "сайт требует авторизацию".into(),
+            Self::Http(404) => "страница не найдена".into(),
             Self::Http(status) => format!("сайт ответил HTTP {status}"),
             Self::TooLarge => "страница слишком большая".into(),
             Self::TooComplex => "страница слишком сложная для разбора".into(),
-            Self::UnsupportedContent(kind) => {
-                if kind.is_empty() {
-                    "неподдерживаемый тип содержимого".into()
-                } else {
-                    format!("неподдерживаемый тип содержимого: {kind}")
-                }
+            Self::UnsupportedContent(kind) if kind.is_empty() => {
+                "неподдерживаемый тип содержимого".into()
             }
+            Self::UnsupportedContent(kind) => format!("неподдерживаемый тип содержимого: {kind}"),
             Self::Empty => "страница пустая".into(),
         }
     }
@@ -91,11 +87,16 @@ static READ_URL_CACHE: LazyLock<Mutex<HashMap<String, CachedPage>>> =
 /// narrow URL reader: it never reads local files, archives, SQLite, or internal
 /// agent schemes. The page body is untrusted data for the model.
 pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
-    let mut url = parse_url(raw)?;
-    if let Some(page) = cache_get(url.as_str()) {
-        return Ok(page);
+    let (raw_url, selector) = split_url_selector(raw);
+    let parsed_requested = parse_url(raw_url)?;
+    if let Some(page) = cache_get(parsed_requested.as_str()) {
+        return Ok(apply_url_selector(page, &selector));
     }
-    let requested = url.as_str().to_owned();
+    let requested = parsed_requested.as_str().to_owned();
+    let (mut url, special_method) = match rewrite_special_target(&parsed_requested) {
+        Some((rewritten, method)) => (rewritten, Some(method)),
+        None => (parsed_requested, None),
+    };
     let deadline = time::Instant::now() + READ_URL_TOTAL_TIMEOUT;
     let mut redirects = 0usize;
     let mut http_fallback_tried = false;
@@ -105,16 +106,14 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
         }
-        let client = match time::timeout(remaining, pinned_public_client(&url)).await {
-            Ok(Ok(client)) => client,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => return Err(ReadUrlError::Timeout),
-        };
+        let client = time::timeout(remaining, pinned_public_client(&url))
+            .await
+            .map_err(|_| ReadUrlError::Timeout)??;
         let request = client
             .get(url.clone())
             .header(
                 reqwest::header::ACCEPT,
-                "text/html,application/xhtml+xml,application/json,text/plain;q=0.8,*/*;q=0.5",
+                "text/markdown,text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5",
             )
             .header(reqwest::header::ACCEPT_LANGUAGE, "ru,en;q=0.8")
             .header(reqwest::header::USER_AGENT, READ_URL_USER_AGENT);
@@ -167,22 +166,23 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
         }
-        let body = match time::timeout(remaining, read_body(response)).await {
-            Ok(Ok(body)) => body,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => return Err(ReadUrlError::Timeout),
+        let body = time::timeout(remaining, read_body(response))
+            .await
+            .map_err(|_| ReadUrlError::Timeout)??;
+        let page = match special_method {
+            Some(method) => render_page_with_method(&url, &content_type, &body, Some(method))?,
+            None => render_page(&url, &content_type, &body)?,
         };
-        let page = render_page(&url, &content_type, &body)?;
         if page.text.chars().count() <= READ_URL_CACHE_CHARS {
             cache_put(requested.clone(), page.clone());
             cache_put(url.as_str().to_owned(), page.clone());
         }
-        return Ok(page);
+        return Ok(apply_url_selector(page, &selector));
     }
 }
 
 fn parse_url(raw: &str) -> Result<Url, ReadUrlError> {
-    let raw = raw.trim();
+    let raw = split_url_selector(raw).0.trim();
     if raw.is_empty() {
         return Err(ReadUrlError::InvalidUrl);
     }
@@ -267,12 +267,10 @@ pub(crate) fn validate_url(url: &Url) -> Result<(), ReadUrlError> {
     if host.is_empty()
         || host.parse::<IpAddr>().is_ok()
         || host == "localhost"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".internal")
-        || host.ends_with(".lan")
-        || host.ends_with(".home.arpa")
         || !host.contains('.')
+        || [".localhost", ".local", ".internal", ".lan", ".home.arpa"]
+            .iter()
+            .any(|suffix| host.ends_with(suffix))
     {
         return Err(ReadUrlError::LocalHost);
     }
@@ -332,40 +330,59 @@ pub(crate) fn render_page(
     content_type: &str,
     body: &[u8],
 ) -> Result<ReadPage, ReadUrlError> {
+    render_page_with_method(url, content_type, body, None)
+}
+
+pub(crate) fn render_page_with_method(
+    url: &Url,
+    content_type: &str,
+    body: &[u8],
+    special_method: Option<&str>,
+) -> Result<ReadPage, ReadUrlError> {
     let kind = content_type
         .split(';')
         .next()
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    let mut links = Vec::new();
     let mut labeled_links: Vec<(String, Url)> = Vec::new();
     let (title, text) = if kind.contains("html") || (kind.is_empty() && body.starts_with(b"<")) {
         let html = decode_body(body, content_type);
-        let out = extract_html_with_links(&html, url, &mut labeled_links)?;
-        links = labeled_links.iter().map(|(_, link)| link.clone()).collect();
-        out
+        extract_html_with_links(&html, url, &mut labeled_links)?
     } else if kind == "application/json" || kind.ends_with("+json") {
-        let value: Value = serde_json::from_str(&decode_body(body, content_type))
+        let decoded = decode_body(body, content_type);
+        let value: Value = serde_json::from_str(&decoded)
             .map_err(|_| ReadUrlError::UnsupportedContent(kind.clone()))?;
-        let text = serde_json::to_string_pretty(&value)
-            .map_err(|_| ReadUrlError::UnsupportedContent(kind.clone()))?;
-        (None, text)
+        if let Some((special_title, special_md)) =
+            special_method.and_then(|method| format_special_json(method, &value))
+        {
+            for link in prompt_urls(&special_md) {
+                if validate_url(&link).is_ok() && !labeled_links.iter().any(|(_, u)| u == &link) {
+                    labeled_links.push((String::new(), link));
+                }
+            }
+            (special_title, special_md)
+        } else {
+            let text = serde_json::to_string_pretty(&value)
+                .map_err(|_| ReadUrlError::UnsupportedContent(kind.clone()))?;
+            (None, text)
+        }
     } else if kind.starts_with("text/") || kind == "application/xml" || kind.ends_with("+xml") {
         let decoded = decode_body(body, content_type);
-        links = prompt_urls(&decoded)
-            .into_iter()
-            .filter(|link| validate_url(link).is_ok())
-            .collect();
-        labeled_links = links
-            .iter()
-            .cloned()
-            .map(|link| (String::new(), link))
-            .collect();
-        (None, decoded)
+        if let Some(feed_out) = render_feed_xml(&decoded, url, &mut labeled_links) {
+            feed_out
+        } else {
+            for link in prompt_urls(&decoded) {
+                if validate_url(&link).is_ok() && !labeled_links.iter().any(|(_, u)| u == &link) {
+                    labeled_links.push((String::new(), link));
+                }
+            }
+            (None, decoded)
+        }
     } else {
         return Err(ReadUrlError::UnsupportedContent(kind));
     };
+    let links: Vec<Url> = labeled_links.iter().map(|(_, link)| link.clone()).collect();
     let text = normalize_text(&text);
     if text.is_empty() {
         return Err(ReadUrlError::Empty);
@@ -437,17 +454,10 @@ pub(crate) fn decode_body(body: &[u8], content_type: &str) -> String {
 
 pub(crate) fn normalize_text(raw: &str) -> String {
     let mut lines = Vec::new();
-    let mut blank = false;
     for line in raw.lines() {
         let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
-        if line.is_empty() {
-            if !lines.is_empty() && !blank {
-                lines.push(String::new());
-                blank = true;
-            }
-        } else {
+        if !line.is_empty() || lines.last().is_some_and(|prev: &String| !prev.is_empty()) {
             lines.push(line);
-            blank = false;
         }
     }
     lines.join("\n").trim().to_owned()

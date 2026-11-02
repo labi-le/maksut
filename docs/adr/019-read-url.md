@@ -38,8 +38,11 @@ schemes to every group member, which is unacceptable in the bot container.
   markup. Non-prose elements are removed with `dom_query`, then
   `dom_smoothie`/readability extracts the main article and renders Markdown.
   Headers and footers are kept because they often carry the article title,
-  byline, and attribution. JSON and text are returned directly; PDFs and other
-  binaries are rejected for now.
+  byline, and attribution. Trailing selectors (`:1-120`, `:-80`, `:raw`) slice
+  cached pages without re-fetching; recognized sites (GitHub blob/issue/PR,
+  Reddit, Wikipedia, Hacker News, crates.io, PyPI) and RSS/Atom feeds use
+  dedicated clean renderers (`src/read_url_sites.rs`). PDFs and other binaries
+  are rejected for now.
 - Text is decoded from the declared charset or detected with
   `chardetng`/`encoding_rs`, so windows-1251 and similar pages do not turn into
   mojibake.

@@ -1,6 +1,6 @@
 # Free chat, memory, stickers, and tools
 
-> **When to read this:** Read before touching `src/chat.rs`, `src/chat_client.rs`, `src/chat_media.rs`, `src/chat_status.rs`, `src/chat_style.rs`, `src/chat_tools.rs`, `src/search.rs`, `src/research.rs`, `src/tool_registry.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/memory.rs`, `src/stickers.rs`, or `tools/build_sticker_index.py`.
+> **When to read this:** Read before touching `src/chat.rs`, `src/chat_client.rs`, `src/chat_media.rs`, `src/chat_status.rs`, `src/chat_style.rs`, `src/chat_tools.rs`, `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs`, `src/research.rs`, `src/tool_registry.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`, `src/memory.rs`, `src/stickers.rs`, or `tools/build_sticker_index.py`.
 
 ## Module map
 
@@ -14,10 +14,10 @@ Free chat is split by concern across focused modules and subsystem test files:
 | `src/chat_status.rs` | `src/chat_status_test.rs` | deterministic `feature_status` answers and grounding repair (`resolve_status_reply`) |
 | `src/chat_style.rs`, `src/chat_text.rs` | `src/chat_test.rs` | addressing (`chat_prompt`, `resolve_addressed_chat`), author/reply-context formatting, chunking (`split_message`, `TELEGRAM_MESSAGE_CHARS`), reply styling, Moscow timestamp formatting, citation sanitizing |
 | `src/chat_tools.rs` | `src/chat_test.rs` | function-tool execution and per-reply budgets |
-| `src/search.rs` | `src/chat_test.rs` | search providers and HTML result parsing |
-| `src/research.rs` | `src/research_test.rs` | multi-query research and dossier rendering |
+| `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs` | `src/chat_test.rs`, `src/research_test.rs` | omp-style keyless search chain (`Auto`), `Public` multi-engine consensus fanout, provider transports, and HTML/JSON/MCP parsers |
+| `src/research.rs` | `src/research_test.rs` | multi-query research over `public_web_search` and dossier rendering |
 | `src/tool_registry.rs` | `src/tool_registry_test.rs` | tool schemas, visibility, authorization |
-| `src/read_url.rs`, `src/read_url_html.rs` | `src/read_url_test.rs` | public page reader, HTML extraction, and complexity guard |
+| `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs` | `src/read_url_test.rs` | public page reader, `:A-B`/`:-N`/`:raw` selectors, special site handlers (GitHub/Reddit/Wikipedia/HN/crates.io/PyPI), RSS/Atom markdown, HTML extraction, and complexity guard |
 | `src/memory.rs` | `src/memory_test.rs` | chat history storage, flags, ignores, compaction |
 
 ## Activation and addressing (`src/chat.rs`, `src/chat_client.rs`, `src/handler.rs`, [ADR 012](../adr/012-free-chat.md))
@@ -49,20 +49,20 @@ Free chat is split by concern across focused modules and subsystem test files:
 
 ## Function tool registry (`src/tool_registry.rs`, `src/chat_tools.rs`, [ADR 015](../adr/015-tool-registry.md))
 
-`ToolRegistry::builtin()` is the single source of truth for the schemas, visibility and research-mode filtering of all 10 function tools; `run_tool_call` (`src/chat_tools.rs`) is the only executor and enforces the per-reply budgets. Web search providers live in `src/search.rs`, multi-query research in `src/research.rs`, the deterministic `feature_status` renderer in `src/chat_status.rs`, and the page reader in `src/read_url.rs`.
+`ToolRegistry::builtin()` is the single source of truth for the schemas, visibility and research-mode filtering of all 10 function tools; `run_tool_call` (`src/chat_tools.rs`) is the only executor and enforces the per-reply budgets. Web search providers live in `src/search.rs` + `src/search_providers.rs` + `src/search_parse.rs`, multi-query research in `src/research.rs`, the deterministic `feature_status` renderer in `src/chat_status.rs`, and the page reader in `src/read_url.rs` + `src/read_url_html.rs` + `src/read_url_sites.rs`.
 
 | Tool | Visibility | Kind | Purpose |
 |---|---|---|---|
-| `web_search` | `All` | `WebSearch` | Single fresh fact (up to 5 results, 2500 chars); result URLs are added to `discovered_urls` so `read_url` can open them in the same turn |
-| `research` | `All` | `Research` | Multi-query survey/comparison (2 to 4 queries in parallel, up to 8 deduplicated ranked sources, 5000-char dossier, 15s timeout, 20s per-user cooldown, 1 per reply, max 6 total search calls per reply; [ADR 016](../adr/016-research.md)) |
-| `read_url` | `All` | `ReadUrl` | Read one public `http(s)` URL from the current prompt, reply context, recent chat messages, or links discovered by `web_search`/`research`/`read_url` in the current or recent turns of the same chat (plus query-less public URLs for the owner; automatic `https` -> `http` fallback on connection failure, labeled `Links:` extraction for HTML and XML/RSS feeds, max 5 calls/reply, DNS-pinned public IPv4, max 5 redirects, 2 MiB / 24,000 chars, 10-min cache; [ADR 019](../adr/019-read-url.md)) |
+| `web_search` | `All` | `WebSearch` | Single fresh fact (1-10 results, default 5, 2500 chars, optional `recency`: `day`/`week`/`month`/`year`) through the automatic keyless chain (`SEARCH_PROVIDER=auto`: Tavily if key set -> Firecrawl v2/v1 -> DuckDuckGo -> Parallel MCP -> Exa MCP -> Startpage -> Mojeek -> Ecosia); result URLs are added to `discovered_urls` so `read_url` can open them in the same turn |
+| `research` | `All` | `Research` | Multi-query survey/comparison (2 to 4 queries in parallel; each query fans out across multiple keyless engines via `public_web_search` with 5s soft / 12s hard deadline and cross-engine consensus ranking, up to 8 deduplicated ranked sources, 5000-char dossier, 15s timeout, 20s per-user cooldown, 1 per reply, max 6 total search calls per reply; [ADR 016](../adr/016-research.md)) |
+| `read_url` | `All` | `ReadUrl` | Read and navigate one public `http(s)` URL from the current prompt, reply context, recent chat messages, or links discovered by `web_search`/`research`/`read_url` in the current or recent turns of the same chat (plus query-less public URLs for the owner; supports `:1-120`, `:-80`, `:raw` selectors over cached pages, special handlers for GitHub/Reddit/Wikipedia/Hacker News/crates.io/PyPI, RSS/Atom feed markdown, automatic `https` -> `http` fallback, labeled `Links:` extraction, max 5 calls/reply, DNS-pinned public IPv4, max 5 redirects, 2 MiB / 24,000 chars, 10-min cache; [ADR 019](../adr/019-read-url.md)) |
 | `propose_feature` | `All` | `ProposeFeature` | Queue a feature request in `self-improve/inbox` (stage `plan`); after owner approval the orchestrator creates a GitHub issue |
 | `feature_status` | `All` | `FeatureStatus` | Read-only queue inspection (`summary`, `details`, `links`). Owner sees the whole queue; non-owners see only their own proposals |
 | `feature_confirmation` | `Owner` | `FeatureConfirmation` | Read-only list of feature requests waiting for owner approval (`DecisionGate::Issue`) with inline buttons (`В issue` / `В помойку`) |
-| `inspect_code` | `Owner` | `InspectCode` | Read-only search or file read over `/var/lib/maksut/code` with GitHub blob URLs (`https://github.com/labi-le/maxwell/blob/main/<path>#L<line>`, max 5 calls/reply; [ADR 018](../adr/018-owner-code-inspection.md)) |
+| `inspect_code` | `All` | `InspectCode` | Read-only search or file read over `/var/lib/maksut/code` with GitHub blob URLs (`https://github.com/labi-le/maxwell/blob/main/<path>#L<line>`, max 5 calls/reply; [ADR 018](../adr/018-owner-code-inspection.md)) |
 | `remember_self` | `Owner` | `RememberSelf` | Persist a code-verified fact and its GitHub blob URL into `bot_self_memory` after `inspect_code` (max 3 calls/reply) |
-| `find_stickers` | `Owner` | `FindStickers` | Semantic search over the owner's 15 newest sticker packs (`sticker_descriptions.json`) |
-| `send_sticker` | `Owner` | `SendSticker` | Send at most one sticker per reply by `sticker_id`, semantic `query`, or classic alias |
+| `find_stickers` | `All` | `FindStickers` | Semantic search over the owner's 15 newest sticker packs (`sticker_descriptions.json`) |
+| `send_sticker` | `All` | `SendSticker` | Send at most one sticker per reply by `sticker_id`, semantic `query`, or classic alias |
 ## Stickers (`src/stickers.rs`, `tools/build_sticker_index.py`, [ADR 010](../adr/010-sticker-replies.md), [ADR 011](../adr/011-semantic-sadness.md), [ADR 013](../adr/013-newest-sticker-packs.md))
 
 - **Classic owner triggers (`sticker_rule`).** Standalone word/stem matches in owner messages when no supported link and no pending self-improve decision (`has_pending_decision`) is present:

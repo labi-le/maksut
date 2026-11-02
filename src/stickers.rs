@@ -301,11 +301,10 @@ impl StickerCatalog {
         let mut seen = std::collections::HashSet::new();
         let mut titles: Vec<String> = Vec::new();
         for entry in &self.entries {
-            if !seen.insert(entry.set_name.clone()) {
+            if !seen.insert(entry.set_name.as_str()) {
                 continue;
             }
-            let title: String = entry.set_title.chars().take(40).collect();
-            titles.push(title);
+            titles.push(entry.set_title.chars().take(40).collect());
         }
         titles.sort();
         format!(

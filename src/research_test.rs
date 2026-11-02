@@ -624,3 +624,60 @@ async fn research_cooldown_blocks_a_repeat() {
     llm.task.abort();
     search.task.abort();
 }
+
+#[test]
+fn omp_search_parsers_and_public_consensus_merge() {
+    let sse = br#"event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"content":[{"type":"text","text":"Title: Exa Hit\nURL: https://exa.ai/post\nText: Exa snippet text\n\nTitle: Second Hit\nURL: https://example.com/two\nText: Second snippet"}]}}
+"#;
+    let rpc_res = crate::search::parse_mcp_jsonrpc_result(sse).unwrap();
+    let exa_hits = crate::search::parse_exa_mcp_hits(&rpc_res, 5);
+    assert_eq!(exa_hits.len(), 2);
+    assert_eq!(exa_hits[0].title, "Exa Hit");
+    assert_eq!(exa_hits[0].url, "https://exa.ai/post");
+    assert_eq!(exa_hits[0].snippet, "Exa snippet text");
+
+    let parallel_json = br#"{"jsonrpc":"2.0","id":"1","result":{"structuredContent":{"search_id":"s1","results":[{"title":"Parallel Hit","url":"https://parallel.ai/doc","excerpts":["first excerpt","second excerpt"]}]}}}"#;
+    let par_rpc = crate::search::parse_mcp_jsonrpc_result(parallel_json).unwrap();
+    let par_hits = crate::search::parse_parallel_mcp_hits(&par_rpc, 5);
+    assert_eq!(par_hits.len(), 1);
+    assert_eq!(par_hits[0].url, "https://parallel.ai/doc");
+    assert!(par_hits[0].snippet.contains("first excerpt"));
+
+    let sp_html = r#"<div class="result"><a class="result-link" href="https://example.org/sp"><h2>Startpage Title</h2></a><p class="description">Startpage snippet</p></div>"#;
+    let sp_hits = crate::search::extract_startpage_results(sp_html, 5);
+    assert_eq!(sp_hits.len(), 1);
+    assert_eq!(sp_hits[0].title, "Startpage Title");
+
+    let merged = crate::search::merge_public_hits(
+        &[
+            (
+                0,
+                vec![
+                    SearchHit {
+                        title: "Unique".into(),
+                        url: "https://a.example/one".into(),
+                        snippet: "short".into(),
+                    },
+                    SearchHit {
+                        title: "Consensus".into(),
+                        url: "https://www.b.example/two/".into(),
+                        snippet: "short".into(),
+                    },
+                ],
+            ),
+            (
+                1,
+                vec![SearchHit {
+                    title: "Consensus Better".into(),
+                    url: "https://b.example/two".into(),
+                    snippet: "much longer consensus snippet".into(),
+                }],
+            ),
+        ],
+        5,
+    );
+    assert_eq!(merged.len(), 2);
+    assert_eq!(merged[0].url, "https://b.example/two");
+    assert_eq!(merged[0].snippet, "much longer consensus snippet");
+}
