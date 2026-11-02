@@ -134,7 +134,7 @@ pub(crate) fn sanitize_title(raw: &str) -> String {
     .0
 }
 
-fn html_is_too_complex(html: &str) -> bool {
+pub(crate) fn html_is_too_complex(html: &str) -> bool {
     let bytes = html.as_bytes();
     let mut i = 0usize;
     let mut depth = 0usize;

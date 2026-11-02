@@ -267,3 +267,108 @@ fn xml_rss_extracts_links_and_html_footer_includes_anchor_labels() {
         html_page.text
     );
 }
+
+#[test]
+fn url_selectors_slice_and_raw_render_cached_pages() {
+    let (base, sel) = split_url_selector("https://example.com/doc:2-3");
+    assert_eq!(base, "https://example.com/doc");
+    assert_eq!(
+        sel,
+        UrlSelector::Range {
+            start: 2,
+            end: Some(3),
+            raw: false
+        }
+    );
+    let (base_tail, sel_tail) = split_url_selector("https://example.com/doc:-2:raw");
+    assert_eq!(base_tail, "https://example.com/doc");
+    assert_eq!(
+        sel_tail,
+        UrlSelector::Tail {
+            count: 2,
+            raw: true
+        }
+    );
+    let (port_base, port_sel) = split_url_selector("http://example.com:80");
+    assert_eq!(port_base, "http://example.com:80");
+    assert_eq!(port_sel, UrlSelector::None);
+
+    let page = render_page(
+        &Url::parse("https://example.com/doc").unwrap(),
+        "text/plain",
+        b"line1\nline2\nline3\nline4",
+    )
+    .unwrap();
+    let ranged = apply_url_selector(page.clone(), &sel);
+    assert!(ranged.text.contains("Showing lines 2-3"), "{}", ranged.text);
+    assert!(ranged.text.contains("2: line2"), "{}", ranged.text);
+    assert!(ranged.text.contains("3: line3"), "{}", ranged.text);
+    assert!(!ranged.text.contains("1: line1"), "{}", ranged.text);
+
+    let tail_raw = apply_url_selector(page, &sel_tail);
+    assert_eq!(tail_raw.text, "line3\nline4");
+
+    let allowed = vec![Url::parse("https://example.com/doc").unwrap()];
+    assert!(allowed_target(
+        "https://example.com/doc:2-3",
+        &allowed,
+        false
+    ));
+    assert!(allowed_target(
+        "https://example.com/doc:raw",
+        &allowed,
+        false
+    ));
+}
+
+#[test]
+fn special_site_rewrites_and_json_renderers_format_cleanly() {
+    let gh = Url::parse("https://github.com/labi-le/maxwell/blob/main/src/main.rs").unwrap();
+    let (raw_gh, method) = rewrite_special_target(&gh).unwrap();
+    assert_eq!(method, "github-raw");
+    assert_eq!(
+        raw_gh.as_str(),
+        "https://raw.githubusercontent.com/labi-le/maxwell/main/src/main.rs"
+    );
+
+    let wiki = Url::parse("https://ru.wikipedia.org/wiki/Rust").unwrap();
+    let (wiki_api, wiki_method) = rewrite_special_target(&wiki).unwrap();
+    assert_eq!(wiki_method, "wikipedia");
+    assert_eq!(
+        wiki_api.as_str(),
+        "https://ru.wikipedia.org/api/rest_v1/page/summary/Rust"
+    );
+    let wiki_page = render_page_with_method(
+        &wiki_api,
+        "application/json",
+        r#"{"title":"Rust","description":"язык программирования","extract":"Системный язык."}"#
+            .as_bytes(),
+        Some("wikipedia"),
+    )
+    .unwrap();
+    assert!(wiki_page.text.contains("# Rust"), "{}", wiki_page.text);
+    assert!(
+        wiki_page.text.contains("Системный язык."),
+        "{}",
+        wiki_page.text
+    );
+
+    let krate = Url::parse("https://crates.io/crates/teloxide").unwrap();
+    let (krate_api, krate_method) = rewrite_special_target(&krate).unwrap();
+    assert_eq!(krate_method, "crates.io");
+    let krate_page = render_page_with_method(
+        &krate_api,
+        "application/json",
+        br#"{"crate":{"name":"teloxide","max_stable_version":"0.17.0","description":"Telegram bot framework","repository":"https://github.com/teloxide/teloxide","documentation":"https://docs.rs/teloxide"}}"#,
+        Some("crates.io"),
+    )
+    .unwrap();
+    assert!(
+        krate_page.text.contains("# teloxide (0.17.0)"),
+        "{}",
+        krate_page.text
+    );
+    assert!(krate_page
+        .links
+        .contains(&Url::parse("https://github.com/teloxide/teloxide").unwrap()));
+}

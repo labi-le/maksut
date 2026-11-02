@@ -12,7 +12,7 @@ no-bridge boundary and expose `.env`, cookies, keys, and the self-improve queue.
 
 ## Decision
 
-- Add an owner-only `inspect_code` function tool.
+- Add a read-only `inspect_code` function tool (`ToolVisibility::All`; `remember_self` remains `ToolVisibility::Owner`).
 - The bot mounts a read-only snapshot:
   - `src/`
   - `tools/`
@@ -25,14 +25,15 @@ no-bridge boundary and expose `.env`, cookies, keys, and the self-improve queue.
 - Every explicit path is canonicalized and must stay under `/var/lib/maksut/code`; recursive search skips symlinks so a mounted snapshot cannot escape through a link.
 - Only known text extensions are read. Output is capped and labelled as data,
   not instructions.
-- The owner prompt tells the model to inspect code before proposing changes and
-  to cite file paths.
+- The shared prompt tells the model to inspect code before answering questions
+  about how the bot works or proposing changes and to cite file/line URLs, while
+  `OWNER_CODE_PROMPT` instructs the owner's turns to persist verified facts via `remember_self`.
 
 ## Consequences
 
 - The model gets real file/line context for code review and proposals.
 - The snapshot is deliberately smaller than the repository; adding another
   directory requires an explicit compose and code change.
-- Non-owners never see the tool or its prompt text.
+- `inspect_code` is safe for all participants because the snapshot is confined and excludes secrets; only the owner can persist facts to `bot_self_memory` via `remember_self`.
 - The tool is read-only; actual edits still go through the self-improve plan
   and deploy gates.

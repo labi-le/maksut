@@ -23,9 +23,9 @@ the lists could drift.
   least one visible tool. A provider rejection still falls back to a request
   without tools; tool calls returned anyway pass through `find` like any other.
 - Non-owners receive `All` tools only. The non-owner system line is generated
-  from `ToolRegistry::names(false)`. Sticker instructions were moved out of the
-  shared system prompt into an owner-only block, because the base prompt
-  otherwise tells non-owners to call hidden sticker tools.
+  from `ToolRegistry::names(false)`. Instructions for owner-only tools
+  (`feature_confirmation`, `remember_self`) stay in owner-only prompt blocks so
+  the base prompt never tells non-owners to call hidden tools.
 - The role remains binary (`owner: bool`, derived from `OWNER_ID`). A third role
   would extend `ToolVisibility` and `allows`, not add a second name list.
 
@@ -34,11 +34,15 @@ the lists could drift.
 | name | visibility | kind |
 |---|---|---|
 | `web_search` | `All` | `WebSearch` |
+| `research` | `All` | `Research` |
 | `read_url` | `All` | `ReadUrl` |
 | `propose_feature` | `All` | `ProposeFeature` |
-| `find_stickers` | `Owner` | `FindStickers` |
-| `send_sticker` | `Owner` | `SendSticker` |
-
+| `feature_status` | `All` | `FeatureStatus` |
+| `feature_confirmation` | `Owner` | `FeatureConfirmation` |
+| `inspect_code` | `All` | `InspectCode` |
+| `remember_self` | `Owner` | `RememberSelf` |
+| `find_stickers` | `All` | `FindStickers` |
+| `send_sticker` | `All` | `SendSticker` |
 ## Consequences
 
 - A new `All` tool appears in the provider request and in the non-owner system
