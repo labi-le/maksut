@@ -55,9 +55,9 @@ impl ToolState {
     }
 }
 
-async fn ack_lookup(ctx: &ToolContext<'_>) {
+fn ack_lookup(ctx: &ToolContext<'_>) {
     if let Some(bot) = ctx.bot {
-        mark_lookup(bot, ctx.chat_id, MessageId(ctx.message_id)).await;
+        mark_lookup(bot, ctx.chat_id, MessageId(ctx.message_id));
     }
 }
 
@@ -213,6 +213,7 @@ pub(crate) async fn run_tool_call(
                 "лимит проверок кода на ответ".to_string()
             } else {
                 state.inspect_calls += 1;
+                ack_lookup(ctx);
                 let query = args.get("query").and_then(Value::as_str).unwrap_or("");
                 let path = args.get("path").and_then(Value::as_str);
                 let base = ctx.chat.code_dir.clone();
@@ -276,7 +277,7 @@ pub(crate) async fn run_tool_call(
                 "лимит чтения ссылок на ответ".to_string()
             } else {
                 state.read_url_calls += 1;
-                ack_lookup(ctx).await;
+                ack_lookup(ctx);
                 match crate::read_url::read(target).await {
                     Ok(page) => {
                         for url in page.links {
@@ -299,7 +300,7 @@ pub(crate) async fn run_tool_call(
                 "лимит поиска на ответ".to_string()
             } else {
                 state.search_calls += 1;
-                ack_lookup(ctx).await;
+                ack_lookup(ctx);
                 let recency = args
                     .get("recency")
                     .and_then(Value::as_str)
@@ -340,7 +341,7 @@ pub(crate) async fn run_tool_call(
                     .chat
                     .search_calls_per_reply
                     .saturating_sub(state.search_calls);
-                ack_lookup(ctx).await;
+                ack_lookup(ctx);
                 match ctx
                     .chat
                     .research(ctx.user_id, question, &queries, budget)

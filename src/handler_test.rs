@@ -1026,6 +1026,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         handler_text_response("99.7% зига и 0.3% си"),
         handler_text_response("это пнг скрин"),
         handler_text_response("скрин не прогрузился"),
+        handler_text_response("молчу"),
     ])
     .await;
     settings.chat = Some(ChatConfig::new(
@@ -1210,6 +1211,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "date": 1700000005,
         "chat": {"id": group.0, "type": "supergroup"},
         "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "caption": "глянь статы",
         "photo": [{
             "file_id": "photo-own-1",
             "file_unique_id": "unique-own-1",
@@ -1259,6 +1261,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "date": 1700000006,
         "chat": {"id": group.0, "type": "supergroup"},
         "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "caption": "глянь доку",
         "document": {
             "file_id": "doc-own-1",
             "file_unique_id": "unique-doc-1",
@@ -1307,6 +1310,51 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
     assert!(
         sixth_user.contains("[не удалось загрузить вложение]"),
         "failed own-photo download in follow-up window must append missing-attachment notice: {sixth_user}"
+    );
+    let uncaptioned_followup_photo: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 208,
+        "date": 1700000008,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
+        "photo": [{
+            "file_id": "photo-own-1",
+            "file_unique_id": "unique-own-2",
+            "width": 100,
+            "height": 100,
+            "file_size": 5
+        }]
+    }))
+    .unwrap();
+    handle_message(
+        api.bot.clone(),
+        uncaptioned_followup_photo,
+        Arc::clone(&cfg),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        llm.requests.lock().unwrap().len(),
+        6,
+        "bare uncaptioned photo without bot mention/reply during followup must not call LLM"
+    );
+    assert!(
+        cfg.chat.as_ref().unwrap().followup_active(group).await,
+        "followup window is still active before stop phrase"
+    );
+    let non_owner_addressed_stop: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 209,
+        "date": 1700000009,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
+        "text": "максут сука да отъебись",
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), non_owner_addressed_stop, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    assert!(
+        !cfg.chat.as_ref().unwrap().followup_active(group).await,
+        "addressed non-owner stop phrase must clear followup window after delivery"
     );
     llm.task.abort();
 }

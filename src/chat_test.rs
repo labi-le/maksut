@@ -72,6 +72,17 @@ fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
         style_reply("Смотри https://Example.com/Path."),
         "Смотри https://Example.com/Path"
     );
+    assert_eq!(
+        style_reply("пруф в /docs/adr/012-free-chat.md#L8, см. src/chat.rs:10: и (src/memory.rs:15)."),
+        "пруф в https://github.com/labi-le/maxwell/blob/main/docs/adr/012-free-chat.md#L8, см. https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10: и (https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L15)"
+    );
+    let near_limit = format!("{} src/chat.rs#L10 хвост", "слово ".repeat(645));
+    let styled_near_limit = style_reply(&near_limit);
+    assert!(
+        styled_near_limit.chars().count() <= crate::config::config().chat.reply_max_chars,
+        "expanded reply must stay within reply_max_chars: {}",
+        styled_near_limit.chars().count()
+    );
     let with_url = format!(
         "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10. {}",
         "длинное продолжение ".repeat(20)
@@ -1708,6 +1719,17 @@ async fn research_request_marks_the_message_with_eyes() {
     .await
     .unwrap();
     assert_eq!(reply.text, "ок");
+    for _ in 0..50 {
+        if calls
+            .lock()
+            .await
+            .iter()
+            .any(|(path, _)| api_method_is(path, "setMessageReaction"))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
     let calls = calls.lock().await;
     let reactions: Vec<_> = calls
         .iter()
@@ -1831,6 +1853,19 @@ async fn web_search_marks_the_message_on_every_pass() {
     .await
     .unwrap();
     assert_eq!(reply.text, "ок");
+    for _ in 0..50 {
+        if calls
+            .lock()
+            .await
+            .iter()
+            .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
+            .count()
+            >= 2
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
     let calls = calls.lock().await;
     let reactions: Vec<_> = calls
         .iter()
@@ -1898,6 +1933,19 @@ async fn read_url_marks_the_message_on_every_pass() {
     .await
     .unwrap();
     assert_eq!(reply.text, "ок");
+    for _ in 0..50 {
+        if calls
+            .lock()
+            .await
+            .iter()
+            .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
+            .count()
+            >= 2
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
     let calls = calls.lock().await;
     let reactions: Vec<_> = calls
         .iter()

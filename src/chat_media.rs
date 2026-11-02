@@ -138,7 +138,7 @@ pub(crate) async fn resolve_chat_input(
         None if !message.chat.is_private() => {
             let trimmed = text.trim();
             let active =
-                if (!trimmed.is_empty() && !has_current_media) || message_has_own_photo(message) {
+                if !trimmed.is_empty() && (!has_current_media || message_has_own_photo(message)) {
                     chat.followup_active(message.chat.id).await
                 } else {
                     false

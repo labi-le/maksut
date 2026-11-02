@@ -155,3 +155,63 @@ pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
     };
     format!("{year:04}-{month:02}-{day:02} ({weekday}) {hour:02}:{minute:02} МСК (UTC+3)")
 }
+
+/// Expands bare repository paths (`src/foo.rs#L10`, `/docs/adr/012-free-chat.md:8`)
+/// into full GitHub blob URLs while leaving existing `http(s)://` URLs untouched.
+pub(crate) fn expand_repo_blob_links(text: &str) -> String {
+    text.split_whitespace()
+        .map(expand_repo_token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn expand_repo_token(word: &str) -> String {
+    if word.contains("://") {
+        return word.to_owned();
+    }
+    let start = word
+        .char_indices()
+        .find(|(_, ch)| !matches!(ch, '(' | '[' | '<' | '"' | '\'' | '«'))
+        .map_or(word.len(), |(idx, _)| idx);
+    let tail = word.get(start..).unwrap_or("");
+    let end = tail
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| {
+            !matches!(
+                ch,
+                ')' | ']' | '>' | '"' | '\'' | '»' | ',' | '.' | ';' | ':' | '!' | '?'
+            )
+        })
+        .map_or(start, |(idx, ch)| start + idx + ch.len_utf8());
+    let core = word.get(start..end).unwrap_or("");
+    let trimmed = core.strip_prefix('/').unwrap_or(core);
+    let is_repo = trimmed.starts_with("src/")
+        || trimmed.starts_with("docs/")
+        || trimmed.starts_with("tools/")
+        || trimmed == "Cargo.toml"
+        || trimmed.starts_with("Cargo.toml#")
+        || trimmed.starts_with("Cargo.toml:");
+    if !is_repo {
+        return word.to_owned();
+    }
+    let normalized = if !trimmed.contains('#') {
+        if let Some((path, digits)) = trimmed.rsplit_once(':') {
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                format!("{path}#L{digits}")
+            } else {
+                trimmed.to_owned()
+            }
+        } else {
+            trimmed.to_owned()
+        }
+    } else {
+        trimmed.to_owned()
+    };
+    format!(
+        "{}{}/{normalized}{}",
+        word.get(..start).unwrap_or(""),
+        crate::code_inspect::GITHUB_BLOB_BASE,
+        word.get(end..).unwrap_or("")
+    )
+}
