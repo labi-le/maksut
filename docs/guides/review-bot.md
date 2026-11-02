@@ -21,8 +21,8 @@ A model answer that fails schema validation is retried once with the rejection r
 
 The reviewer is whichever account owns `REVIEWER_TOKEN`. Two workable choices:
 
-- **Owner's own account (recommended).** Create a *fine-grained* PAT scoped to `labi-le/maxwell` with repository permissions **Pull requests: Read and write**, **Contents: Read**, and the mandatory **Metadata: Read**; set an expiry. A personal account owns the repository, so the fine-grained token can select it — the limitation described below only applies to accounts that do not own the repository. No collaborator invitation is needed, and the token cannot touch any other repository. Reviews appear under the owner's login and say “Автоматическое ревью” in the body; do not merge on an automated approval without reading it.
-- **Dedicated reviewer account.** Invite it as a collaborator with **Write** (an outside account cannot submit an approving or requesting-changes review without it; only collaborators' reviews count for branch protection) and create a **classic** PAT with the `repo` scope. A fine-grained token owned by a personal account cannot be scoped to repositories that account does not own, the same limitation `docs/buer.md` records for the triage bot.
+- **Owner's own account (recommended).** Create a *fine-grained* PAT scoped to `labi-le/maxwell` with the single writable permission **Pull requests: Read and write**, plus the mandatory **Metadata: Read**; set an expiry and leave everything else, including **Contents**, at **No access**. A personal account owns the repository, so the fine-grained token can select it — the limitation described below only applies to accounts that do not own the repository. No collaborator invitation is needed, and the token cannot touch any other repository. Reviews appear under the owner's login and say “Автоматическое ревью” in the body; do not merge on an automated approval without reading it.
+- **Dedicated reviewer account.** Invite it as a collaborator with **Write** (an outside account cannot submit an approving or requesting-changes review without it; only collaborators' reviews count for branch protection) and create a **classic** PAT with the `repo` scope. A fine-grained token owned by a personal account cannot be scoped to repositories that account does not own, the same limitation `docs/buer.md` records for the triage bot; keep that account invited to this repository only, so the classic scope reaches nothing else.
 
 Then store two repository secrets:
 
@@ -34,6 +34,25 @@ gh secret set REVIEWER_LLM_API_KEY --repo labi-le/maxwell # LiteLLM key with gem
 The bot's own `LLM_API_KEY` is restricted to `deepseek-v4.1-flash` and answers `403 The requested model 'gemini-4-argon' is not available for this API key`; the reviewer needs a key that lists that model. Switching identities later only means replacing `REVIEWER_TOKEN`; reviews already published stay attributed to the account that posted them.
 
 Optionally pin the model per repository without editing the workflow: `gh variable set PR_REVIEW_MODEL --repo labi-le/maxwell --body gemini-4-argon`. `LLM_BASE_URL` defaults to `https://llm.labile.cc/v1`.
+
+## Token scope and trust boundary
+
+The reviewer token grants exactly what the script needs and nothing else. Keep the permission list this short:
+
+| Permission | Level | Why |
+|---|---|---|
+| Pull requests | Read and write | read the pull request and its diff, list earlier reviews, publish one review |
+| Metadata | Read | mandatory companion of every fine-grained token |
+| everything else | No access | no call in `tools/pr_review.py` touches it; the checkout uses `GITHUB_TOKEN`, not this PAT |
+
+**Pull requests: write is the minimum GitHub offers** for publishing a review; there is no comment-only scope. It lets the token edit a pull request's title or body and dismiss reviews. It does not let it push commits, create branches, merge, edit workflow files, write secrets, or change repository settings — all of those require `Contents: write` or a wider permission, which stays off. With the token stolen, the worst case is unwanted reviews and pull-request metadata in this one public repository; merging still takes a human click.
+
+What keeps the token away from pull-request code:
+
+- the workflow runs on `pull_request` for same-repository branches; fork pull requests never receive repository secrets, and the job exits before touching the network;
+- it checks out the **default branch**, never the pull request head, with `persist-credentials: false`;
+- its own `GITHUB_TOKEN` is limited to `contents: read` and is not used by the script;
+- the pull request text is untrusted input to the model only. The model's answer must parse as JSON with `severity`/`file`/`line`/`claim`/`evidence`; nothing from the pull request is executed.
 
 ## Blocking merges
 
@@ -67,7 +86,7 @@ With `enforce_admins: false` an administrator can still merge without the approv
 | `skip #N: GH_TOKEN is empty` | fork PR, or `REVIEWER_TOKEN` missing/not yet set |
 | `skip #N: reviewer is the pull request author` | the PR was opened by the reviewer account itself |
 | `HTTP 403` on the gateway | the key may not use `gemini-4-argon` |
-| `HTTP 403`/`422` on `POST .../reviews` | reviewer is not a collaborator, or the PAT lost `repo` |
+| `HTTP 403`/`422` on `POST .../reviews` | reviewer is not a collaborator, the PAT lost `repo`, or a fine-grained PAT is read-only; the error prints `(accepted: pull_requests=write)` in that case |
 | `model answer contains no JSON object` | the model ignored the schema twice; the job fails and the PR stays unreviewed |
 | no review on a push | the workflow only runs for the four event types above and once per head SHA |
 
