@@ -91,11 +91,22 @@ def _request(url, *, token, method="GET", payload=None, accept=GITHUB_ACCEPT, ti
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read().decode("utf-8", "replace")
+            return response.status, response.read().decode("utf-8", "replace"), response.headers
     except urllib.error.HTTPError as error:
-        return error.code, error.read().decode("utf-8", "replace")
+        return error.code, error.read().decode("utf-8", "replace"), error.headers
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         raise ReviewError(f"{method} {url.split('?')[0]}: {type(error).__name__}") from error
+
+
+def _permission_hint(headers):
+    """Surface what GitHub says the token lacks: a bare 403 is unactionable."""
+    accepted = headers.get("X-Accepted-GitHub-Permissions") if headers else None
+    scopes = headers.get("X-OAuth-Scopes") if headers else None
+    hint = ""
+    if accepted:
+        hint += f" (accepted: {accepted}"
+        hint += f"; scopes: {scopes})" if scopes else ")"
+    return hint
 
 
 class GitHub:
@@ -106,15 +117,15 @@ class GitHub:
         self.repo = repo
 
     def _call(self, path, *, method="GET", payload=None, accept=GITHUB_ACCEPT):
-        status, body = _request(
+        status, body, headers = _request(
             f"{API_ROOT}/repos/{self.repo}{path}", token=self.token, method=method, payload=payload, accept=accept
         )
         if status >= 300:
-            raise ReviewError(f"{method} {path}: HTTP {status}: {body[:200]}")
+            raise ReviewError(f"{method} {path}: HTTP {status}: {body[:200]}{_permission_hint(headers)}")
         return body
 
     def viewer_login(self):
-        status, body = _request(f"{API_ROOT}/user", token=self.token)
+        status, body, _ = _request(f"{API_ROOT}/user", token=self.token)
         if status != 200:
             raise ReviewError(f"GET /user: HTTP {status}")
         return str(json.loads(body).get("login") or "")
@@ -151,7 +162,7 @@ class Gateway:
             "temperature": 0.2,
             "max_tokens": 8000,
         }
-        status, body = _request(
+        status, body, _ = _request(
             f"{self.base_url}/chat/completions",
             token=self.api_key,
             method="POST",
