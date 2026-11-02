@@ -35,8 +35,13 @@ The self-improvement intake is split across two isolated processes so the Telegr
 After the first `.github/workflows/publish-image.yml` run creates the `ghcr.io/labi-le/maxwell` package, either set its package visibility to **Public** in GitHub Package Settings (recommended — the image contains only compiled artifacts from the public repository) or authenticate Docker on the host once with `gh auth token | docker login ghcr.io -u labi-le --password-stdin`.
 
 ```sh
-cp packaging/maksut-self-improve.service packaging/maksut-auto-deploy.service packaging/maksut-auto-deploy.timer ~/.config/systemd/user/
+mkdir -p .secrets
+openssl rand -hex 32 > .secrets/deploy-hook.secret
+chmod 600 .secrets/deploy-hook.secret
+cp packaging/maksut-self-improve.service packaging/maksut-auto-deploy.service packaging/maksut-auto-deploy.timer packaging/maksut-deploy-hook.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now maksut-self-improve.service maksut-auto-deploy.timer
-journalctl --user -u maksut-self-improve.service -u maksut-auto-deploy.service -f
+systemctl --user enable --now maksut-self-improve.service maksut-auto-deploy.timer maksut-deploy-hook.service
+journalctl --user -u maksut-self-improve.service -u maksut-auto-deploy.service -u maksut-deploy-hook.service -f
 ```
+
+The deploy itself is event-driven ([ADR 024](../adr/024-event-driven-deploy.md)): GitHub posts a `workflow_run` completion of `publish-image` to the reverse-proxied `/webhook/maksut-deploy`, where `tools/deploy_hook.py` verifies the HMAC signature and runs `tools/published_deploy.py`. Register the repository webhook once (Settings → Webhooks, content type `application/json`, event *Workflow runs*, secret equal to `.secrets/deploy-hook.secret`); `maksut-auto-deploy.timer` polls every 30 minutes only to cover a missed delivery. Both entry points run the script as published on `origin/main` (`git show origin/main:tools/auto_deploy.py`), so deploy logic follows the repository even when the checkout has uncommitted work ([ADR 023](../adr/023-auto-deploy-from-remote.md)).

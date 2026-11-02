@@ -32,12 +32,15 @@ services:
       # Bind the directory so atomic replacement of cookies.txt stays visible.
       - ${MAKSUT_COOKIES_DIR:-/home/eden/.local/share/maksut/cookies}:/run/secrets/maksut/:ro
       - ./self-improve:/var/lib/maksut/self-improve:rw
-      - ./src:/var/lib/maksut/code/src:ro
-      - ./tools:/var/lib/maksut/code/tools:ro
-      - ./docs:/var/lib/maksut/code/docs:ro
-      - ./Cargo.toml:/var/lib/maksut/code/Cargo.toml:ro
-      - ./README.md:/var/lib/maksut/code/README.md:ro
-      - ./AGENTS.md:/var/lib/maksut/code/AGENTS.md:ro
+      # Deploys point these at a `git archive` export of the deployed commit so
+      # `inspect_code` never reads the developer's working tree; manual runs
+      # fall back to the checkout.
+      - ${MAKSUT_CODE_DIR:-.}/src:/var/lib/maksut/code/src:ro
+      - ${MAKSUT_CODE_DIR:-.}/tools:/var/lib/maksut/code/tools:ro
+      - ${MAKSUT_CODE_DIR:-.}/docs:/var/lib/maksut/code/docs:ro
+      - ${MAKSUT_CODE_DIR:-.}/Cargo.toml:/var/lib/maksut/code/Cargo.toml:ro
+      - ${MAKSUT_CODE_DIR:-.}/README.md:/var/lib/maksut/code/README.md:ro
+      - ${MAKSUT_CODE_DIR:-.}/AGENTS.md:/var/lib/maksut/code/AGENTS.md:ro
 
   cookie-refresh:
     build:
