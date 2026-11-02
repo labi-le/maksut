@@ -28,16 +28,17 @@ uncommitted work instead of the commit the container was built from.
   changes. Otherwise the run logs `checkout left as is` and deploys anyway.
   Local edits are never reset, stashed, or checked out over; the checkout simply
   catches up on a later run.
-- Both entry points (`tools/published_deploy.py` for the timer and the
-  webhook) execute the published script rather than the working copy:
+- Both entry points (`tools/published_deploy.py` for the webhook and for a
+  manual `make deploy-now`) execute the published script rather than the working
+  copy:
   `git show origin/main:tools/auto_deploy.py` into a temporary file, then
   `python3` on that copy, after checking `self-improve/off`. New deploy logic
   therefore takes effect without the checkout advancing, and a stale checkout
   can never pin old deploy logic. [ADR 024](024-event-driven-deploy.md) changes
   only the trigger; this script stays the single deploy implementation.
 - `docker pull` reporting `manifest unknown` (or `not found`) means the image is
-  still building: the marker is not advanced, the container is untouched, and
-  the next tick retries.
+  still building: the marker is not advanced, the container is untouched, and a
+  later delivery or `make deploy-now` retries.
 - After a successful deploy only the current export and image tag are kept;
   `self-improve/code/<previous>` and the previous `<sha>` tag are pruned.
 
@@ -48,7 +49,7 @@ uncommitted work instead of the commit the container was built from.
 - `inspect_code` always reads the deployed commit, never the developer's working
   tree, so the bot cannot cite code that only exists locally.
 - A dirty checkout logs `checkout left as is: uncommitted tracked changes` when
-  a deploy or a fallback poll runs, until it is committed; nothing else about
-  the deploy depends on it.
-- The kill switch (`self-improve/off`) still pauses the timer before any command
-  runs.
+  a deploy runs, until it is committed; nothing else about the deploy depends on
+  it.
+- The kill switch (`self-improve/off`) still pauses every deploy before any
+  command runs.

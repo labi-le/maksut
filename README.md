@@ -22,7 +22,7 @@ docker compose -f compose.yaml up --build -d
 docker compose -f compose.yaml logs -f maksut
 ```
 
-Обновление и остановка (при пуше в `main` GitHub Actions сам публикует образ `ghcr.io/labi-le/maxwell:<sha>`; сделайте пакет `maxwell` публичным в настройках GitHub Packages или выполните один раз `gh auth token | docker login ghcr.io -u labi-le --password-stdin` на хосте, после чего вебхук publish-image (`tools/deploy_hook.py`) сам делает `docker pull` и `docker compose up -d --no-build maksut` по `origin/main`, а `maksut-auto-deploy.timer` раз в 30 минут страхует пропущенные доставки (образ, `compose.yaml` и исходники для `inspect_code` берутся из одного коммита, незакоммиченные правки чекаута деплой не блокируют и в контейнер не попадают; [ADR 023](docs/adr/023-auto-deploy-from-remote.md)); не используйте `docker compose down -v`, чтобы не удалить volume `maksut_data` с SQLite-базой):
+Обновление и остановка (при пуше в `main` GitHub Actions сам публикует образ `ghcr.io/labi-le/maxwell:<sha>`; сделайте пакет `maxwell` публичным в настройках GitHub Packages или выполните один раз `gh auth token | docker login ghcr.io -u labi-le --password-stdin` на хосте, после чего вебхук publish-image (`tools/deploy_hook.py`) сам делает `docker pull` и `docker compose up -d --no-build maksut` по `origin/main`, таймера-страховки нет: пропущенную доставку восстанавливают кнопкой *Redeliver* в GitHub или `make deploy-now` (образ, `compose.yaml` и исходники для `inspect_code` берутся из одного коммита, незакоммиченные правки чекаута деплой не блокируют и в контейнер не попадают; [ADR 023](docs/adr/023-auto-deploy-from-remote.md)); не используйте `docker compose down -v`, чтобы не удалить volume `maksut_data` с SQLite-базой):
 
 ```sh
 docker compose -f compose.yaml pull maksut && docker compose -f compose.yaml up -d --no-build maksut
@@ -31,12 +31,12 @@ docker compose -f compose.yaml down
 
 Для смены `BOT_TOKEN`, `OWNER_ID` или путей в `.env` пересоздайте контейнер через `docker compose -f compose.yaml up -d --force-recreate` (`env_file` читает переменные из `.env`, экспортированные в оболочке значения их не переопределяют). Обычное обновление `cookies.txt` перезапуска не требует.
 
-Запуск хостового оркестратора самоулучшения и таймера автодеплоя из GHCR:
+Запуск хостового оркестратора самоулучшения и вебхука автодеплоя из GHCR:
 
 ```sh
-cp packaging/maksut-self-improve.service packaging/maksut-auto-deploy.service packaging/maksut-auto-deploy.timer ~/.config/systemd/user/
+cp packaging/maksut-self-improve.service packaging/maksut-deploy-hook.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now maksut-self-improve.service maksut-auto-deploy.timer
+systemctl --user enable --now maksut-self-improve.service maksut-deploy-hook.service
 make deploy-status
 make logs
 ```

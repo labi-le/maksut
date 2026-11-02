@@ -35,18 +35,19 @@ log `image ... is not published yet: manifest unknown`.
 - The request is not held open for the deploy. The hook answers 202 and starts
   `tools/published_deploy.py` in a single background thread; a burst of events
   coalesces into the deploy already running.
-- `tools/published_deploy.py` is the one entry point for both the hook and the
-  timer: it checks `self-improve/off` first, extracts `tools/auto_deploy.py`
-  from `origin/main`, and executes that copy. Deploy logic therefore follows the
+- `tools/published_deploy.py` is the one entry point, for the hook and for a
+  manual `make deploy-now`: it checks `self-improve/off` first, extracts
+  `tools/auto_deploy.py` from `origin/main`, and executes that copy. Deploy logic therefore follows the
   repository, never the working tree.
 - The listener process itself is the one piece of deploy code that cannot
   follow `origin/main` on its own: `systemctl --user restart
   maksut-deploy-hook` is required after a merge that changes
   `tools/deploy_hook.py` (the units' `git show` only covers
   `tools/auto_deploy.py`).
-- The timer becomes a safety net instead of the trigger:
-  `OnUnitActiveSec=30min` in `packaging/maksut-auto-deploy.timer`, covering lost
-  deliveries and failed runs.
+- There is no polling fallback at all: no timer, no periodic `git fetch`. The
+  webhook is the only trigger, and a delivery the host never received leaves the
+  container on its previous image until another delivery arrives or a human runs
+  `make deploy-now`.
 
 ## Consequences
 
@@ -60,11 +61,14 @@ log `image ... is not published yet: manifest unknown`.
   service. One-time setup on the repository: a webhook (Settings → Webhooks,
   content type `application/json`, secret matching `MAKSUT_HOOK_SECRET_FILE`,
   event: *Workflow runs*).
-- If the hook is unreachable, the 30-minute timer still converges; a deploy can
-  then lag up to 30 minutes instead of 45 seconds.
+- A lost delivery is silent: nothing converges on its own. Recovery is GitHub →
+  Webhooks → Recent Deliveries → *Redeliver*, or `make deploy-now` (same shim,
+  same journal), and `make deploy-status` shows whether the container lags
+  `origin/main`.
 - A webhook secret is a shared secret between GitHub and the host: rotating it
   means updating both sides, and a mismatch shows up as 401 lines in
   `journalctl --user -u maksut-deploy-hook`.
 - The allowlist pins GitHub's hook ranges as of 2026-11-02; if GitHub adds a
-  range, deliveries from it land on 403 until the vhost is updated, and the
-  30-minute timer is what converges in the meantime.
+  range, deliveries from it land on 403 until the vhost is updated, and those
+  deliveries stay visible under Recent Deliveries, so they can be redelivered
+  once the vhost is fixed.
