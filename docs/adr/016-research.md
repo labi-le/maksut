@@ -17,11 +17,15 @@ boundary: no arbitrary URL fetching, redirects, or SSRF.
 - Add a public `research` tool next to `web_search`. The model decides when to
   use it; there is no keyword matcher. It passes a question and 2-4 distinct
   queries. `web_search` stays the tool for one fresh fact.
-- Split provider transport into `SearchClient::search_hits(query, limit)`.
-  Firecrawl, Tavily, and DuckDuckGo return `SearchHit` records; all providers
-  share the same response size limit and error classification. `web_search`
-  keeps its old output contract: five results, 2500 characters, and the same
-  user-facing error strings.
+- Split provider transport into `SearchClient::search_hits_with_recency` and
+  `SearchClient::public_web_search` (`src/search.rs`, `src/search_providers.rs`,
+  `src/search_parse.rs`). `web_search` runs the omp-style automatic keyless chain
+  (`Firecrawl` v2/v1, `DuckDuckGo`, `Parallel` MCP, `Exa` MCP, `Startpage`,
+  `Mojeek`, `Ecosia`, plus `Tavily` when configured), while `research` fans each
+  query out across the keyless engines in parallel (`public_web_search`) and
+  merges results by cross-engine consensus before cross-query ranking.
+  `web_search` keeps its bounded output contract: 1-10 results (default 5),
+  2500 characters, optional `recency`, and the same user-facing error strings.
 - Run research in a `JoinSet` over an owned `Arc<SearchClient>` so tasks are
   `'static`. Each query asks for four results with the existing 10-second HTTP
   timeout. The whole pass has a 15-second timeout; late tasks are aborted and
@@ -50,7 +54,7 @@ boundary: no arbitrary URL fetching, redirects, or SSRF.
   per-user cooldown, and `RESEARCH_MAX_TOKENS = 1500` for every completion
   after a successful pass. The 6000-character limit is a hard ceiling, not a
   guarantee: 1500 Russian tokens usually produce less text.
-- After research, the tool payload is reduced to `web_search`, `research`, and the read-only `read_url`.
+- After research, the tool payload is reduced to read-only tools (`web_search`, `research`, `read_url`, `inspect_code`).
   `propose_feature` returns only when the user explicitly asked for a feature;
   `find_stickers` and `send_sticker` return only when the user explicitly asked
   for a sticker. Queue tools are never offered in research mode. Dispatch
