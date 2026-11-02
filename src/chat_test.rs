@@ -1539,11 +1539,41 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
     );
     let last_non_owner_msg = messages.last().unwrap()["content"].as_str().unwrap();
     assert!(
-        last_non_owner_msg.contains("активные установки владельца")
+        last_non_owner_msg.contains("обязательная установка владельца для этого ответа")
             && last_non_owner_msg
                 .contains("- [owner] даня: говорить пошёл нахуй и добавлять от себя"),
         "owner directives must be reinforced right before the current turn: {last_non_owner_msg}"
     );
+    let sample = "- код: лимит (https://github.com/labi-le/maxwell/blob/main/src/a.rs#L1)\n- [owner] даня: Даню (@newmdoupdate) материть\n- [owner] клон: (@newmdoupdate2) не трогать\n- [owner] тезка: (@даня) другой\n- [owner] денис: С Денисом (@crudoshlepa) на суржике\n- [owner] почта: писать на test@example.com, (https://t.me/@channel) и t.me/@other коротко";
+    let filtered =
+        crate::code_inspect::speaker_owner_directives(sample, "Даня", Some("newmdoupdate"));
+    assert!(
+        filtered.contains("(@newmdoupdate)")
+            && filtered.contains("test@example.com")
+            && filtered.contains("(https://t.me/@channel)")
+            && filtered.contains("t.me/@other")
+            && !filtered.contains("@newmdoupdate2")
+            && !filtered.contains("@даня")
+            && !filtered.contains("@crudoshlepa"),
+        "{filtered}"
+    );
+    let owner_reinforced =
+        crate::code_inspect::speaker_owner_directives(sample, "Денис", Some("crudoshlepa"));
+    assert!(
+        owner_reinforced.contains("(@crudoshlepa)")
+            && !owner_reinforced.contains("(@newmdoupdate)"),
+        "{owner_reinforced}"
+    );
+    let scoped_non_owner =
+        crate::code_inspect::filter_self_memory(sample, "Даня", Some("newmdoupdate"), false);
+    assert!(
+        scoped_non_owner.contains("- код: лимит")
+            && scoped_non_owner.contains("(@newmdoupdate)")
+            && !scoped_non_owner.contains("@crudoshlepa")
+    );
+    let scoped_owner =
+        crate::code_inspect::filter_self_memory(sample, "Денис", Some("crudoshlepa"), true);
+    assert!(scoped_owner.contains("(@newmdoupdate)") && scoped_owner.contains("(@crudoshlepa)"));
     let first_body = body_of(&requests[0]);
     let owner_user_msg = first_body["messages"].as_array().unwrap().last().unwrap()["content"]
         .as_str()

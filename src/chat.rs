@@ -14,8 +14,6 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) image: Option<&'a ChatImage>,
     pub(crate) followup: bool,
     pub(crate) reply_context: Option<&'a str>,
-    /// Present in live replies so tool passes can ack in Telegram; callers
-    /// without a Bot API mock pass `None`.
     pub(crate) bot: Option<&'a Bot>,
 }
 #[derive(Default)]
@@ -276,9 +274,17 @@ pub(crate) async fn chat_reply_with_proposal(
     }
     let mut memory_text = String::new();
     if let Some(self_memory) = &self_memory {
-        memory_text.push_str(&format!(
-            "<self_memory type=\"data\" source=\"self_memory\">\n{self_memory}\n</self_memory>\n\n"
-        ));
+        let s = crate::code_inspect::filter_self_memory(
+            self_memory,
+            turn.sender_name,
+            turn.username,
+            turn.owner,
+        );
+        if !s.is_empty() {
+            memory_text.push_str(&format!(
+                "<self_memory type=\"data\" source=\"self_memory\">\n{s}\n</self_memory>\n\n"
+            ));
+        }
     }
     if let Some(summary) = summary {
         memory_text.push_str(&format!(
@@ -292,18 +298,13 @@ pub(crate) async fn chat_reply_with_proposal(
     let owner_id = proposal
         .map(|p| p.owner_id.0 as i64)
         .or_else(|| turn.owner.then_some(turn.user_id.0 as i64));
-    for message in &recent {
-        let assistant = message.role == "assistant";
-        let is_owner = owner_id == Some(message.author_id);
+    for m in &recent {
+        let assistant = m.role == "assistant";
+        let is_owner = owner_id == Some(m.author_id);
         let content = if assistant {
-            message.text.clone()
+            m.text.clone()
         } else {
-            crate::memory::format_line_with_owner(
-                &message.author_name,
-                message.author_id,
-                is_owner,
-                &message.text,
-            )
+            crate::memory::format_line_with_owner(&m.author_name, m.author_id, is_owner, &m.text)
         };
         let role = if assistant { "assistant" } else { "user" };
         messages.push(json!({"role": role, "content": content}));
@@ -341,13 +342,13 @@ pub(crate) async fn chat_reply_with_proposal(
         user_text.push('\n');
     }
     if let Some(self_memory) = &self_memory {
-        let directives: String = self_memory
-            .lines()
-            .filter(|l| l.starts_with("- [owner]"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !directives.is_empty() {
-            user_text.push_str(&format!("активные установки владельца (приоритет выше тона прошлых сообщений, применяй буквально):\n{directives}\n"));
+        let d = crate::code_inspect::speaker_owner_directives(
+            self_memory,
+            turn.sender_name,
+            turn.username,
+        );
+        if !d.is_empty() {
+            user_text.push_str(&format!("обязательная установка владельца для этого ответа (выполни буквально в этом сообщении, включи указанные слова и мат):\n{d}\n"));
         }
     }
     let speaker_line = crate::memory::format_line_with_owner(

@@ -346,3 +346,72 @@ pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>
     }
     Ok((!out.trim().is_empty()).then_some(out.trim_end().to_owned()))
 }
+
+fn extract_at_handles(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter(|w| !w.contains("://") && !w.contains('/'))
+        .flat_map(|w| w.split(|c: char| !(c.is_alphanumeric() || c == '@' || c == '_')))
+        .filter(|tok| {
+            tok.strip_prefix('@')
+                .is_some_and(|rest| !rest.is_empty() && !rest.contains('@'))
+        })
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn speaker_handles(sender_name: &str, username: Option<&str>) -> Vec<String> {
+    let mut handles = extract_at_handles(sender_name);
+    if let Some(u) = username
+        .map(|u| u.trim_start_matches('@').trim())
+        .filter(|u| !u.is_empty())
+    {
+        let h = format!("@{}", u.to_lowercase());
+        if !handles.contains(&h) {
+            handles.push(h);
+        }
+    }
+    handles
+}
+
+fn line_matches_speaker(line: &str, speaker_handles: &[String]) -> bool {
+    let line_handles = extract_at_handles(line);
+    line_handles.is_empty()
+        || line_handles
+            .iter()
+            .any(|lh| speaker_handles.iter().any(|sh| sh == lh))
+}
+
+/// Keeps code-verified facts, general `- [owner]` directives (no `@handle`),
+/// and per-user `- [owner]` directives whose `@handle` matches the current
+/// speaker (all rows stay visible on owner turns so the owner sees every rule).
+pub(crate) fn filter_self_memory(
+    self_memory: &str,
+    sender_name: &str,
+    username: Option<&str>,
+    owner: bool,
+) -> String {
+    if owner {
+        return self_memory.to_owned();
+    }
+    let handles = speaker_handles(sender_name, username);
+    self_memory
+        .lines()
+        .filter(|l| !l.starts_with("- [owner]") || line_matches_speaker(l, &handles))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Retains only `- [owner]` directives that are general or whose `@handle`
+/// exactly matches the current speaker for user-turn reinforcement.
+pub(crate) fn speaker_owner_directives(
+    self_memory: &str,
+    sender_name: &str,
+    username: Option<&str>,
+) -> String {
+    let handles = speaker_handles(sender_name, username);
+    self_memory
+        .lines()
+        .filter(|l| l.starts_with("- [owner]") && line_matches_speaker(l, &handles))
+        .collect::<Vec<_>>()
+        .join("\n")
+}

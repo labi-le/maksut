@@ -161,11 +161,20 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    cfg.bot_username = match bot.get_me().await {
-        Ok(me) => me.user.username.unwrap_or_default(),
-        Err(error) => {
-            tracing::error!(%error, "unable to identify bot");
-            std::process::exit(1);
+    cfg.bot_username = loop {
+        match bot.get_me().await {
+            Ok(me) => break me.user.username.unwrap_or_default(),
+            Err(teloxide::RequestError::Network(err)) => {
+                tracing::warn!(%err, "unable to identify bot, retrying in 3s");
+                time::sleep(Duration::from_secs(3)).await;
+            }
+            Err(teloxide::RequestError::RetryAfter(wait)) => {
+                time::sleep(wait.duration()).await;
+            }
+            Err(error) => {
+                tracing::error!(%error, "unable to identify bot");
+                std::process::exit(1);
+            }
         }
     };
     cfg.sticker_replies = load_sticker_replies(&bot).await;
