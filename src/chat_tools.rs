@@ -17,6 +17,7 @@ pub(crate) struct ToolContext<'a> {
     pub(crate) chat_id: ChatId,
     pub(crate) user_id: UserId,
     pub(crate) sender_name: &'a str,
+    pub(crate) username: Option<&'a str>,
     pub(crate) message_id: i32,
     pub(crate) read_url_targets: &'a [Url],
 }
@@ -112,6 +113,7 @@ pub(crate) async fn run_tool_call(
                     let source_chat_id = ctx.chat_id.0;
                     let proposed_by = ctx.user_id;
                     let proposer = ctx.sender_name.to_owned();
+                    let username = ctx.username.map(str::to_owned);
                     let message_id = ctx.message_id;
                     let result = tokio::task::spawn_blocking(move || {
                         crate::self_improve::queue_feature_refined(
@@ -121,6 +123,7 @@ pub(crate) async fn run_tool_call(
                                 source_chat_id,
                                 proposed_by,
                                 proposer: &proposer,
+                                username: username.as_deref(),
                                 message_id,
                                 goal: &goal,
                                 refines: refines.as_deref(),

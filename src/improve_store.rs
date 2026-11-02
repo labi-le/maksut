@@ -73,8 +73,94 @@ pub(crate) fn truncate_utf16(text: &str, max_units: usize) -> (&str, bool) {
     (text, false)
 }
 
-fn plan_id(now: i64, source_chat_id: i64, message_id: i32) -> String {
-    format!("plan-{now}-{}-{message_id}", source_chat_id.unsigned_abs())
+/// Serializes id allocation with the inbox write, so two proposals from the
+/// same author cannot pick the same file name.
+static ID_ALLOC: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `propose-<handle>` is both the queue key and the id the owner types back, so
+/// the handle is the proposer's username (case-folded) or their numeric id.
+fn proposal_handle(username: Option<&str>, user_id: UserId) -> String {
+    let cleaned: String = username
+        .unwrap_or("")
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect();
+    if cleaned.is_empty() {
+        user_id.0.to_string()
+    } else {
+        cleaned.to_ascii_lowercase()
+    }
+}
+
+fn id_taken(dir: &Path, id: &str) -> bool {
+    ["inbox", "outbox", "approvals", "rejections"]
+        .iter()
+        .any(|name| dir.join(name).join(format!("{id}.json")).exists())
+}
+
+/// The owner may keep several requests pending, so a repeat proposal from the
+/// same author must not land on the same file: `-2`, `-3`, and so on. The
+/// timestamp fallback keeps the id unique even after 99 repeats.
+fn next_proposal_id(dir: &Path, username: Option<&str>, user_id: UserId) -> String {
+    let base = format!("propose-{}", proposal_handle(username, user_id));
+    for n in 1..=99 {
+        let candidate = if n == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{n}")
+        };
+        if !id_taken(dir, &candidate) {
+            return candidate;
+        }
+    }
+    format!("{base}-{}", unix_now())
+}
+
+fn write_task(
+    dir: &Path,
+    username: Option<&str>,
+    user_id: UserId,
+    mut task: Value,
+) -> std::io::Result<String> {
+    let _guard = ID_ALLOC
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let id = next_proposal_id(dir, username, user_id);
+    let Some(fields) = task.as_object_mut() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "task is not an object",
+        ));
+    };
+    fields.insert("id".to_owned(), Value::String(id.clone()));
+    fields.insert(
+        "username".to_owned(),
+        Value::String(username.unwrap_or("").to_owned()),
+    );
+    atomic_write(
+        &dir.join("inbox").join(format!("{id}.json")),
+        task.to_string().as_bytes(),
+    )?;
+    Ok(id)
+}
+
+/// The owner's `/improve <goal>` path writes a request without the model tool
+/// context, but shares the id scheme and the `username` field with the queue.
+pub(crate) fn queue_owner_goal(
+    dir: &Path,
+    owner: UserId,
+    chat_id: i64,
+    username: Option<&str>,
+    goal: &str,
+) -> std::io::Result<String> {
+    let task = json!({
+        "requested_by": owner.0,
+        "chat_id": chat_id,
+        "proposed_by": owner.0,
+        "goal": goal,
+        "created_at": unix_now(),
+    });
+    write_task(dir, username, owner, task)
 }
 
 pub(crate) struct PlanProposal<'a> {
@@ -84,6 +170,7 @@ pub(crate) struct PlanProposal<'a> {
     pub(crate) source_chat_id: i64,
     pub(crate) proposed_by: UserId,
     pub(crate) proposer: &'a str,
+    pub(crate) username: Option<&'a str>,
     pub(crate) message_id: i32,
     pub(crate) goal: &'a str,
     pub(crate) parent: Option<&'a str>,
@@ -100,6 +187,7 @@ pub(crate) fn queue_plan(proposal: PlanProposal<'_>) -> std::io::Result<String> 
         source_chat_id,
         proposed_by,
         proposer,
+        username,
         message_id,
         goal,
         parent,
@@ -113,14 +201,13 @@ pub(crate) fn queue_plan(proposal: PlanProposal<'_>) -> std::io::Result<String> 
             "goal too long",
         ));
     }
-    let id = plan_id(unix_now(), source_chat_id, message_id);
     let task = json!({
-        "id": id,
         "requested_by": owner.0,
         "chat_id": chat_id,
         "source_chat_id": source_chat_id,
         "proposed_by": proposed_by.0,
         "proposed_by_name": proposer,
+        "message_id": message_id,
         "goal": goal,
         "stage": "plan",
         "parent": parent.unwrap_or(""),
@@ -129,11 +216,7 @@ pub(crate) fn queue_plan(proposal: PlanProposal<'_>) -> std::io::Result<String> 
         "previous_review": truncate_chars(previous_review, MAX_PREVIOUS_REVIEW_CHARS),
         "created_at": unix_now(),
     });
-    atomic_write(
-        &dir.join("inbox").join(format!("{id}.json")),
-        task.to_string().as_bytes(),
-    )?;
-    Ok(id)
+    write_task(dir, username, proposed_by, task)
 }
 
 pub(crate) struct RefineProposal<'a> {
@@ -142,6 +225,7 @@ pub(crate) struct RefineProposal<'a> {
     pub(crate) source_chat_id: i64,
     pub(crate) proposed_by: UserId,
     pub(crate) proposer: &'a str,
+    pub(crate) username: Option<&'a str>,
     pub(crate) message_id: i32,
     pub(crate) goal: &'a str,
     pub(crate) refines: Option<&'a str>,
@@ -156,6 +240,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
         source_chat_id,
         proposed_by,
         proposer,
+        username,
         message_id,
         goal,
         refines,
@@ -183,6 +268,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
             source_chat_id,
             proposed_by,
             proposer,
+            username,
             message_id,
             goal,
             parent: None,
@@ -240,6 +326,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
         source_chat_id,
         proposed_by,
         proposer,
+        username,
         message_id,
         goal: &child_goal,
         parent: Some(parent_id.as_str()),
@@ -270,8 +357,13 @@ pub(crate) fn approval_dir(_status: &str) -> &'static str {
     "approvals"
 }
 
-pub(crate) fn marker(id: &str, owner: UserId) -> serde_json::Result<Vec<u8>> {
-    serde_json::to_vec(&json!({"id": id, "requested_by": owner.0, "approved_at": unix_now()}))
+pub(crate) fn marker(id: &str, owner: UserId, title: &str) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&json!({
+        "id": id,
+        "requested_by": owner.0,
+        "approved_at": unix_now(),
+        "title": title,
+    }))
 }
 
 pub(crate) fn decision_marker(dir: &Path, id: &str, status: &str) -> Option<&'static str> {
@@ -392,6 +484,7 @@ pub(crate) fn record_decision(
     status: &str,
     action: &str,
     owner: UserId,
+    title: &str,
 ) -> Result<&'static str, &'static str> {
     let _guard = DECISION_WRITE
         .lock()
@@ -400,7 +493,7 @@ pub(crate) fn record_decision(
         return Err("решение уже принято");
     }
     match action {
-        "approve" if status == "proposed" => marker(id, owner)
+        "approve" if status == "proposed" => marker(id, owner, title)
             .map_err(|_| "не понял кнопку")
             .and_then(|bytes| {
                 atomic_write(

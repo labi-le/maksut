@@ -203,22 +203,72 @@ class ApprovalTests(unittest.TestCase):
             module.run = fake_run
             url = module.create_issue(
                 {
-                    "id": "plan-9",
+                    "id": "propose-bob",
                     "goal": "добавь кнопку\nвторая строка",
                     "proposed_by": 7,
                     "proposed_by_name": "bob",
+                    "username": "bob",
+                    "created_at": 1700000000,
                     "feedback": "сделай синей",
                 }
             )
             self.assertEqual(url, "https://github.com/labi-le/maxwell/issues/9")
             self.assertIn("--body-file", calls[0])
             self.assertIn("добавь кнопку", captured_body[0])
-            self.assertIn("Предложил: bob (7)", captured_body[0])
+            self.assertIn("предложение от @bob", captured_body[0])
+            self.assertIn("время: 2023-11-14 22:13 UTC", captured_body[0])
+            self.assertNotIn("Предложил:", captured_body[0])
             self.assertIn("Уточнение: сделай синей", captured_body[0])
-            self.assertNotIn("\n", calls[0][calls[0].index("--title") + 1])
+            title = calls[0][calls[0].index("--title") + 1]
+            self.assertEqual(title, "добавь кнопку вторая строка")
+            self.assertNotIn("Maksut:", title)
+            self.assertNotIn("\n", title)
             self.assertFalse(
-                (pathlib.Path(tmp) / "queue" / "tmp" / "plan-9-issue.md").exists()
+                (pathlib.Path(tmp) / "queue" / "tmp" / "propose-bob-issue.md").exists()
             )
+
+    def test_approval_title_from_the_bot_wins_over_the_goal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load(tmp)
+            module.status(
+                {
+                    "id": "propose-bob",
+                    "chat_id": 10,
+                    "goal": "сделай кнопку отмены в меню заявок",
+                    "proposed_by": 7,
+                    "username": "bob",
+                    "requested_by": 42,
+                    "created_at": 1700000000,
+                },
+                "proposed",
+                "ok",
+            )
+            (pathlib.Path(tmp) / "queue" / "approvals" / "propose-bob.json").write_text(
+                json.dumps(
+                    {
+                        "id": "propose-bob",
+                        "requested_by": 42,
+                        "title": "кнопка отмены",
+                    }
+                )
+            )
+            captured = []
+            module.create_issue = lambda value: captured.append(dict(value)) or ""
+            module.process_approvals()
+            self.assertEqual(len(captured), 1)
+            self.assertEqual(captured[0]["title"], "кнопка отмены")
+            self.assertEqual(captured[0]["username"], "bob")
+
+    def test_issue_title_falls_back_to_a_short_goal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load(tmp)
+            title = module.issue_title(
+                {"goal": "  первые   слова заявки " * 20}
+            )
+            self.assertLessEqual(len(title), 70)
+            self.assertFalse(title.endswith(" "))
+            self.assertTrue(title.startswith("первые слова заявки"))
+            self.assertEqual(module.issue_title({"goal": "x", "title": " short "}), "short")
 
     def test_queue_sort_key_orders_priority_then_name(self):
         with tempfile.TemporaryDirectory() as tmp:

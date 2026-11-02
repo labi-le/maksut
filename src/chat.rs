@@ -13,6 +13,7 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) chat_id: ChatId,
     pub(crate) user_id: UserId,
     pub(crate) sender_name: &'a str,
+    pub(crate) username: Option<&'a str>,
     pub(crate) message_id: i32,
     pub(crate) owner: bool,
     pub(crate) prompt: &'a str,
@@ -130,6 +131,7 @@ pub(crate) async fn reply_with_chat(
         chat_id: message.chat.id,
         user_id: sender.id,
         sender_name,
+        username: sender.username.as_deref(),
         message_id: message.id.0,
         owner,
         prompt: effective_prompt,
@@ -387,6 +389,7 @@ pub(crate) async fn chat_reply_with_proposal(
         chat_id: turn.chat_id,
         user_id: turn.user_id,
         sender_name: turn.sender_name,
+        username: turn.username,
         message_id: turn.message_id,
         read_url_targets: read_url_targets.as_slice(),
     };

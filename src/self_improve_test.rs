@@ -90,6 +90,8 @@ async fn only_owner_in_private_chat_can_queue_improvement() {
         serde_json::from_slice(&std::fs::read(files[0].path()).unwrap()).unwrap();
     assert_eq!(value["requested_by"], cfg.owner_id.0);
     assert_eq!(value["goal"], "сделай лучше");
+    assert_eq!(value["id"], "propose-1");
+    assert_eq!(value["username"], "");
 
     assert!(
         crate::self_improve::handle_improve(
@@ -245,6 +247,7 @@ async fn queue_feature_creates_a_plan() {
         source_chat_id: 10,
         proposed_by: cfg.owner_id,
         proposer: "Owner",
+        username: Some("owner_tag"),
         message_id: 77,
         goal: "давай ебанем такую-то фичу",
         refines: None,
@@ -258,9 +261,79 @@ async fn queue_feature_creates_a_plan() {
     let value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(files[0].path()).unwrap()).unwrap();
     assert_eq!(value["id"], id);
+    assert_eq!(id, "propose-owner_tag");
+    assert_eq!(value["username"], "owner_tag");
     assert_eq!(value["stage"], "plan");
     assert_eq!(value["requested_by"], cfg.owner_id.0);
     assert_eq!(value["chat_id"], 10);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn repeat_proposals_from_one_author_get_a_numeric_suffix() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fake_settings(dir.path(), "#!/bin/sh\n").await;
+    let mut ids = Vec::new();
+    for goal in ["первая", "вторая", "третья"] {
+        ids.push(
+            crate::self_improve::queue_feature_refined(crate::self_improve::RefineProposal {
+                dir: &cfg.self_improve_dir,
+                owner: cfg.owner_id,
+                source_chat_id: 10,
+                proposed_by: cfg.owner_id,
+                proposer: "Owner",
+                username: Some("owner_tag"),
+                message_id: 77,
+                goal,
+                refines: None,
+            })
+            .unwrap(),
+        );
+    }
+    assert_eq!(
+        ids,
+        [
+            "propose-owner_tag",
+            "propose-owner_tag-2",
+            "propose-owner_tag-3"
+        ]
+    );
+    let files = std::fs::read_dir(cfg.self_improve_dir.join("inbox"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .count();
+    assert_eq!(files, 3, "every proposal keeps its own file");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn proposer_without_a_username_uses_the_numeric_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fake_settings(dir.path(), "#!/bin/sh\n").await;
+    let id = crate::self_improve::queue_feature_refined(crate::self_improve::RefineProposal {
+        dir: &cfg.self_improve_dir,
+        owner: cfg.owner_id,
+        source_chat_id: 10,
+        proposed_by: UserId(2),
+        proposer: "tester",
+        username: None,
+        message_id: 77,
+        goal: "добавь кнопку",
+        refines: None,
+    })
+    .unwrap();
+    assert_eq!(id, "propose-2");
+    let value: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            cfg.self_improve_dir
+                .join("inbox")
+                .join(format!("{id}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value["username"], "");
+    assert_eq!(value["proposed_by"], 2);
 }
 
 #[cfg(unix)]
@@ -274,6 +347,7 @@ async fn anyone_can_propose_a_feature_but_only_the_owner_decides() {
         source_chat_id: 10,
         proposed_by: UserId(2),
         proposer: "tester",
+        username: Some("tester_tag"),
         message_id: 77,
         goal: "давай ебанем фичу: добавь кнопку",
         refines: None,
@@ -361,6 +435,55 @@ async fn owner_inline_buttons_approve_only_the_matching_task() {
         .join("approvals")
         .join("plan-2.json")
         .exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn approve_asks_the_model_for_the_issue_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = fake_settings(dir.path(), "#!/bin/sh\n").await;
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"\"кнопка отмены\"\n"}}]}"#.into(),
+    ])
+    .await;
+    cfg.chat = Some(ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "model".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    ));
+    let api = FeatureApi::new().await;
+    write_outbox(
+        &cfg.self_improve_dir,
+        "propose-bob.json",
+        json!({
+            "id": "propose-bob", "status": "proposed", "chat_id": 10,
+            "requested_by": cfg.owner_id.0, "username": "bob",
+            "goal": "сделай кнопку отмены в меню заявок", "created_at": 1,
+        }),
+    );
+    assert!(
+        crate::self_improve::handle_callback(
+            &api.bot,
+            &callback(cfg.owner_id.0, "approve:propose-bob"),
+            &cfg,
+        )
+        .await
+    );
+    let marker: Value = serde_json::from_slice(
+        &std::fs::read(
+            cfg.self_improve_dir
+                .join("approvals")
+                .join("propose-bob.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(marker["title"], "кнопка отмены");
+    assert_eq!(marker["id"], "propose-bob");
+    llm.task.abort();
 }
 
 #[cfg(unix)]
@@ -875,6 +998,7 @@ async fn propose_feature_refines_links_parent_without_rejection() {
         source_chat_id: 10,
         proposed_by: cfg.owner_id,
         proposer: "Owner",
+        username: Some("owner_tag"),
         message_id: 77,
         goal: "добавь кнопку отмены",
         refines: Some("plan-1"),
@@ -933,6 +1057,7 @@ async fn propose_feature_refines_rejects_non_owner_and_invalid_parent() {
             source_chat_id: 10,
             proposed_by: UserId(2),
             proposer: "tester",
+            username: Some("tester_tag"),
             message_id: 77,
             goal: "поправь",
             refines: Some("plan-1"),
@@ -949,6 +1074,7 @@ async fn propose_feature_refines_rejects_non_owner_and_invalid_parent() {
                 source_chat_id: 10,
                 proposed_by: cfg.owner_id,
                 proposer: "Owner",
+                username: Some("owner_tag"),
                 message_id: 77,
                 goal: "поправь",
                 refines: Some(parent),

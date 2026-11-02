@@ -54,6 +54,8 @@ async fn chat_reply_queues_a_feature_through_the_tool() {
         serde_json::from_slice(&std::fs::read(files[0].path()).unwrap()).unwrap();
     assert_eq!(value["goal"], "разреши ходить по сайтам");
     assert_eq!(value["proposed_by"], 2);
+    assert_eq!(value["id"], "propose-2");
+    assert_eq!(value["username"], "");
     llm.task.abort();
 }
 
