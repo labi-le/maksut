@@ -18,13 +18,14 @@ The self-improvement intake is split across two isolated processes so the Telegr
    - The bot notifies the owner with the proposer, goal, and two inline buttons (`В issue` / `В помойку`).
 2. **Owner decision (`approvals/` or `rejections/`) and GitHub issue creation (`issue_created`):**
    - Decisions are recorded only from an owner inline button press (`DecisionGate::Issue`) or an explicit owner command in private chat (`одобри #id`, `отклони #id`, or `/improve approve|reject <id>`). Group messages and forwarded messages never approve or reject.
-   - When approved, the orchestrator runs `gh issue create` with the goal, proposer attribution, and any refinement feedback, then writes `status: "issue_created"` and `issue_url` to `outbox/<id>.json`.
+   - On approve, the bot asks the model for a short issue title (≤70 chars) and writes it into `approvals/<id>.json` as `title`. The host orchestrator stays agent-free: it only reads that field.
+   - When approved, the orchestrator runs `gh issue create` with the summarized title (falling back to the first 70 characters of the goal) and a body built from `предложение от @<username>` (numeric `proposed_by` when the proposer has no username), `время` from `created_at` in UTC, the full goal, and any refinement feedback. It then writes `status: "issue_created"` and `issue_url` to `outbox/<id>.json`.
    - The bot notifies the chat with the created GitHub issue URL so users can continue discussion in the issue.
    - Rejecting a proposal removes the marker and marks the task `rejected` without creating an issue.
 
 ## Task IDs, priority, and cancellation (`src/improve_commands.rs`)
 
-- **Task ID matching:** IDs such as `plan-1793270374-1002045081420-214537` display as `#214537` (`short_task_id`). Owner commands accept the full ID, the short numeric tail (`214537`), or any unique numeric prefix/suffix (`37`). Ambiguous fragments return the candidate list instead of guessing or claiming the task is missing.
+- **Task IDs:** new requests get `propose-<username>` (`propose-<user_id>` when the proposer has no username). The id is also the queue file name, so a repeat proposal from the same author gets `-2`, `-3`, and so on; the first one keeps the bare `propose-<username>` form. Legacy `plan-<unix>-<chat_id>-<message_id>` tasks stay valid and still display as their trailing message id (`short_task_id`). Owner commands accept the full id or any unique fragment of it; ambiguous fragments return the candidate list instead of guessing or claiming the task is missing.
 - **Batch cancel:** `отмени #id1 #id2` (or `/improve cancel <id>`) cancels pending tasks (`inbox` or waiting at `proposed`) in a single reply; already-finished tasks are reported separately.
 - **Priority:** `подними #id`, `опусти #id`, `приоритет #id <n>` (clamped to `-1000..=1000`, `/improve priority <id> [n]`). Both `inbox` and `outbox` sort by `(-priority, filename)`.
 - **Kill switch:** `/improve off` writes `self-improve/off`, pausing both the orchestrator loop and `tools/auto_deploy.py` until the file is removed.

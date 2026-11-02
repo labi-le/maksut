@@ -261,7 +261,9 @@ fn status_line_has_unknown_reference(line: &str, tasks: &[Value]) -> bool {
             )
         });
         if let Some(rest) = token.strip_prefix('#') {
-            if rest.len() >= 4 && rest.chars().all(|ch| ch.is_ascii_digit()) {
+            let looks_like_id = rest.starts_with("propose-")
+                || (rest.len() >= 4 && rest.chars().all(|ch| ch.is_ascii_digit()));
+            if looks_like_id {
                 let known = tasks.iter().any(|task| {
                     task.get("id")
                         .and_then(Value::as_str)
@@ -272,7 +274,7 @@ fn status_line_has_unknown_reference(line: &str, tasks: &[Value]) -> bool {
                 }
             }
         }
-        if token.starts_with("plan-")
+        if (token.starts_with("plan-") || token.starts_with("propose-"))
             && !tasks
                 .iter()
                 .any(|task| task.get("id").and_then(Value::as_str) == Some(token))

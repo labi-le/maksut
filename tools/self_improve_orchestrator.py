@@ -77,7 +77,7 @@ def status(task: dict, state: str, summary: str = "", **extra) -> None:
         "created_at": int(task.get("created_at") or extra.get("created_at") or time.time()),
         "updated_at": int(time.time()),
     }
-    for name in ("requested_by", "parent", "feedback"):
+    for name in ("requested_by", "parent", "feedback", "username"):
         found = extra[name] if name in extra else task.get(name)
         if found is not None:
             value[name] = found
@@ -85,23 +85,41 @@ def status(task: dict, state: str, summary: str = "", **extra) -> None:
     log(f"task {task['id']}: {state}")
 
 
+TITLE_LIMIT = 70
+
+
+def issue_title(task: dict) -> str:
+    title = " ".join(str(task.get("title") or "").split())
+    if not title:
+        title = " ".join(str(task.get("goal") or "").split())
+        if len(title) > TITLE_LIMIT:
+            cut = title[:TITLE_LIMIT]
+            title = cut[: cut.rfind(" ")] if " " in cut else cut
+    return title[:TITLE_LIMIT].rstrip(" .,:;—-")
+
+
 def create_issue(task: dict) -> str:
     body_path = QUEUE / "tmp" / f"{task['id']}-issue.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
-    proposer = str(task.get("proposed_by_name") or "").strip()
+    username = str(task.get("username") or "").strip()
     proposed_by = int(task.get("proposed_by", 0) or 0)
-    lines = [
-        f"<!-- maksut-self-improve: {task['id']} -->",
-        f"Цель: {task.get('goal', '')}",
-    ]
-    if proposer and proposed_by != 0 and proposed_by != OWNER:
-        lines.append(f"Предложил: {proposer} ({proposed_by})")
+    lines = [f"<!-- maksut-self-improve: {task['id']} -->"]
+    if username:
+        lines.append(f"предложение от @{username}")
+    elif proposed_by:
+        lines.append(f"предложение от {proposed_by}")
+    created = int(task.get("created_at") or 0)
+    if created:
+        lines.append(
+            "время: " + time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(created))
+        )
+    lines.append(f"Цель: {task.get('goal', '')}")
     feedback = str(task.get("feedback") or "").strip()
     if feedback and feedback != str(task.get("goal") or "").strip():
         lines.append(f"\nУточнение: {feedback}")
     body_path.write_text("\n".join(lines) + "\n")
     body_path.chmod(0o600)
-    title = "Maksut: " + " ".join(str(task.get("goal", "")).split())[:200]
+    title = issue_title(task)
     try:
         proc = run(
             [
@@ -187,8 +205,12 @@ def process_approvals() -> None:
             log(f"task {task_id}: ignored invalid approval marker")
             continue
         approval.unlink(missing_ok=True)
+        task = dict(value)
+        title = str(approved.get("title") or "").strip()
+        if title:
+            task["title"] = title
         try:
-            issue_url = create_issue(value)
+            issue_url = create_issue(task)
         except Exception as error:
             log(f"task {task_id}: {type(error).__name__}")
             issue_url = ""

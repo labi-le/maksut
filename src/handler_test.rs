@@ -610,7 +610,7 @@ async fn ambiguous_owner_text_does_not_write_approval_markers() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn owner_text_actions_apply_without_model() {
+async fn owner_text_actions_apply_from_plain_text() {
     let root = tempfile::tempdir().unwrap();
     let mut settings = crate::test_support::fake_settings(root.path(), "#!/bin/sh\n").await;
     for id in ["plan-1", "plan-2", "plan-3", "plan-5"] {
@@ -633,7 +633,11 @@ async fn owner_text_actions_apply_without_model() {
     )
     .unwrap();
     let api = FeatureApi::new().await;
-    let llm = crate::test_support::mock_server(vec![]).await;
+    let llm = crate::test_support::mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"заголовок заявки"}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"заголовок заявки"}}]}"#.into(),
+    ])
+    .await;
     settings.chat = Some(ChatConfig::new(
         llm.url.clone(),
         "secret".into(),
@@ -683,9 +687,15 @@ async fn owner_text_actions_apply_without_model() {
         .join("inbox")
         .join("plan-4.json")
         .exists());
-    assert!(
-        llm.requests.lock().unwrap().is_empty(),
-        "deterministic actions must not call the model"
+    let marker: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(cfg.self_improve_dir.join("approvals").join("plan-1.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(marker["title"], "заголовок заявки");
+    assert_eq!(
+        llm.requests.lock().unwrap().len(),
+        2,
+        "only the two approvals ask the model for a title"
     );
     llm.task.abort();
 }
