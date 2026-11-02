@@ -93,6 +93,9 @@ pub(crate) async fn run_tool_call(
         None if !ctx.owner && matches!(name, "feature_status" | "feature_confirmation") => {
             json!({"error": "доступно только владельцу"}).to_string()
         }
+        None if !ctx.owner && name == "remember_self" => {
+            "remember_self доступен только владельцу бота".to_string()
+        }
         None => "Инструмент недоступен.".to_string(),
         Some(ToolKind::ProposeFeature) => {
             match ctx.proposal {
@@ -227,7 +230,9 @@ pub(crate) async fn run_tool_call(
             }
         }
         Some(ToolKind::RememberSelf) => {
-            if state.remember_calls >= config().chat.remember_self_calls_per_reply {
+            if !ctx.owner {
+                "remember_self доступен только владельцу бота".to_string()
+            } else if state.remember_calls >= config().chat.remember_self_calls_per_reply {
                 "лимит записи в память на ответ".to_string()
             } else {
                 let topic = args.get("topic").and_then(Value::as_str).unwrap_or("");

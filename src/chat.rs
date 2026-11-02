@@ -67,38 +67,13 @@ pub(crate) async fn reply_with_chat(
     let (_chat_guard, _user_guard) = (chat_lock.read().await, user_lock.write().await);
     // Hold the image permit across `chat.acquire()` so downloaded bytes stay
     // bounded without occupying a model slot while Telegram serves the file.
-    let mut image_permit = None;
-    let downloaded_image = match input.pending_media.as_ref() {
-        Some((file_id, mime)) => match acquire_image_permit().await {
-            Some(permit) => download_image(bot, file_id, mime)
-                .await
-                .inspect(|_| image_permit = Some(permit)),
-            None => None,
-        },
-        None => None,
-    };
+    let (downloaded_image, image_permit) =
+        download_pending_image(bot, input.pending_media.as_ref()).await;
     let Some(_permit) = chat.acquire().await else {
         return;
     };
     drop(image_permit);
-    let typing = (!input.followup).then(|| {
-        let (typing_bot, typing_chat) = (bot.clone(), message.chat.id);
-        AbortOnDrop(tokio::spawn(async move {
-            let _ = typing_bot
-                .send_chat_action(typing_chat, ChatAction::Typing)
-                .await;
-            loop {
-                time::sleep(Duration::from_secs(config().chat.typing_keepalive_secs)).await;
-                if typing_bot
-                    .send_chat_action(typing_chat, ChatAction::Typing)
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }))
-    });
+    let typing = (!input.followup).then(|| spawn_typing_keepalive(bot.clone(), message.chat.id));
     let fallback_prompt;
     let effective_prompt = if input.warn_missing_image && downloaded_image.is_none() {
         fallback_prompt = format!("{}\n[не удалось загрузить вложение]", input.prompt);
@@ -163,13 +138,12 @@ async fn deliver_chat_reply(
     }
     let reply_params = || ReplyParameters::new(message.id).allow_sending_without_reply();
     let mut delivered = false;
-    if let Some(file_id) = reply.sticker {
-        if let Ok(sent) = bot
-            .send_sticker(message.chat.id, InputFile::file_id(file_id))
+    if let Some(id) = reply.sticker {
+        let req = bot
+            .send_sticker(message.chat.id, InputFile::file_id(id))
             .reply_parameters(reply_params())
-            .disable_notification(true)
-            .await
-        {
+            .disable_notification(true);
+        if let Ok(sent) = req.await {
             delivered = true;
             record_assistant_reply(&cfg.database, message.chat.id, "[стикер]", sent.id.0).await;
         }
@@ -187,18 +161,20 @@ async fn deliver_chat_reply(
         // A sticker must not swallow the owner's decision buttons.
         chunks.push("жми кнопку".to_owned());
     }
-    for (index, chunk) in chunks.into_iter().enumerate() {
-        let mut request = bot.send_message(message.chat.id, chunk.clone());
-        if index == 0 {
-            request = request.reply_parameters(reply_params());
-            if let Some(markup) = markup.clone() {
-                request = request.reply_markup(markup);
-            }
-        }
-        if let Ok(sent) = request.disable_notification(true).await {
+    let mut first_id = None;
+    for (i, chunk) in chunks.iter().enumerate() {
+        let m = (i == 0).then(|| markup.clone()).flatten();
+        if let Some(id) = send_chat_chunk(bot, message.chat.id, message.id, chunk, i == 0, m).await
+        {
             delivered = true;
-            record_assistant_reply(&cfg.database, message.chat.id, &chunk, sent.id.0).await;
+            first_id.get_or_insert(id);
         }
+    }
+    if let Some(id) = first_id {
+        let rec = (!reply.text.trim().is_empty())
+            .then_some(reply.text.as_str())
+            .unwrap_or("жми кнопку");
+        record_assistant_reply(&cfg.database, message.chat.id, rec, id).await;
     }
     let stop = is_stop_followup(message.text().or_else(|| message.caption()).unwrap_or(""));
     if stop {
@@ -206,6 +182,52 @@ async fn deliver_chat_reply(
     } else if delivered && !stop {
         chat.note_reply(message.chat.id).await;
     }
+}
+
+fn spawn_typing_keepalive(bot: Bot, chat_id: ChatId) -> AbortOnDrop {
+    AbortOnDrop(tokio::spawn(async move {
+        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+        let delay = Duration::from_secs(config().chat.typing_keepalive_secs);
+        while {
+            time::sleep(delay).await;
+            bot.send_chat_action(chat_id, ChatAction::Typing)
+                .await
+                .is_ok()
+        } {}
+    }))
+}
+
+async fn send_chat_chunk(
+    bot: &Bot,
+    chat_id: ChatId,
+    reply_to: MessageId,
+    chunk: &str,
+    first: bool,
+    markup: Option<teloxide::types::InlineKeyboardMarkup>,
+) -> Option<i32> {
+    let apply = |mut req: teloxide::requests::JsonRequest<teloxide::payloads::SendMessage>| {
+        if first {
+            req =
+                req.reply_parameters(ReplyParameters::new(reply_to).allow_sending_without_reply());
+            if let Some(m) = markup.clone() {
+                req = req.reply_markup(m);
+            }
+        }
+        req.disable_notification(true)
+    };
+    if let Some(html) = render_telegram_html(chunk) {
+        match apply(bot.send_message(chat_id, html).parse_mode(ParseMode::Html)).await {
+            Ok(s) => return Some(s.id.0),
+            Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => {}
+            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref msg)))
+                if msg.contains("can't parse entities") => {}
+            Err(_) => return None,
+        }
+    }
+    apply(bot.send_message(chat_id, chunk.to_owned()))
+        .await
+        .ok()
+        .map(|s| s.id.0)
 }
 
 pub(crate) async fn chat_reply_with_proposal(
@@ -224,7 +246,7 @@ pub(crate) async fn chat_reply_with_proposal(
         if turn.followup {
             "собеседник прислал вложение или стикер без текста в текущем разговоре. если это просто реакция на твой прошлый ответ, чужой скриншот без вопроса к тебе или шутка уже закрыта, ответь ровно одним словом PASS; иначе отреагируй коротко по смыслу текущей картинки, не приплетая прошлые темы чата и не описывая картинку"
         } else {
-            "собеседник прислал вложение без текста. отреагируй на него коротко и по-человечески, как в чате, не описывай и не пересказывай его; если это мем или стикер, ответь на его смысл, не приплетая прошлые темы чата"
+            "собеседник прислал вложение или стикер без текста. если это просто стикер-реакция на твой прошлый ответ без нового вопроса или повод закрыть шутку, ответь ровно одним словом PASS; иначе отреагируй коротко по-человечески по смыслу картинки или мема, не описывая её буквально и не приплетая прошлые темы чата"
         }
     } else {
         turn.prompt
@@ -310,24 +332,8 @@ pub(crate) async fn chat_reply_with_proposal(
     let now_msk = crate::chat_text::format_moscow_time(crate::memory::unix_now());
     user_text.push_str(&format!("сейчас: {now_msk}\n"));
     let remembered_urls = chat.recent_urls(turn.chat_id).await;
-    let mut fresh_urls = crate::read_url::prompt_urls(prompt);
-    for source in turn
-        .reply_context
-        .into_iter()
-        .chain(recent.iter().rev().take(10).map(|m| m.text.as_str()))
-    {
-        for url in crate::read_url::prompt_urls(source) {
-            if !fresh_urls.contains(&url) {
-                fresh_urls.push(url);
-            }
-        }
-    }
-    let mut read_url_targets = fresh_urls.clone();
-    for url in remembered_urls.iter().rev() {
-        if !read_url_targets.contains(url) {
-            read_url_targets.push(url.clone());
-        }
-    }
+    let (fresh_urls, read_url_targets) =
+        crate::read_url::collect_turn_urls(prompt, turn.reply_context, &recent, &remembered_urls);
     if !remembered_urls.is_empty() {
         user_text.push_str("недавно найденные ссылки в этом чате (доступны для read_url):\n");
         for url in remembered_urls.iter().rev().take(8) {
@@ -347,7 +353,7 @@ pub(crate) async fn chat_reply_with_proposal(
             turn.reply_context,
         );
         if !d.is_empty() {
-            user_text.push_str(&format!("обязательная установка владельца для этого ответа (выполни буквально в этом сообщении, соблюдай все запреты, обращения и эпитеты):\n{d}\n"));
+            user_text.push_str(&format!("обязательная установка владельца для этого ответа (соблюдай все общие запреты и правила тона; прозвища или обращения используй естественно и к месту, не вставляй одно и то же обращение в каждое предложение):\n{d}\n"));
         }
     }
     let speaker_line = crate::memory::format_line_with_owner(
@@ -428,11 +434,12 @@ pub(crate) async fn chat_reply_with_proposal(
                 .to_owned();
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;
-            if turn.followup && is_pass_reply(&content) {
+            let bare_prompt = turn.prompt.trim().is_empty();
+            if (turn.followup || bare_prompt) && is_pass_reply(&content) {
                 return Ok(ChatReply {
-                    text: String::new(),
                     sticker: state.sticker,
                     decision: state.decision,
+                    ..Default::default()
                 });
             }
             let text = if state.research.used && !state.research.sources.is_empty() {
@@ -454,20 +461,13 @@ pub(crate) async fn chat_reply_with_proposal(
                 decision: state.decision,
             };
             if state.allow_sticker && reply.sticker.is_none() {
-                reply.sticker = catalog
-                    .pick(sticker_request_query(prompt))
-                    .or_else(|| catalog.pick(""));
+                let q = sticker_request_query(prompt);
+                reply.sticker = catalog.pick(q).or_else(|| catalog.pick(""));
             }
-            if !state.research.used
-                && reply.text.is_empty()
-                && reply.sticker.is_none()
-                && reply.decision.is_none()
-            {
-                return if turn.followup {
-                    Ok(reply)
-                } else {
-                    Err("empty".into())
-                };
+            let empty =
+                reply.text.is_empty() && reply.sticker.is_none() && reply.decision.is_none();
+            if !state.research.used && empty && !turn.followup && !bare_prompt {
+                return Err("empty".into());
             }
             return Ok(reply);
         }

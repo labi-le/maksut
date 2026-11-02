@@ -35,3 +35,29 @@ pub(crate) fn truncate_chars(text: &str, max: usize) -> (String, bool) {
         None => (text.to_owned(), false),
     }
 }
+
+pub(crate) fn collect_turn_urls(
+    prompt: &str,
+    reply_context: Option<&str>,
+    recent: &[crate::memory::ChatMessage],
+    remembered: &[url::Url],
+) -> (Vec<url::Url>, Vec<url::Url>) {
+    let mut fresh = crate::read_url::prompt_urls(prompt);
+    for source in reply_context
+        .into_iter()
+        .chain(recent.iter().rev().take(10).map(|m| m.text.as_str()))
+    {
+        for url in crate::read_url::prompt_urls(source) {
+            if !fresh.contains(&url) {
+                fresh.push(url);
+            }
+        }
+    }
+    let mut targets = fresh.clone();
+    for url in remembered.iter().rev() {
+        if !targets.contains(url) {
+            targets.push(url.clone());
+        }
+    }
+    (fresh, targets)
+}
