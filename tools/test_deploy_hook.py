@@ -58,9 +58,18 @@ class HookServer:
         self.thread.start()
         self.port = self.server.server_address[1]
 
-    def post(self, body: bytes, signature: str | None, path="/webhook/maksut-deploy"):
+    def post(
+        self,
+        body: bytes,
+        signature: str | None,
+        path="/webhook/maksut-deploy",
+        event: str | None = "workflow_run",
+        user_agent: str = "GitHub-Hookshot/abc1234",
+    ):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        headers = {"Content-Length": str(len(body))}
+        headers = {"Content-Length": str(len(body)), "User-Agent": user_agent}
+        if event is not None:
+            headers["X-GitHub-Event"] = event
         if signature is not None:
             headers["X-Hub-Signature-256"] = signature
         connection.request("POST", path, body=body, headers=headers)
@@ -119,6 +128,13 @@ class DeployHookTests(unittest.TestCase):
         connection.request("GET", "/webhook/maksut-deploy")
         self.assertEqual(connection.getresponse().status, 405)
         connection.close()
+        self.assertEqual(self.runner.triggers, [])
+
+    def test_only_github_deliveries_are_served(self):
+        body = json.dumps(payload()).encode()
+        self.assertEqual(self.hook.post(body, sign(body), event=None), 403)
+        self.assertEqual(self.hook.post(body, sign(body), event="push"), 403)
+        self.assertEqual(self.hook.post(body, sign(body), user_agent="curl/8.5.0"), 403)
         self.assertEqual(self.runner.triggers, [])
 
     def test_signature_check_is_exact(self):

@@ -47,6 +47,11 @@ def read_secret(path: Path = SECRET_FILE) -> bytes | None:
     return secret or None
 
 
+def github_delivery(event: str | None, user_agent: str | None) -> bool:
+    """A real GitHub hook POST carries both headers; anything else is not ours."""
+    return event == "workflow_run" and (user_agent or "").startswith("GitHub-Hookshot/")
+
+
 def signature_matches(secret: bytes, body: bytes, header: str | None) -> bool:
     if not header or not header.startswith("sha256="):
         return False
@@ -113,6 +118,12 @@ class HookHandler(BaseHTTPRequestHandler):
             self._reply(413)
             return
         body = self.rfile.read(length)
+        if not github_delivery(
+            self.headers.get("X-GitHub-Event"), self.headers.get("User-Agent")
+        ):
+            log(f"rejected a non-GitHub delivery from {self.address_string()}")
+            self._reply(403)
+            return
         if not signature_matches(
             self.server.secret, body, self.headers.get("X-Hub-Signature-256")  # type: ignore[attr-defined]
         ):

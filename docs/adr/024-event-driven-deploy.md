@@ -13,16 +13,21 @@ log `image ... is not published yet: manifest unknown`.
 ## Decision
 
 - `tools/deploy_hook.py` is a stdlib HTTP listener on
-  `127.0.0.1:${MAKSUT_HOOK_PORT}` (`6551`) behind the host reverse proxy at
-  `${MAKSUT_HOOK_PATH}` (`/webhook/maksut-deploy`), packaged as
-  `packaging/maksut-deploy-hook.service`. It accepts a POST only when all of the
-  following hold: `X-Hub-Signature-256` equals the HMAC-SHA256 of the raw body
-  under `MAKSUT_HOOK_SECRET_FILE` (constant-time compare), the body is a
-  `workflow_run` payload with `action == "completed"`,
+  `127.0.0.1:${MAKSUT_HOOK_PORT}` (`6551`), packaged as
+  `packaging/maksut-deploy-hook.service`, reachable only through a dedicated
+  `hook.labile.cc` vhost on `${MAKSUT_HOOK_PATH}` (`/webhook/maksut-deploy`); the
+  vhost returns 404 everywhere else and allowlists GitHub's published hook
+  ranges (`api.github.com/meta` → `hooks`), so a request from any other address
+  is dropped by the reverse proxy before it reaches the process.
+- The listener accepts a POST only when all of the following hold:
+  `X-GitHub-Event` is `workflow_run`, `User-Agent` starts with
+  `GitHub-Hookshot/`, `X-Hub-Signature-256` equals the HMAC-SHA256 of the raw
+  body under `MAKSUT_HOOK_SECRET_FILE` (constant-time compare), and the body is
+  a `workflow_run` payload with `action == "completed"`,
   `workflow_run.name == "publish-image"`, `conclusion == "success"`,
-  `head_branch == "main"`, and `event` in `push` / `workflow_dispatch`.
-  Everything else is refused (401 for a bad signature, 404 for another path, 405
-  for GET, 413 for oversize bodies) or ignored with 204.
+  `head_branch == "main"`, `event` in `push` / `workflow_dispatch`. Everything
+  else is refused (403 for a non-GitHub delivery, 401 for a bad signature, 404
+  for another path, 405 for GET, 413 for oversize bodies) or ignored with 204.
 - `workflow_run` is chosen over `push`: the event arrives after the image is
   published, so the deploy never races the registry.
 - The request is not held open for the deploy. The hook answers 202 and starts
@@ -40,9 +45,10 @@ log `image ... is not published yet: manifest unknown`.
 
 - Merging to `main` deploys within seconds of the publish workflow finishing,
   with no polling loop and no `manifest unknown` retries in the journal.
-- The public endpoint exposes exactly one path, and the only thing it can
-  trigger is a deploy of whatever `origin/main` holds; the payload can never
-  name another ref, another image, or another command.
+- The public endpoint exposes exactly one path on one host, admits only GitHub
+  hook addresses, and the only thing it can trigger is a deploy of whatever
+  `origin/main` holds; the payload can never name another ref, another image, or
+  another command.
 - One-time setup on the host: the reverse-proxy location, the secret file, the
   service. One-time setup on the repository: a webhook (Settings → Webhooks,
   content type `application/json`, secret matching `MAKSUT_HOOK_SECRET_FILE`,
@@ -52,3 +58,6 @@ log `image ... is not published yet: manifest unknown`.
 - A webhook secret is a shared secret between GitHub and the host: rotating it
   means updating both sides, and a mismatch shows up as 401 lines in
   `journalctl --user -u maksut-deploy-hook`.
+- The allowlist pins GitHub's hook ranges as of 2026-11-02; if GitHub adds a
+  range, deliveries from it land on 403 until the vhost is updated, and the
+  30-minute timer is what converges in the meantime.
