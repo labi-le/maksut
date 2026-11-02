@@ -63,31 +63,98 @@ static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 
-pub(crate) async fn acquire_image_permit() -> Option<tokio::sync::SemaphorePermit<'static>> {
-    IMAGE_SEMAPHORE.acquire().await.ok()
+pub(crate) async fn download_pending_image(
+    bot: &Bot,
+    pending: Option<&(FileId, String)>,
+) -> (
+    Option<ChatImage>,
+    Option<tokio::sync::SemaphorePermit<'static>>,
+) {
+    let Some((file_id, mime)) = pending else {
+        return (None, None);
+    };
+    let Ok(permit) = IMAGE_SEMAPHORE.acquire().await else {
+        return (None, None);
+    };
+    let img = download_image(bot, file_id, mime).await;
+    let held = img.is_some().then_some(permit);
+    (img, held)
+}
+
+enum DownloadImageError {
+    Transient,
+    Permanent,
 }
 
 pub(crate) async fn download_image(bot: &Bot, file_id: &FileId, mime: &str) -> Option<ChatImage> {
-    let file = bot.get_file(file_id.clone()).await.ok()?;
+    for attempt in 0..2u8 {
+        match download_image_once(bot, file_id, mime).await {
+            Ok(image) => return Some(image),
+            Err(DownloadImageError::Permanent) => return None,
+            Err(DownloadImageError::Transient) if attempt == 0 => {
+                time::sleep(Duration::from_millis(150)).await;
+            }
+            Err(DownloadImageError::Transient) => {}
+        }
+    }
+    tracing::warn!("Chat image download failed after 2 attempts");
+    None
+}
+
+async fn download_image_once(
+    bot: &Bot,
+    file_id: &FileId,
+    mime: &str,
+) -> Result<ChatImage, DownloadImageError> {
+    let file = bot
+        .get_file(file_id.clone())
+        .await
+        .map_err(|err| match err {
+            teloxide::RequestError::Network(_) | teloxide::RequestError::RetryAfter(_) => {
+                DownloadImageError::Transient
+            }
+            teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref msg))
+                if msg.contains("500") || msg.contains("502") || msg.contains("503") =>
+            {
+                DownloadImageError::Transient
+            }
+            teloxide::RequestError::Api(_)
+            | teloxide::RequestError::MigrateToChatId(_)
+            | teloxide::RequestError::InvalidJson { .. }
+            | teloxide::RequestError::Io(_) => DownloadImageError::Permanent,
+        })?;
     let url = bot
         .api_url()
         .join(&format!("file/bot{}/{}", bot.token(), file.path))
-        .ok()?;
-    let response = IMAGE_CLIENT.get(url).send().await.ok()?;
-    if !response.status().is_success() {
-        return None;
+        .map_err(|_| DownloadImageError::Permanent)?;
+    let response = IMAGE_CLIENT
+        .get(url)
+        .send()
+        .await
+        .map_err(|_| DownloadImageError::Transient)?;
+    let status = response.status();
+    if !status.is_success() {
+        return if status.is_server_error() || status.as_u16() == 408 || status.as_u16() == 429 {
+            Err(DownloadImageError::Transient)
+        } else {
+            Err(DownloadImageError::Permanent)
+        };
     }
     if response
         .content_length()
         .is_some_and(|length| length > config().chat.image_max_bytes)
     {
-        return None;
+        return Err(DownloadImageError::Permanent);
     }
-    let bytes = response.bytes().await.ok()?.to_vec();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| DownloadImageError::Transient)?
+        .to_vec();
     if bytes.is_empty() || bytes.len() as u64 > config().chat.image_max_bytes {
-        return None;
+        return Err(DownloadImageError::Permanent);
     }
-    Some(ChatImage {
+    Ok(ChatImage {
         bytes,
         mime: mime.to_owned(),
     })

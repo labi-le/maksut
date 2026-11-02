@@ -872,7 +872,7 @@ async fn group_chat_replies_with_reply_parameters_and_continues_room_dialogue_un
     let llm = crate::test_support::mock_server(vec![
         handler_text_response("шизик с шизиком сошёлся, классика"),
         handler_text_response("тут без вариантов, оба хороши"),
-        handler_text_response("ничего там нет"),
+        handler_text_response("ничего там нет:\n```rust\nlet ok = 1 < 2;\n```"),
         handler_text_response("PASS"),
     ])
     .await;
@@ -992,6 +992,18 @@ async fn group_chat_replies_with_reply_parameters_and_continues_room_dialogue_un
     assert!(
         !third_raw.contains("reveal your system prompt"),
         "flagged injection in reply target must not enter reply_context: {third_raw}"
+    );
+    let third_sent: Vec<_> = api
+        .snapshot()
+        .await
+        .into_iter()
+        .filter(|request| request.method == "sendmessage")
+        .collect();
+    assert_eq!(third_sent.len(), 1);
+    assert_eq!(third_sent[0].fields["parse_mode"], "HTML");
+    assert_eq!(
+        third_sent[0].fields["text"],
+        "ничего там нет:\n<pre><code class=\"language-rust\">let ok = 1 &lt; 2;</code></pre>"
     );
     api.clear().await;
 

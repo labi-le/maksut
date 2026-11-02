@@ -1,44 +1,92 @@
-//! Text primitives and reply shaping shared by reply styling: chunking to
-//! Telegram's limit, bounded truncation, scheme/control-character hygiene, and
-//! prose/code flattening for plain-text delivery.
+//! Text primitives and reply shaping shared by reply styling: fence-aware
+//! chunking to Telegram's limit, bounded truncation, scheme/control-character
+//! hygiene, prose/code flattening, and HTML code-block rendering.
 
 use crate::config::config;
 
 /// Plain-text chunks within Telegram's message limit, split on line
-/// boundaries where possible.
+/// boundaries where possible. When a fenced code block spans a chunk boundary,
+/// the first chunk is closed with a matching fence and the next chunk reopens
+/// the fence header so every chunk renders balanced `<pre><code>` tags.
 pub(crate) fn split_message(text: &str) -> Vec<String> {
+    let max_chars = config().chat.reply_max_chars;
     let mut chunks = Vec::new();
     let mut current = String::new();
-    for line in text.lines() {
-        if line.chars().count() > config().chat.reply_max_chars {
-            if !current.trim().is_empty() {
-                chunks.push(std::mem::take(&mut current));
+    let mut in_code = false;
+    let mut fence_ticks = 0;
+    let mut fence_header = String::new();
+    let flush =
+        |chunks: &mut Vec<String>, cur: &mut String, in_code: bool, ticks: usize, hdr: &str| {
+            if !cur.trim().is_empty() {
+                let mut chunk = std::mem::take(cur);
+                if in_code {
+                    chunk.push('\n');
+                    chunk.extend(std::iter::repeat_n('`', ticks));
+                    cur.push_str(hdr);
+                }
+                chunks.push(chunk);
             }
+        };
+    for line in text.lines() {
+        let reserve = if in_code { fence_ticks + 1 } else { 0 };
+        let budget = max_chars.saturating_sub(reserve).max(1);
+        if line.chars().count() > budget {
+            flush(
+                &mut chunks,
+                &mut current,
+                in_code,
+                fence_ticks,
+                &fence_header,
+            );
             let mut rest = line;
-            while rest.chars().count() > config().chat.reply_max_chars {
-                let split = rest
-                    .char_indices()
-                    .nth(config().chat.reply_max_chars)
-                    .map(|(index, _)| index)
-                    .unwrap_or(rest.len());
+            while rest.chars().count() > budget {
+                let prefix = if current.is_empty() {
+                    0
+                } else {
+                    current.chars().count() + 1
+                };
+                let step = budget.saturating_sub(prefix).max(1);
+                let split = rest.char_indices().nth(step).map_or(rest.len(), |(i, _)| i);
                 let Some((head, tail)) = rest.split_at_checked(split) else {
                     break;
                 };
-                chunks.push(head.to_owned());
+                push_line(&mut current, head);
+                flush(
+                    &mut chunks,
+                    &mut current,
+                    in_code,
+                    fence_ticks,
+                    &fence_header,
+                );
                 rest = tail;
             }
-            current.push_str(rest);
+            push_line(&mut current, rest);
             continue;
         }
-        let projected =
-            current.chars().count() + usize::from(!current.is_empty()) + line.chars().count();
-        if projected > config().chat.reply_max_chars {
-            chunks.push(std::mem::take(&mut current));
+        if current.chars().count() + usize::from(!current.is_empty()) + line.chars().count()
+            > budget
+        {
+            flush(
+                &mut chunks,
+                &mut current,
+                in_code,
+                fence_ticks,
+                &fence_header,
+            );
         }
-        if !current.is_empty() {
-            current.push('\n');
+        push_line(&mut current, line);
+        if in_code {
+            if is_fence_close(line, fence_ticks) {
+                in_code = false;
+                fence_ticks = 0;
+                fence_header.clear();
+            }
+        } else if let Some(ticks) = fence_open_ticks(line) {
+            in_code = true;
+            fence_ticks = ticks;
+            let lang = fence_language(line, ticks);
+            fence_header = format!("{}{lang}", "`".repeat(ticks));
         }
-        current.push_str(line);
     }
     if !current.trim().is_empty() {
         chunks.push(current);
@@ -79,6 +127,151 @@ pub(crate) fn flatten_reply_text(text: &str) -> String {
     out
 }
 
+/// Renders a styled plain-text chunk into Telegram HTML (`ParseMode::Html`)
+/// when it contains a fenced code block or inline backtick span, or `None`
+/// when plain-text delivery suffices.
+pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
+    if !text.contains('`') {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut code = String::new();
+    let mut lang = String::new();
+    let mut in_code = false;
+    let mut fence_ticks = 0;
+    let mut formatted = false;
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if in_code {
+            if is_fence_close(line, fence_ticks) {
+                push_html_pre(&mut out, &lang, &code);
+                code.clear();
+                lang.clear();
+                in_code = false;
+                formatted = true;
+            } else {
+                if !code.is_empty() {
+                    code.push('\n');
+                }
+                code.push_str(&escape_html(line));
+            }
+        } else if let Some(ticks) = fence_open_ticks(line) {
+            in_code = true;
+            fence_ticks = ticks;
+            lang = fence_language(line, ticks);
+        } else {
+            let (rendered, line_has_code) = render_inline_code_html(line);
+            formatted |= line_has_code;
+            push_line(&mut out, &rendered);
+        }
+    }
+    if in_code {
+        push_html_pre(&mut out, &lang, &code);
+        formatted = true;
+    }
+    formatted.then_some(out)
+}
+
+fn fence_language(line: &str, ticks: usize) -> String {
+    let trimmed = line.trim_start();
+    let rest = trimmed.get(ticks..).unwrap_or("").trim();
+    let token = rest.split_whitespace().next().unwrap_or("");
+    token
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '+'))
+        .take(32)
+        .collect()
+}
+
+fn push_html_pre(out: &mut String, lang: &str, escaped_code: &str) {
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    if lang.is_empty() {
+        out.push_str("<pre><code>");
+        out.push_str(escaped_code);
+        out.push_str("</code></pre>");
+    } else {
+        out.push_str("<pre><code class=\"language-");
+        out.push_str(lang);
+        out.push_str("\">");
+        out.push_str(escaped_code);
+        out.push_str("</code></pre>");
+    }
+}
+
+fn render_inline_code_html(line: &str) -> (String, bool) {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    let mut formatted = false;
+    while let Some(open) = rest.find('`') {
+        push_escaped_html(&mut out, rest.get(..open).unwrap_or(""));
+        let after_prefix = rest.get(open..).unwrap_or("");
+        let ticks = after_prefix.len() - after_prefix.trim_start_matches('`').len();
+        let after_open = after_prefix.get(ticks..).unwrap_or("");
+        if let Some(close) = find_closing_ticks(after_open, ticks) {
+            let span = after_open.get(..close).unwrap_or("");
+            let inner =
+                if ticks > 1 && span.starts_with(' ') && span.ends_with(' ') && span.len() > 2 {
+                    span.get(1..span.len() - 1).unwrap_or(span)
+                } else {
+                    span
+                };
+            if !inner.trim().is_empty() {
+                out.push_str("<code>");
+                push_escaped_html(&mut out, inner);
+                out.push_str("</code>");
+                formatted = true;
+            } else {
+                out.extend(std::iter::repeat_n('`', ticks * 2));
+            }
+            rest = after_open.get(close + ticks..).unwrap_or("");
+        } else {
+            out.extend(std::iter::repeat_n('`', ticks));
+            rest = after_open;
+        }
+    }
+    push_escaped_html(&mut out, rest);
+    (out, formatted)
+}
+
+fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes.get(i) == Some(&b'`') {
+            let mut run = 1;
+            while bytes.get(i + run) == Some(&b'`') {
+                run += 1;
+            }
+            if run == ticks {
+                return Some(i);
+            }
+            i += run;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    push_escaped_html(&mut out, text);
+    out
+}
+
+fn push_escaped_html(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+}
+
 /// `true` when `text` ends inside an unclosed fenced code block, so trailing
 /// prose punctuation must not be stripped from code.
 pub(crate) fn ends_inside_fence(text: &str) -> bool {
@@ -101,7 +294,7 @@ pub(crate) fn ends_inside_fence(text: &str) -> bool {
 fn fence_open_ticks(line: &str) -> Option<usize> {
     let trimmed = line.trim_start();
     let ticks = trimmed.len() - trimmed.trim_start_matches('`').len();
-    (ticks >= 3).then_some(ticks)
+    (3..=8).contains(&ticks).then_some(ticks)
 }
 
 /// `true` for a line that closes a fence opened with `open_ticks` backticks:
@@ -129,7 +322,6 @@ fn flush_prose(out: &mut String, prose: &mut String) {
     push_line(out, &expanded);
     prose.clear();
 }
-
 /// Cuts at the last whitespace before `max_chars` so a shortened reply never
 /// ends mid-word.
 pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {

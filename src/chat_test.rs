@@ -131,14 +131,34 @@ fn style_reply_keeps_fenced_code_blocks_on_their_own_lines() {
         style_reply(text),
         "вот пример\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\nготово"
     );
-    let untouched = "```\nсм. src/chat.rs:10 — тире\n```";
+    assert_eq!(
+        render_telegram_html(&style_reply(text)).as_deref(),
+        Some(
+            "вот пример\n<pre><code class=\"language-rust\">fn main() {\n    println!(\"hi\");\n}</code></pre>\nготово"
+        )
+    );
+    let inline = "смотри `<tag>` & `x > 1` и ``a ` b`` в прозе";
+    assert_eq!(
+        render_telegram_html(inline).as_deref(),
+        Some("смотри <code>&lt;tag&gt;</code> &amp; <code>x &gt; 1</code> и <code>a ` b</code> в прозе")
+    );
+    let untouched = "```\nсм. src/chat.rs:10 — тире & <ok>\n```";
     assert_eq!(style_reply(untouched), untouched);
+    assert_eq!(
+        render_telegram_html(untouched).as_deref(),
+        Some("<pre><code>см. src/chat.rs:10 — тире &amp; &lt;ok&gt;</code></pre>")
+    );
     let nested = "````markdown\n```rust\nfn main() {}\n```\nстрока один\nстрока два\n````";
     assert_eq!(style_reply(nested), nested);
     let unclosed = "```bash\ncargo test.";
     assert_eq!(style_reply(unclosed), unclosed);
+    assert_eq!(
+        render_telegram_html(unclosed).as_deref(),
+        Some("<pre><code class=\"language-bash\">cargo test.</code></pre>")
+    );
     let prose_only = "первая строка\nвторая строка";
     assert_eq!(style_reply(prose_only), "первая строка вторая строка");
+    assert_eq!(render_telegram_html(&style_reply(prose_only)), None);
 }
 
 #[test]
@@ -157,6 +177,32 @@ fn split_message_respects_the_telegram_limit() {
     assert!(split_message(&many_lines)
         .iter()
         .all(|chunk| chunk.chars().count() <= 3900));
+    let long_code_body = (0..300)
+        .map(|index| format!("let value_{index} = {index} < 1000;"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let long_fenced = format!("вступление\n```rust\n{long_code_body}\n```\nпослесловие");
+    let fenced_chunks = split_message(&long_fenced);
+    assert!(fenced_chunks.len() >= 2);
+    assert!(fenced_chunks
+        .iter()
+        .all(|chunk| chunk.chars().count() <= 3900));
+    let first_html = render_telegram_html(&fenced_chunks[0]).unwrap();
+    assert!(
+        first_html.starts_with("вступление\n<pre><code class=\"language-rust\">")
+            && first_html.ends_with("</code></pre>"),
+        "{first_html}"
+    );
+    let last_html = render_telegram_html(fenced_chunks.last().unwrap()).unwrap();
+    assert!(
+        last_html.starts_with("<pre><code class=\"language-rust\">")
+            && last_html.ends_with("</code></pre>\nпослесловие"),
+        "{last_html}"
+    );
+    let huge_ticks = format!("{}\ncode\n{}", "`".repeat(200), "`".repeat(200));
+    assert!(split_message(&huge_ticks)
+        .iter()
+        .all(|c| c.chars().count() <= 3900));
 }
 
 #[test]
@@ -535,12 +581,66 @@ async fn bare_media_asks_for_a_reaction_instead_of_a_description() {
     .await
     .unwrap();
     assert_eq!(reply.text, "понял, молчу");
-    let requests = llm.requests.lock().unwrap();
-    let body = body_of(&requests[0]);
+    let first_req = llm.requests.lock().unwrap()[0].clone();
+    let body = body_of(&first_req);
     let text = body["messages"][1]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("отреагируй"), "{text}");
+    assert!(
+        text.contains("отреагируй") && text.contains("PASS"),
+        "{text}"
+    );
     assert!(!text.contains("опиши коротко"), "{text}");
     llm.task.abort();
+
+    let llm_pass = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"PASS"}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"PASS"}}]}"#.into(),
+    ])
+    .await;
+    let pass_config = ChatConfig::new(
+        llm_pass.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm_pass.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let pass_reply = chat_reply!(
+        &pass_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(2),
+        "tester",
+        0,
+        true,
+        "",
+        Some(&image),
+    )
+    .await
+    .unwrap();
+    assert!(pass_reply.text.is_empty(), "{:?}", pass_reply.text);
+    let bare_non_image_pass = chat_reply!(
+        &pass_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(2),
+        "tester",
+        0,
+        true,
+        "",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        bare_non_image_pass.text.is_empty(),
+        "{:?}",
+        bare_non_image_pass.text
+    );
+    llm_pass.task.abort();
 }
 
 #[tokio::test]
@@ -852,7 +952,9 @@ async fn non_owner_can_use_stickers_and_inspect_code_but_not_remember_self() {
         "{second:?}"
     );
     assert!(
-        tool_outputs.iter().any(|c| c == "Инструмент недоступен."),
+        tool_outputs
+            .iter()
+            .any(|c| c == "remember_self доступен только владельцу бота"),
         "{second:?}"
     );
     llm.task.abort();
