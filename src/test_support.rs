@@ -691,9 +691,14 @@ pub(crate) async fn download(
     cfg: &Settings,
     dir: &Path,
 ) -> Result<DownloadResult, String> {
-    download_with_timeout(url, cfg, dir, DOWNLOAD_TIMEOUT)
-        .await
-        .map_err(|failure| failure.reason)
+    download_with_timeout(
+        url,
+        cfg,
+        dir,
+        Duration::from_secs(config().media.download_timeout_secs),
+    )
+    .await
+    .map_err(|failure| failure.reason)
 }
 
 impl StickerReplies {

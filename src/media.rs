@@ -94,7 +94,10 @@ pub(crate) fn select_media(
             selected.skipped += 1;
             continue;
         };
-        if metadata.len() == 0 || metadata.len() > max_bytes || selected.files.len() == MAX_FILES {
+        if metadata.len() == 0
+            || metadata.len() > max_bytes
+            || selected.files.len() == config().media.max_files
+        {
             selected.skipped += 1;
             if metadata.len() > max_bytes {
                 selected.size_skipped += 1;

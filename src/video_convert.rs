@@ -122,9 +122,9 @@ pub(crate) async fn require_video_audio(
 }
 
 pub(crate) fn check_video_dimensions((width, height): (u32, u32)) -> Result<(), String> {
-    if width > MAX_VIDEO_DIMENSION
-        || height > MAX_VIDEO_DIMENSION
-        || width.saturating_mul(height) > MAX_VIDEO_PIXELS
+    if width > config().media.max_video_dimension
+        || height > config().media.max_video_dimension
+        || width.saturating_mul(height) > config().media.max_video_pixels
     {
         return Err("Разрешение видео превышает допустимый предел".into());
     }
@@ -156,7 +156,7 @@ pub(crate) async fn convert_video(
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-nostdin").arg("-v").arg("error").arg("-y")
         .arg("-filter_threads").arg("2")
-        .arg("-max_pixels").arg(MAX_VIDEO_PIXELS.to_string())
+        .arg("-max_pixels").arg(config().media.max_video_pixels.to_string())
         .arg("-i").arg(path).arg("-map").arg("0:V:0").arg("-map").arg("0:a:0")
         .arg("-vf").arg("scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2")
         .arg("-c:v").arg("libx264").arg("-threads:v").arg("2")

@@ -326,7 +326,7 @@ async fn features_malformed_or_oversized_cache_entries_are_safe_source_misses() 
         serde_json::json!(vec![
             serde_json::json!({"kind": "video", "file_id": "id",
                 "description": null});
-            MAX_FILES + 1
+            config().media.max_files + 1
         ])
         .to_string(),
     ];

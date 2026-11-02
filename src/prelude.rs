@@ -12,6 +12,7 @@ pub(crate) use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) use crate::config::config;
 pub(crate) use reqwest::redirect::Policy;
 pub(crate) use serde_json::Value;
 pub(crate) use sqlx::{sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions, SqlitePool};

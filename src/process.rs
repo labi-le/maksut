@@ -182,7 +182,7 @@ impl DownloadProcess {
                             } else {
                                 segment
                             };
-                            if records.len() < MAX_FILES && !overlong {
+                            if records.len() < config().media.max_files && !overlong {
                                 if line.len() + content.len() <= MAX_RECORD_BYTES {
                                     line.extend_from_slice(content);
                                 } else {
@@ -191,7 +191,7 @@ impl DownloadProcess {
                                 }
                             }
                             if complete {
-                                if records.len() < MAX_FILES && !overlong {
+                                if records.len() < config().media.max_files && !overlong {
                                     finish_line(&mut line, &mut records);
                                 }
                                 line.clear();
@@ -199,7 +199,7 @@ impl DownloadProcess {
                             }
                         }
                     }
-                    if records.len() < MAX_FILES && !overlong && !line.is_empty() {
+                    if records.len() < config().media.max_files && !overlong && !line.is_empty() {
                         finish_line(&mut line, &mut records);
                     }
                     records

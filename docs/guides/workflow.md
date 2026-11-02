@@ -35,9 +35,9 @@ When a refutation is ITSELF disputed, neither side closes the finding unilateral
 
 **Why performance and resource bounds are their OWN pass.** Every path in `maksut` runs under tight container and Telegram limits:
 
-- Media downloads are bounded by `downloads: Semaphore::new(2)` and per-user `USER_DOWNLOAD_LIMIT = 3`, with `MAX_MEDIA_BYTES` (default 45 MiB, ceiling 50 MB) and `DOWNLOAD_TIMEOUT = 180s`.
-- Single-video YouTube links probe metadata (`YOUTUBE_PROBE_TIMEOUT = 25s`) to pick H.264 + AAC streams whose combined size plus `MP4_MUX_HEADROOM` (64 KiB) fits `MAX_MEDIA_BYTES`, muxing without re-encoding instead of burning CPU in `ffmpeg`.
-- `read_url` bounds HTML complexity (`READ_URL_MAX_HTML_ELEMENTS = 20_000`, `READ_URL_MAX_HTML_DEPTH = 128`) before handing markup to `dom_smoothie`, because parsing hostile DOM trees is a CPU bound, not just a byte cap (`READ_URL_MAX_BYTES = 2 MiB`).
+- Media downloads are bounded by the `media.concurrent_downloads` semaphore (default 2) and per-user `media.user_download_limit` (default 3), with `media.max_bytes` (default 45 MiB, ceiling `telegram.file_limit_bytes`) and `media.download_timeout_secs` (default 180 s).
+- Single-video YouTube links probe metadata (`media.youtube_probe_timeout_secs`, default 25 s) to pick H.264 + AAC streams whose combined size plus `media.mp4_mux_headroom` (default 64 KiB) fits `media.max_bytes`, muxing without re-encoding instead of burning CPU in `ffmpeg`.
+- `read_url` bounds HTML complexity (`read_url.max_html_elements` default 20_000, `read_url.max_html_depth` default 128) before handing markup to `dom_smoothie`, because parsing hostile DOM trees is a CPU bound, not just a byte cap (`read_url.max_bytes`, default 2 MiB).
 - Avoidable allocations, unbounded reads (`take` / chunked size checks are required on every HTTP and subprocess pipe), and holding locks across `.await` are blocking findings.
 
 **Comments and docs are first-class review targets.** The recurring defect is the true-when-written claim: a doc or comment that still names Firefox cookie timers after [ADR 008](../adr/008-docker-cookie-refresh-service.md), `ALLOWED_TOOLS` after [ADR 015](../adr/015-tool-registry.md), or a 5-tool registry after `research`, `feature_status`, `feature_confirmation`, `inspect_code` and `read_url` landed. A review that approves the code and ignores the comments or guides its change falsified has not finished.

@@ -169,7 +169,7 @@ pub(crate) async fn handle_message(
                 return Ok(());
             }
             Ok(false) => {}
-            Err(error) => eprintln!("Ignore lookup failed: {error}"),
+            Err(error) => tracing::error!("Ignore lookup failed: {error}"),
         }
         let group = message.chat.is_group() || message.chat.is_supergroup();
         if group
@@ -187,7 +187,7 @@ pub(crate) async fn handle_message(
             )
             .await
             {
-                eprintln!("Ignore write failed: {error}");
+                tracing::error!("Ignore write failed: {error}");
             }
             let flags = flags | crate::memory::FLAG_INJECTION | crate::memory::FLAG_IGNORED;
             let _ = crate::memory::record_message(
@@ -388,7 +388,7 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
     };
-    let deadline = time::Instant::now() + DOWNLOAD_TIMEOUT;
+    let deadline = time::Instant::now() + Duration::from_secs(config().media.download_timeout_secs);
     let result = download_with_timeout(
         &url,
         &cfg,

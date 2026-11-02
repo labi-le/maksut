@@ -81,7 +81,7 @@ async fn live_fetch_article_page() {
         .await
         .unwrap();
     assert!(page.text.contains("Rust"), "{}", page.text);
-    assert!(page.text.chars().count() <= READ_URL_MAX_CHARS + 200);
+    assert!(page.text.chars().count() <= config().read_url.max_chars + 200);
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn fallback_drops_scripts_and_preserves_spacing() {
 fn oversized_titles_are_capped_and_sanitized() {
     let raw = format!("{}\n\u{0007}{}", "a".repeat(5_000), "b".repeat(5_000));
     let title = sanitize_title(&raw);
-    assert!(title.chars().count() <= READ_URL_TITLE_CHARS);
+    assert!(title.chars().count() <= config().read_url.title_chars);
     assert!(!title.chars().any(char::is_control));
 }
 
@@ -220,9 +220,13 @@ fn render_page_caps_links_and_stays_within_max_chars() {
     let long_url = Url::parse(&format!("https://example.com/{}", "a".repeat(25_000))).unwrap();
     let long_kind = format!("text/plain{}", "x".repeat(25_000));
     let page = render_page(&long_url, &long_kind, body.as_bytes()).unwrap();
-    assert!(page.links.len() <= 32, "links: {}", page.links.len());
     assert!(
-        page.text.chars().count() <= READ_URL_MAX_CHARS,
+        page.links.len() <= config().read_url.max_discovered_links,
+        "links: {}",
+        page.links.len()
+    );
+    assert!(
+        page.text.chars().count() <= config().read_url.max_chars,
         "chars: {}",
         page.text.chars().count()
     );

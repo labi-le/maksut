@@ -16,3 +16,6 @@ cookies.txt.*
 .secrets/
 
 self-improve/
+
+# Local runtime configuration (see example.config.toml)
+config.toml

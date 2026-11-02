@@ -485,7 +485,7 @@ esac
         format!("{}\n", work.path().join("finished.mp4").display())
     );
     assert!(
-        disk_usage(work.path()).unwrap() < cfg.max_media_bytes * MAX_FILES as u64,
+        disk_usage(work.path()).unwrap() < cfg.max_media_bytes * config().media.max_files as u64,
         "the retry must time out, not hit the aggregate disk limit first"
     );
     assert!(!result.process_ok);

@@ -1,7 +1,5 @@
 use crate::prelude::*;
 
-const CHAT_IMAGE_MAX_BYTES: u64 = 8 * 1024 * 1024;
-
 #[derive(Clone)]
 pub(crate) struct ChatImage {
     pub(crate) bytes: Vec<u8>,
@@ -53,16 +51,14 @@ pub(crate) fn message_image(message: &Message) -> Option<(FileId, String)> {
     None
 }
 
+static IMAGE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(config().chat.image_concurrency));
+
 /// One client for every attachment download: building a fresh one per photo
 /// message threw away the connection pool and its TLS setup.
-const CHAT_IMAGE_CONCURRENCY: usize = 4;
-
-static IMAGE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
-    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(CHAT_IMAGE_CONCURRENCY));
-
 static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(config().chat.image_timeout_secs))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });
@@ -83,12 +79,12 @@ pub(crate) async fn download_image(bot: &Bot, file_id: &FileId, mime: &str) -> O
     }
     if response
         .content_length()
-        .is_some_and(|length| length > CHAT_IMAGE_MAX_BYTES)
+        .is_some_and(|length| length > config().chat.image_max_bytes)
     {
         return None;
     }
     let bytes = response.bytes().await.ok()?.to_vec();
-    if bytes.is_empty() || bytes.len() as u64 > CHAT_IMAGE_MAX_BYTES {
+    if bytes.is_empty() || bytes.len() as u64 > config().chat.image_max_bytes {
         return None;
     }
     Some(ChatImage {

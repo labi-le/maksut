@@ -63,8 +63,11 @@ fn tiktok_photo_metadata_keeps_up_to_thirty_five_images() {
         }}}}
     });
     let images = collect_images(&info, "tiktok");
-    assert_eq!(images.images.len(), MAX_TIKTOK_PHOTOS);
-    assert_eq!(images.skipped, urls.len() - MAX_TIKTOK_PHOTOS);
+    assert_eq!(images.images.len(), config().media.max_tiktok_photos);
+    assert_eq!(
+        images.skipped,
+        urls.len() - config().media.max_tiktok_photos
+    );
 }
 
 #[test]

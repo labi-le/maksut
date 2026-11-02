@@ -1,12 +1,6 @@
 use crate::*;
 use serde_json::json;
 
-const READ_URL_CALLS_PER_REPLY: usize = 5;
-const INSPECT_CODE_CALLS_PER_REPLY: usize = 5;
-const REMEMBER_SELF_CALLS_PER_REPLY: usize = 3;
-const SEARCH_CALLS_PER_REPLY: usize = 6;
-const RESEARCH_MAX_PER_REPLY: usize = 1;
-
 pub(crate) struct ToolContext<'a> {
     pub(crate) chat: &'a ChatConfig,
     pub(crate) pool: &'a SqlitePool,
@@ -215,7 +209,7 @@ pub(crate) async fn run_tool_call(
             }
         },
         Some(ToolKind::InspectCode) => {
-            if state.inspect_calls >= INSPECT_CODE_CALLS_PER_REPLY {
+            if state.inspect_calls >= config().chat.inspect_code_calls_per_reply {
                 "лимит проверок кода на ответ".to_string()
             } else {
                 state.inspect_calls += 1;
@@ -232,7 +226,7 @@ pub(crate) async fn run_tool_call(
             }
         }
         Some(ToolKind::RememberSelf) => {
-            if state.remember_calls >= REMEMBER_SELF_CALLS_PER_REPLY {
+            if state.remember_calls >= config().chat.remember_self_calls_per_reply {
                 "лимит записи в память на ответ".to_string()
             } else {
                 let topic = args.get("topic").and_then(Value::as_str).unwrap_or("");
@@ -278,7 +272,7 @@ pub(crate) async fn run_tool_call(
             } else if !crate::read_url::allowed_target(target, &allowed, ctx.owner) {
                 "можно читать только ссылку из текущего сообщения или найденную в поиске/на странице"
                     .to_string()
-            } else if state.read_url_calls >= READ_URL_CALLS_PER_REPLY {
+            } else if state.read_url_calls >= config().chat.read_url_calls_per_reply {
                 "лимит чтения ссылок на ответ".to_string()
             } else {
                 state.read_url_calls += 1;
@@ -301,7 +295,7 @@ pub(crate) async fn run_tool_call(
         Some(ToolKind::WebSearch) => {
             if query.trim().is_empty() {
                 "Инструмент недоступен.".to_string()
-            } else if state.search_calls >= SEARCH_CALLS_PER_REPLY {
+            } else if state.search_calls >= config().chat.search_calls_per_reply {
                 "лимит поиска на ответ".to_string()
             } else {
                 state.search_calls += 1;
@@ -326,7 +320,7 @@ pub(crate) async fn run_tool_call(
             }
         }
         Some(ToolKind::Research) => {
-            if state.research_calls >= RESEARCH_MAX_PER_REPLY {
+            if state.research_calls >= config().chat.research_calls_per_reply {
                 "один ресерч за ответ".to_string()
             } else {
                 state.research_calls += 1;
@@ -342,7 +336,10 @@ pub(crate) async fn run_tool_call(
                             .collect()
                     })
                     .unwrap_or_default();
-                let budget = SEARCH_CALLS_PER_REPLY.saturating_sub(state.search_calls);
+                let budget = config()
+                    .chat
+                    .search_calls_per_reply
+                    .saturating_sub(state.search_calls);
                 ack_lookup(ctx).await;
                 match ctx
                     .chat

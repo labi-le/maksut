@@ -5,21 +5,7 @@ pub(crate) const FLAG_SECRET: i64 = 2;
 pub(crate) const FLAG_JUNK: i64 = 4;
 pub(crate) const FLAG_IGNORED: i64 = 8;
 
-pub(crate) const IGNORE_SECS: i64 = 24 * 60 * 60;
 pub(crate) const IGNORE_REASON: &str = "prompt_injection";
-
-pub(crate) const SUMMARY_MAX_CHARS: usize = 1500;
-pub(crate) const RECENT_MESSAGES: usize = 60;
-pub(crate) const RECENT_MAX_CHARS: usize = 12_000;
-const KEEP_NEWEST: usize = 5;
-const KEEP_FRESH: usize = 40;
-const COMPACT_AFTER_SECS: i64 = 12 * 60 * 60;
-const COMPACT_BATCH_MESSAGES: usize = 200;
-const COMPACT_BATCH_CHARS: usize = 12_000;
-const COMPACT_MESSAGE_CHARS: usize = 500;
-const COMPACT_PASSES: usize = 3;
-const COMPACT_INTERVAL_SECS: u64 = 10 * 60;
-const LOAD_LIMIT: i64 = 2000;
 
 #[derive(Clone)]
 pub(crate) struct ChatMessage {
@@ -58,7 +44,7 @@ pub(crate) async fn ignore_user(
     message_id: i32,
 ) -> Result<bool, sqlx::Error> {
     if now <= 0 {
-        eprintln!("Ignore timestamp is invalid: {now}");
+        tracing::warn!("Ignore timestamp is invalid: {now}");
     }
     let row: Option<i64> = sqlx::query_scalar(
         "INSERT INTO ignored_users (user_id, until, reason, created_at, source_chat_id, source_message_id) \
@@ -73,7 +59,7 @@ pub(crate) async fn ignore_user(
          RETURNING user_id",
     )
     .bind(user_id.0 as i64)
-    .bind(now + IGNORE_SECS)
+    .bind(now + config().memory.ignore_secs)
     .bind(IGNORE_REASON)
     .bind(now)
     .bind(chat_id.0)
@@ -173,7 +159,7 @@ pub(crate) async fn load_memory(
     for (author_id, author_name, role, text) in rows {
         let line = format_line(&author_name, author_id, &text);
         chars += line.chars().count();
-        if chars > RECENT_MAX_CHARS && !selected.is_empty() {
+        if chars > config().memory.recent_max_chars && !selected.is_empty() {
             break;
         }
         selected.push(ChatMessage {
@@ -182,7 +168,7 @@ pub(crate) async fn load_memory(
             role,
             text,
         });
-        if selected.len() >= RECENT_MESSAGES {
+        if selected.len() >= config().memory.recent_messages {
             break;
         }
     }
@@ -237,7 +223,10 @@ pub(crate) fn validate_summary(summary: &str) -> Result<String, String> {
     if REJECT.iter().any(|marker| lowered.contains(marker)) {
         return Err("summary contains instructions".into());
     }
-    Ok(summary.chars().take(SUMMARY_MAX_CHARS).collect())
+    Ok(summary
+        .chars()
+        .take(config().memory.summary_max_chars)
+        .collect())
 }
 
 pub(crate) async fn compact_chat(
@@ -249,7 +238,7 @@ pub(crate) async fn compact_chat(
         "SELECT id, author_id, author_name, text, created_at FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 ORDER BY id DESC LIMIT ?",
     )
     .bind(chat_id)
-    .bind(LOAD_LIMIT)
+    .bind(config().memory.load_limit)
     .fetch_all(pool)
     .await
     .map_err(|_| "database".to_string())?;
@@ -257,13 +246,13 @@ pub(crate) async fn compact_chat(
         return Ok(false);
     }
     let now = unix_now();
-    let keep = if rows.len() > KEEP_FRESH {
-        KEEP_FRESH
+    let keep = if rows.len() > config().memory.keep_fresh {
+        config().memory.keep_fresh
     } else {
-        KEEP_NEWEST
+        config().memory.keep_newest
     };
     let keep_ids: Vec<i64> = rows.iter().take(keep).map(|row| row.0).collect();
-    let cutoff_old = now - COMPACT_AFTER_SECS;
+    let cutoff_old = now - config().memory.compact_after_secs;
     let cutoff_fresh = now - 60 * 60;
     let mut candidates: Vec<_> = rows
         .into_iter()
@@ -272,7 +261,7 @@ pub(crate) async fn compact_chat(
             if row.4 < cutoff_old {
                 true
             } else {
-                keep == KEEP_FRESH && row.4 < cutoff_fresh
+                keep == config().memory.keep_fresh && row.4 < cutoff_fresh
             }
         })
         .collect();
@@ -283,11 +272,15 @@ pub(crate) async fn compact_chat(
     let mut selected = Vec::new();
     let mut log = String::new();
     for (id, author_id, author_name, text, _created_at) in candidates {
-        let text: String = text.chars().take(COMPACT_MESSAGE_CHARS).collect();
+        let text: String = text
+            .chars()
+            .take(config().memory.compact_message_chars)
+            .collect();
         let line = format_line(&author_name, author_id, &text);
-        if selected.len() >= COMPACT_BATCH_MESSAGES
+        if selected.len() >= config().memory.compact_batch_messages
             || (!log.is_empty()
-                && log.chars().count() + line.chars().count() + 1 > COMPACT_BATCH_CHARS)
+                && log.chars().count() + line.chars().count() + 1
+                    > config().memory.compact_batch_chars)
         {
             break;
         }
@@ -309,7 +302,7 @@ pub(crate) async fn compact_chat(
         Ok(summary) => summary,
         Err(reason) if reason == "empty" => {
             if previous.trim().is_empty() {
-                eprintln!("Memory summary empty for chat {chat_id}; batch left uncompacted");
+                tracing::warn!("Memory summary empty for chat {chat_id}; batch left uncompacted");
                 return Ok(false);
             }
             previous.clone()
@@ -319,7 +312,7 @@ pub(crate) async fn compact_chat(
     let summary = match validate_summary(&summary) {
         Ok(summary) => summary,
         Err(reason) => {
-            eprintln!("Memory summary rejected for chat {chat_id}: {reason}");
+            tracing::warn!("Memory summary rejected for chat {chat_id}: {reason}");
             if previous.trim().is_empty() {
                 return Ok(false);
             }
@@ -364,7 +357,7 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
     loop {
         match prune_expired_ignores(&cfg.database, unix_now()).await {
             Ok(_) => {}
-            Err(error) => eprintln!("Ignore cleanup failed: {error}"),
+            Err(error) => tracing::warn!("Ignore cleanup failed: {error}"),
         }
         if let Some(chat) = cfg.chat.as_ref() {
             let chats: Vec<i64> = sqlx::query_scalar(
@@ -376,18 +369,18 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
             for chat_id in chats {
                 let lock = cfg.chat_lock(chat_id).await;
                 let _guard = lock.lock().await;
-                for _ in 0..COMPACT_PASSES {
+                for _ in 0..config().memory.compact_passes {
                     match compact_chat(chat, &cfg.database, chat_id).await {
                         Ok(true) => {}
                         Ok(false) => break,
                         Err(reason) => {
-                            eprintln!("Memory compact failed for chat {chat_id}: {reason}");
+                            tracing::warn!("Memory compact failed for chat {chat_id}: {reason}");
                             break;
                         }
                     }
                 }
             }
         }
-        time::sleep(Duration::from_secs(COMPACT_INTERVAL_SECS)).await;
+        time::sleep(Duration::from_secs(config().memory.compact_interval_secs)).await;
     }
 }

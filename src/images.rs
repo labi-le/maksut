@@ -129,7 +129,7 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
             .and_then(|post| post.get("images"))
             .and_then(Value::as_array);
         if let Some(images) = images {
-            for image in images.iter().take(MAX_TIKTOK_PHOTOS) {
+            for image in images.iter().take(config().media.max_tiktok_photos) {
                 let mut candidates = image
                     .get("imageURL")
                     .and_then(|image| image.get("urlList"))
@@ -145,7 +145,9 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
                     result.skipped += 1;
                 }
             }
-            result.skipped += images.len().saturating_sub(MAX_TIKTOK_PHOTOS);
+            result.skipped += images
+                .len()
+                .saturating_sub(config().media.max_tiktok_photos);
         }
         return result;
     }
@@ -166,7 +168,7 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
                 })
             }),
     );
-    for item in items.iter().take(MAX_FILES) {
+    for item in items.iter().take(config().media.max_files) {
         if item.is_null() {
             result.skipped += 1;
             continue;
@@ -283,7 +285,7 @@ pub(crate) async fn extract_tiktok_images(
         }
         if response
             .content_length()
-            .is_some_and(|size| size > MAX_METADATA_BYTES)
+            .is_some_and(|size| size > config().media.max_metadata_bytes)
         {
             return Err(failure(
                 "Превышен лимит страницы TikTok",
@@ -301,7 +303,12 @@ pub(crate) async fn extract_tiktok_images(
                 },
             )
         })? {
-            if chunk.len() as u64 > MAX_METADATA_BYTES.saturating_sub(bytes.len() as u64) {
+            if chunk.len() as u64
+                > config()
+                    .media
+                    .max_metadata_bytes
+                    .saturating_sub(bytes.len() as u64)
+            {
                 return Err(failure(
                     "Превышен лимит страницы TikTok",
                     "Photo metadata failed",
@@ -360,7 +367,7 @@ pub(crate) async fn extract_images(
         .arg("--ignore-no-formats-error")
         .arg("--dump-single-json")
         .arg("--playlist-end")
-        .arg(MAX_FILES.to_string())
+        .arg(config().media.max_files.to_string())
         .arg("--max-filesize")
         .arg(cfg.max_media_bytes.to_string())
         .stdout(Stdio::piped())
@@ -384,19 +391,21 @@ pub(crate) async fn extract_images(
             "Launch failed",
         )
     })?;
-    let mut stdout = process.take_stdout(MAX_METADATA_BYTES + 1).map_err(|_| {
-        failure(
-            "Не удалось запустить yt-dlp для метаданных",
-            "Launch failed",
-        )
-    })?;
+    let mut stdout = process
+        .take_stdout(config().media.max_metadata_bytes + 1)
+        .map_err(|_| {
+            failure(
+                "Не удалось запустить yt-dlp для метаданных",
+                "Launch failed",
+            )
+        })?;
     let (bytes, status) = time::timeout_at(deadline, async {
         let mut bytes = Vec::new();
         stdout
             .read_to_end(&mut bytes)
             .await
             .map_err(|_| failure("Ошибка чтения метаданных", "Metadata failed"))?;
-        if bytes.len() as u64 > MAX_METADATA_BYTES {
+        if bytes.len() as u64 > config().media.max_metadata_bytes {
             return Err(failure("Превышен лимит JSON метаданных", "Metadata failed"));
         }
         let status = process

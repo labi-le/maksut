@@ -1,0 +1,213 @@
+# Example maksut configuration.
+#
+# Copy to `config.toml` in the process working directory (in the shipped image
+# that is `/data`, the persistent volume) or point the absolute `MAKSUT_CONFIG`
+# path at it. The real file is gitignored.
+#
+# Precedence: built-in defaults < this file < the legacy environment variables
+# (DATABASE_URL, DOWNLOAD_DIR, MAX_MEDIA_BYTES, LLM_BASE_URL, LLM_MODEL, ...).
+# Secrets never belong here: BOT_TOKEN, OWNER_ID, LLM_API_KEY, TAVILY_API_KEY.
+#
+# Every section and key is optional. Unknown keys are a startup error, and every
+# value is range-checked: a zero timeout, a zero retry count, or a cache cap
+# larger than its hard bound fails startup with the offending key.
+
+[log]
+# trace, debug, info, warn, error, off
+level = "info"
+
+[paths]
+database_url = "sqlite:///data/maksut.db"
+download_dir = "/tmp/maksut"
+ytdlp_bin = "yt-dlp"
+python_bin = "/opt/yt-dlp/bin/python"
+twitter_helper = "/opt/maksut/twitter_images.py"
+code_dir = "/var/lib/maksut/code"
+self_improve_dir = "/var/lib/maksut/self-improve"
+sticker_sets_file = "sticker_sets.txt"
+sticker_descriptions_file = "sticker_descriptions.json"
+# cookies_file = "/run/secrets/maksut/cookies.txt"
+# cookie_refresh_url = "http://cookie-refresh:8080"
+
+[telegram]
+connect_timeout_secs = 5
+request_timeout_secs = 180
+pool_idle_timeout_secs = 15
+tcp_keepalive_secs = 15
+# Telegram rejects uploads above 50 MB; media.max_bytes must fit under it.
+file_limit_bytes = 50000000
+
+[chat]
+tool_rounds = 8
+max_tokens = 900
+status_max_tokens = 1200
+research_max_tokens = 1500
+summary_max_tokens = 600
+feature_title_max_tokens = 100
+typing_keepalive_secs = 4
+cooldown_ms = 3000
+followup_window_secs = 180
+reply_max_chars = 3900
+research_body_chars = 4800
+research_sources_chars = 1200
+research_max_chars = 6000
+concurrency = 4
+max_active_chats = 1024
+max_pace_entries = 1024
+max_chat_locks = 1024
+max_user_rate_limits = 2048
+discovered_url_ttl_secs = 1800
+discovered_urls_per_chat = 32
+image_max_bytes = 8388608
+image_concurrency = 4
+image_timeout_secs = 20
+read_url_calls_per_reply = 5
+inspect_code_calls_per_reply = 5
+remember_self_calls_per_reply = 3
+search_calls_per_reply = 6
+research_calls_per_reply = 1
+
+[llm]
+base_url = "https://llm.labile.cc/v1"
+model = "deepseek-v4.1-flash"
+# "low", "medium", "high", or "none"
+reasoning_effort = "low"
+request_timeout_secs = 40
+max_response_bytes = 65536
+
+[search]
+# auto, public, parallel, exa, firecrawl, tavily, ddg, startpage, mojeek, ecosia
+provider = "auto"
+# url = "https://api.firecrawl.dev/v2/search"
+http_timeout_secs = 10
+max_bytes = 524288
+result_chars = 2500
+auto_deadline_secs = 15
+public_soft_deadline_secs = 5
+public_hard_deadline_secs = 12
+
+[research]
+cooldown_secs = 20
+min_queries = 2
+max_queries = 4
+results_per_query = 4
+max_sources = 8
+title_chars = 160
+snippet_chars = 300
+dossier_chars = 5000
+timeout_secs = 15
+query_min_chars = 3
+query_max_chars = 200
+question_max_chars = 500
+url_max_chars = 2048
+
+[read_url]
+max_bytes = 2097152
+max_chars = 24000
+title_chars = 200
+timeout_secs = 15
+total_timeout_secs = 20
+max_redirects = 5
+cache_ttl_secs = 600
+cache_entries = 16
+cache_chars = 65536
+max_discovered_links = 32
+max_link_chars = 500
+footer_budget_chars = 4000
+# Parsing hostile markup is CPU work; both bounds stay enforced.
+max_html_elements = 20000
+max_html_depth = 128
+
+[media]
+max_bytes = 47185920
+max_files = 10
+max_tiktok_photos = 35
+user_download_limit = 3
+concurrent_downloads = 2
+download_timeout_secs = 180
+max_video_duration_secs = 1800
+youtube_probe_timeout_secs = 25
+max_metadata_bytes = 4194304
+mp4_mux_headroom = 65536
+max_twitter_json_bytes = 16384
+max_video_dimension = 3840
+max_video_pixels = 8294400
+cookie_refresh_timeout_secs = 30
+
+[memory]
+ignore_secs = 86400
+summary_max_chars = 1500
+recent_messages = 60
+recent_max_chars = 12000
+keep_newest = 5
+keep_fresh = 40
+compact_after_secs = 43200
+compact_batch_messages = 200
+compact_batch_chars = 12000
+compact_message_chars = 500
+compact_passes = 3
+compact_interval_secs = 600
+load_limit = 2000
+
+[media_cache]
+ttl_seconds = 86400
+max_publications = 200
+max_description_utf16 = 1024
+max_file_id_bytes = 1024
+
+[code]
+max_file_bytes = 262144
+max_output_chars = 8000
+max_matches = 40
+max_line_chars = 300
+memory_max_rows = 50
+memory_max_chars = 1200
+topic_max_chars = 80
+fact_max_chars = 300
+url_max_chars = 300
+
+[improve]
+goal_max_chars = 2000
+feedback_max_chars = 4000
+previous_spec_max_chars = 16000
+previous_review_max_chars = 8000
+status_max_chars = 3200
+result_goal_max_chars = 2000
+result_summary_max_chars = 500
+result_files = 20
+result_tasks = 20
+result_max_chars = 6000
+
+[cookies]
+max_jar_bytes = 4194304
+max_header_bytes = 8192
+
+[image_fetch]
+max_pinned_clients = 256
+pinned_client_ttl_secs = 3600
+
+[cleanup]
+max_age_secs = 86400
+
+# attempts counts the first try: 1 disables retries. Backoff grows as
+# base_backoff_ms * 2^(attempt-1), capped at max_backoff_ms.
+[retry.llm]
+attempts = 2
+base_backoff_ms = 200
+max_backoff_ms = 2000
+retry_statuses = [408, 500, 502, 503, 504]
+retry_transport = true
+
+[retry.read_url]
+attempts = 2
+base_backoff_ms = 200
+max_backoff_ms = 2000
+retry_statuses = [408, 429, 500, 502, 503, 504]
+retry_transport = true
+
+[retry.search]
+attempts = 2
+base_backoff_ms = 150
+max_backoff_ms = 1000
+retry_statuses = [429, 500, 502, 503, 504]
+retry_transport = true

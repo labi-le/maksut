@@ -1,10 +1,6 @@
 use crate::chat_text::{shorten, truncate_text};
+use crate::config::config;
 use crate::research::ResearchSource;
-
-const MAX_REPLY_CHARS: usize = crate::chat_text::TELEGRAM_MESSAGE_CHARS;
-const RESEARCH_BODY_CHARS: usize = 4800;
-const RESEARCH_SOURCES_CHARS: usize = 1200;
-const RESEARCH_MAX_CHARS: usize = 6000;
 
 pub(crate) const BOT_NAME_FORMS: &[&str] = &[
     "максут",
@@ -108,20 +104,22 @@ pub(crate) fn style_research_reply(
         }
     }
     let body = body.replace(['—', '–'], "-");
-    let body = truncate_text(body.trim(), RESEARCH_BODY_CHARS);
+    let body = truncate_text(body.trim(), config().chat.research_body_chars);
     let (body, cited) = sanitize_citations(&body, sources.len());
     let selected = citation_ids(cited, sources.len());
-    let block = render_sources_block(&selected, sources, RESEARCH_SOURCES_CHARS);
-    let body_limit = RESEARCH_MAX_CHARS
+    let block = render_sources_block(&selected, sources, config().chat.research_sources_chars);
+    let body_limit = config()
+        .chat
+        .research_max_chars
         .saturating_sub(block.chars().count() + 2)
-        .min(RESEARCH_BODY_CHARS);
+        .min(config().chat.research_body_chars);
     let body = truncate_text(body.trim(), body_limit);
     if body.trim().is_empty() {
         return Err("empty".into());
     }
     let (body, cited) = sanitize_citations(&body, sources.len());
     let selected = citation_ids(cited, sources.len());
-    let block = render_sources_block(&selected, sources, RESEARCH_SOURCES_CHARS);
+    let block = render_sources_block(&selected, sources, config().chat.research_sources_chars);
     Ok(format!("{body}\n\n{block}"))
 }
 
@@ -211,8 +209,9 @@ fn render_sources_block(
 }
 
 /// Chat style: single-line, no trailing period, and bounded to one Telegram
-/// message (`MAX_REPLY_CHARS`). Casing belongs to the model: the prompt asks for
-/// mostly lowercase, but delivery never rewrites the answer's case.
+/// message (`config().chat.reply_max_chars`). Casing belongs to the model: the
+/// prompt asks for mostly lowercase, but delivery never rewrites the answer's
+/// case.
 pub(crate) fn style_reply(text: &str) -> String {
     let joined = text
         .lines()
@@ -220,7 +219,7 @@ pub(crate) fn style_reply(text: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    shorten(&joined, MAX_REPLY_CHARS)
+    shorten(&joined, config().chat.reply_max_chars)
         .replace(['—', '–'], "-")
         .trim()
         .trim_end_matches(['.', '…'])

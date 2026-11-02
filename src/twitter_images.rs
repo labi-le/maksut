@@ -62,7 +62,7 @@ pub(crate) async fn extract_twitter_images(
     let child = cmd.spawn().map_err(|_| TwitterImagesError::new(false))?;
     let mut process = DownloadProcess::new(child).map_err(|_| TwitterImagesError::new(false))?;
     let mut stdout = process
-        .take_stdout(MAX_TWITTER_JSON_BYTES + 1)
+        .take_stdout(config().media.max_twitter_json_bytes + 1)
         .map_err(|_| TwitterImagesError::new(false))?;
     let (bytes, status) = time::timeout(duration, async {
         let mut bytes = Vec::new();
@@ -70,7 +70,7 @@ pub(crate) async fn extract_twitter_images(
             .read_to_end(&mut bytes)
             .await
             .map_err(|_| TwitterImagesError::new(false))?;
-        if bytes.len() as u64 > MAX_TWITTER_JSON_BYTES {
+        if bytes.len() as u64 > config().media.max_twitter_json_bytes {
             return Err(TwitterImagesError::new(false));
         }
         let status = process
