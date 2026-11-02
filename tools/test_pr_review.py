@@ -161,7 +161,7 @@ class EventTests(unittest.TestCase):
 
 
 class BodyTests(unittest.TestCase):
-    def test_body_lists_findings_with_locations_and_head_sha(self):
+    def test_body_lists_findings_with_locations(self):
         review = {
             "summary": "Кратко.",
             "verdict": "request_changes",
@@ -170,13 +170,21 @@ class BodyTests(unittest.TestCase):
                 {"severity": "P0", "file": "src/a.rs", "line": None, "claim": "первая", "evidence": "e1"},
             ],
         }
-        body = pr_review.review_body(review, "REQUEST_CHANGES", "b" * 40, "gemini-4-argon")
-        self.assertIn(pr_review.REVIEW_MARKER, body)
-        self.assertIn("`b" * 1, body)
+        body = pr_review.review_body(review, "REQUEST_CHANGES")
+        self.assertIn("Кратко.", body)
         self.assertIn("src/a.rs", body)
         self.assertIn("src/b.rs:7", body)
         self.assertLess(body.index("P0 — `src/a.rs`"), body.index("P1 — `src/b.rs:7`"))
-        self.assertIn("P0: 1, P1: 1", body)
+        for boilerplate in ("Автоматическое", "Ревьюер", "gemini-4-argon", "<!--"):
+            self.assertNotIn(boilerplate, body)
+
+    def test_approve_without_findings_carries_no_body(self):
+        review = {"summary": "Кратко.", "verdict": "approve", "findings": []}
+        self.assertEqual(pr_review.review_body(review, "APPROVE"), "")
+
+    def test_verdict_only_request_changes_keeps_the_summary(self):
+        review = {"summary": "Нужно поправить.", "verdict": "request_changes", "findings": []}
+        self.assertEqual(pr_review.review_body(review, "REQUEST_CHANGES"), "Нужно поправить.")
 
     def test_body_is_capped(self):
         review = {
@@ -187,7 +195,7 @@ class BodyTests(unittest.TestCase):
                 for _ in range(40)
             ],
         }
-        body = pr_review.review_body(review, "APPROVE", "c" * 40, "gemini-4-argon")
+        body = pr_review.review_body(review, "APPROVE")
         self.assertLessEqual(len(body), pr_review.MAX_REVIEW_BODY_CHARS + 40)
         self.assertIn("[ревью обрезано", body)
 

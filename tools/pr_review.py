@@ -39,7 +39,6 @@ MAX_PR_BODY_CHARS = 6_000
 MAX_REVIEW_BODY_CHARS = 60_000
 MAX_LLM_ATTEMPTS = 2
 
-REVIEW_MARKER = "<!-- maksut-pr-review -->"
 SEVERITIES = ("P0", "P1", "P2", "P3")
 BLOCKING = frozenset({"P0", "P1"})
 
@@ -282,28 +281,13 @@ def decide_event(review):
     return "APPROVE"
 
 
-def blocking_reason(review):
-    if any(item["severity"] in BLOCKING for item in review["findings"]):
-        return "есть блокирующие находки"
-    return "модель просит изменения"
-
-
-def review_body(review, event, head_sha, model):
-    counts = {severity: 0 for severity in SEVERITIES}
-    for item in review["findings"]:
-        counts[item["severity"]] += 1
-    tally = ", ".join(f"{severity}: {counts[severity]}" for severity in SEVERITIES if counts[severity])
-    if event == "REQUEST_CHANGES":
-        headline = f"**Блокирует мерж:** {blocking_reason(review)}."
-    elif review["findings"]:
-        headline = "**Блокирующих находок нет**, замечания ниже не обязательны к правке."
-    else:
-        headline = "**Находок нет.**"
-    parts = [
-        REVIEW_MARKER,
-        f"Автоматическое ревью `{model}` по коммиту `{head_sha[:12]}`.",
-        headline + (f" Находок: {len(review['findings'])} ({tally})." if tally else ""),
-    ]
+def review_body(review, event):
+    """Findings and their summary, with no authorship or automation boilerplate."""
+    if not review["findings"]:
+        if event == "APPROVE":
+            return ""
+        return review["summary"] or "Нужны изменения."
+    parts = []
     if review["summary"]:
         parts.append(review["summary"])
     for item in sorted(review["findings"], key=lambda entry: (SEVERITIES.index(entry["severity"]), entry["file"])):
@@ -312,7 +296,6 @@ def review_body(review, event, head_sha, model):
         if item["evidence"]:
             block.append(f"> {item['evidence']}")
         parts.append("\n\n".join(block))
-    parts.append("_Ревьюер автоматический, модель `" + model + "`; решение о мерже принимает человек._")
     body = "\n\n".join(parts)
     if len(body) > MAX_REVIEW_BODY_CHARS:
         body = body[:MAX_REVIEW_BODY_CHARS] + "\n\n[ревью обрезано по лимиту GitHub]"
@@ -380,7 +363,7 @@ class Reviewer:
                     ". Ответь заново одним JSON-объектом по заданной схеме."
                 )
         event = decide_event(review)
-        body = review_body(review, event, head_sha, self.model)
+        body = review_body(review, event)
         payload = {"commit_id": head_sha, "event": event, "body": body}
         if self.dry_run:
             self.log("pr-review: dry run, review follows")
