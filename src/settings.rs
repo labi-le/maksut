@@ -12,7 +12,7 @@ pub(crate) struct Settings {
     pub(crate) cookies_file: Option<PathBuf>,
     pub(crate) cookie_refresh_url: Option<Url>,
     pub(crate) chat: Option<ChatConfig>,
-    pub(crate) chat_locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+    pub(crate) chat_locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::RwLock<()>>>>>,
     pub(crate) self_improve_dir: PathBuf,
     pub(crate) sticker_replies: StickerReplies,
     pub(crate) sticker_catalog: Arc<RwLock<crate::stickers::StickerCatalog>>,
@@ -113,22 +113,31 @@ fn search_default(provider: SearchProvider) -> &'static str {
 }
 
 impl Settings {
-    pub(crate) async fn chat_lock(&self, chat_id: i64) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) async fn chat_lock(&self, key: i64) -> Arc<tokio::sync::RwLock<()>> {
         let limit = config().chat.max_chat_locks;
         let mut locks = self.chat_locks.lock().await;
-        if locks.len() >= limit && !locks.contains_key(&chat_id) {
+        if locks.len() >= limit && !locks.contains_key(&key) {
             locks.retain(|_, lock| Arc::strong_count(lock) > 1);
             if locks.len() >= limit {
                 let idle = locks
                     .iter()
                     .find(|(_, lock)| Arc::strong_count(lock) == 1)
-                    .map(|(chat_id, _)| *chat_id);
+                    .map(|(key, _)| *key);
                 if let Some(idle) = idle {
                     locks.remove(&idle);
                 }
             }
         }
-        Arc::clone(locks.entry(chat_id).or_default())
+        Arc::clone(locks.entry(key).or_default())
+    }
+
+    pub(crate) async fn user_turn_lock(
+        &self,
+        chat_id: ChatId,
+        user_id: UserId,
+    ) -> Arc<tokio::sync::RwLock<()>> {
+        let key = chat_id.0 ^ ((user_id.0 as i64).rotate_left(32) | 1);
+        self.chat_lock(key).await
     }
 
     pub(crate) async fn user_rate_limit(&self, user_id: UserId) -> Arc<Semaphore> {
