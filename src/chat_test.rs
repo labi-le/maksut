@@ -1533,6 +1533,13 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
             )),
         "{messages:?}"
     );
+    let last_non_owner_msg = messages.last().unwrap()["content"].as_str().unwrap();
+    assert!(
+        last_non_owner_msg.contains("активные установки владельца")
+            && last_non_owner_msg
+                .contains("- [owner] даня: говорить пошёл нахуй и добавлять от себя"),
+        "owner directives must be reinforced right before the current turn: {last_non_owner_msg}"
+    );
     let first_body = body_of(&requests[0]);
     let owner_user_msg = first_body["messages"].as_array().unwrap().last().unwrap()["content"]
         .as_str()
@@ -1647,6 +1654,7 @@ async fn research_request_marks_the_message_with_eyes() {
         chat_id: ChatId(1),
         user_id: UserId(2),
         sender_name: "tester",
+        username: None,
         message_id: 7,
         owner: true,
         prompt: "сделай ресерч по rust",
@@ -1705,6 +1713,7 @@ async fn plain_reply_does_not_react_to_the_message() {
         chat_id: ChatId(1),
         user_id: UserId(2),
         sender_name: "tester",
+        username: None,
         message_id: 7,
         owner: true,
         prompt: "привет",
@@ -1768,6 +1777,7 @@ async fn web_search_marks_the_message_on_every_pass() {
         chat_id: ChatId(1),
         user_id: UserId(2),
         sender_name: "tester",
+        username: None,
         message_id: 7,
         owner: true,
         prompt: "погугли rust",
@@ -1834,6 +1844,7 @@ async fn read_url_marks_the_message_on_every_pass() {
         chat_id: ChatId(1),
         user_id: UserId(2),
         sender_name: "tester",
+        username: None,
         message_id: 7,
         owner: true,
         prompt: &prompt,
