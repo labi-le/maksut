@@ -49,7 +49,9 @@ def read_secret(path: Path = SECRET_FILE) -> bytes | None:
 
 def github_delivery(event: str | None, user_agent: str | None) -> bool:
     """A real GitHub hook POST carries both headers; anything else is not ours."""
-    return event == "workflow_run" and (user_agent or "").startswith("GitHub-Hookshot/")
+    return event in ("workflow_run", "ping") and (user_agent or "").startswith(
+        "GitHub-Hookshot/"
+    )
 
 
 def signature_matches(secret: bytes, body: bytes, header: str | None) -> bool:
@@ -129,6 +131,9 @@ class HookHandler(BaseHTTPRequestHandler):
         ):
             log(f"rejected an unsigned request from {self.address_string()}")
             self._reply(401)
+            return
+        if self.headers.get("X-GitHub-Event") == "ping":
+            self._reply(204)
             return
         try:
             payload = json.loads(body)

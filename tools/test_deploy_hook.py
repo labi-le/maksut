@@ -137,6 +137,12 @@ class DeployHookTests(unittest.TestCase):
         self.assertEqual(self.hook.post(body, sign(body), user_agent="curl/8.5.0"), 403)
         self.assertEqual(self.runner.triggers, [])
 
+    def test_ping_is_acknowledged_without_deploying(self):
+        body = json.dumps({"zen": "Keep it logically awesome."}).encode()
+        self.assertEqual(self.hook.post(body, sign(body), event="ping"), 204)
+        self.assertEqual(self.hook.post(body, None, event="ping"), 401)
+        self.assertEqual(self.runner.triggers, [])
+
     def test_signature_check_is_exact(self):
         body = b'{"action":"completed"}'
         self.assertTrue(self.module.signature_matches(SECRET, body, sign(body)))
