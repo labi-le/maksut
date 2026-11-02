@@ -251,6 +251,58 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
+/// Suppresses repetitive copy-paste spam from a non-owner when their current
+/// message and their last two messages in recent chat history have the same
+/// normalized text.
+pub(crate) fn is_repeated_user_spam(
+    owner: bool,
+    author_id: i64,
+    prompt: &str,
+    recent: &[crate::memory::ChatMessage],
+) -> bool {
+    if owner {
+        return false;
+    }
+    let norm = normalize_spam_text(prompt);
+    if norm.is_empty() {
+        return false;
+    }
+    recent
+        .iter()
+        .rev()
+        .filter(|m| m.role == "user" && m.author_id == author_id)
+        .take(2)
+        .filter(|m| normalize_spam_text(&m.text) == norm)
+        .count()
+        >= 2
+}
+
+fn normalize_spam_text(text: &str) -> String {
+    let trimmed = text.trim_start();
+    let body = trimmed.strip_prefix("[переслано]").unwrap_or(trimmed);
+    let mut stripped = body.to_owned();
+    for alias in ["максут", "максутка", "maksut"] {
+        let (rest, found) = strip_name(&stripped, alias);
+        if found {
+            stripped = rest;
+        }
+    }
+    stripped
+        .split_whitespace()
+        .filter(|word| {
+            let core = word.trim_matches(|ch: char| !ch.is_alphanumeric());
+            !word.contains('@') || !core.to_lowercase().ends_with("bot")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || ch.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
     let text = text.to_lowercase();
     let verb = text.contains("скинь")
@@ -385,4 +437,34 @@ pub(crate) fn resolve_addressed_chat(
         None => None,
     };
     (addressed, bare_sticker_reply)
+}
+
+pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal: bool) -> String {
+    let names = tools.names(false);
+    let available = if names.is_empty() {
+        "нет".to_owned()
+    } else {
+        names.join(", ")
+    };
+    let feature_scope = if has_proposal && tools.find("feature_status", false).is_some() {
+        " feature_status показывает только ваши заявки; очередь владельца недоступна, не выдумывай её статусы."
+    } else {
+        ""
+    };
+    format!(
+        "Это не владелец бота. Доступные инструменты: {available}.{feature_scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки»."
+    )
+}
+
+pub(crate) fn reply_is_empty(reply: &serde_json::Value) -> bool {
+    let content = reply
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let has_calls = reply
+        .get("tool_calls")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|calls| !calls.is_empty());
+    content.is_empty() && !has_calls
 }

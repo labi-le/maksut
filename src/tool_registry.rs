@@ -127,7 +127,7 @@ impl ToolRegistry {
             },
             ToolSpec {
                 name: ToolKind::ProposeFeature.name(),
-                description: "Queue a feature request (wishlist item) to add, change, or remove bot behavior. After the owner approves it, the orchestrator opens a GitHub issue where further discussion and implementation happen. Set refines to revise an existing pending request instead of rejecting it.",
+                description: "Queue a technical feature request (wishlist item) to add, change, or remove bot functionality in code. Never call this for conversational banter or when a non-owner asks to insult, mock, or change how the bot addresses the owner or another chat participant. Set refines to revise an existing pending request instead of rejecting it.",
                 parameters: propose_feature_parameters,
                 visibility: ToolVisibility::All,
                 kind: ToolKind::ProposeFeature,
