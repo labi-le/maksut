@@ -365,7 +365,9 @@ pub(crate) async fn recording_bot(
                 || (api_method_is(&path, "deleteMessage") && !delete_ok)
             {
                 r#"{"ok":false,"error_code":400,"description":"Bad Request: not enough rights"}"#
-            } else if api_method_is(&path, "deleteMessage") {
+            } else if api_method_is(&path, "deleteMessage")
+                || api_method_is(&path, "setMessageReaction")
+            {
                 r#"{"ok":true,"result":true}"#
             } else if api_method_is(&path, "getChatMember") {
                 if serde_json::from_str::<Value>(&body)
@@ -847,6 +849,7 @@ macro_rules! chat_reply {
                 image: $image,
                 followup: false,
                 reply_context: None,
+                bot: None,
             },
             None,
         )
@@ -870,6 +873,7 @@ macro_rules! chat_reply_with_proposal {
                 image: $image,
                 followup: false,
                 reply_context: None,
+                bot: None,
             },
             $proposal,
         )

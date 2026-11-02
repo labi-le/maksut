@@ -19,7 +19,8 @@ pub(crate) use teloxide::{
     prelude::*,
     types::{
         ChatId, FileId, InputFile, InputMedia, InputMediaAudio, InputMediaDocument,
-        InputMediaPhoto, InputMediaVideo, Message, ParseMode, ReplyParameters, UserId,
+        InputMediaPhoto, InputMediaVideo, Message, MessageId, ParseMode, ReactionType,
+        ReplyParameters, UserId,
     },
 };
 pub(crate) use tokio::{

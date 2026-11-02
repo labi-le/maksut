@@ -1601,3 +1601,189 @@ async fn repeated_non_owner_spam_is_suppressed_without_calling_model() {
     assert_eq!(llm.requests.lock().unwrap().len(), 1);
     llm.task.abort();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn research_request_marks_the_message_with_eyes() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let (bot, calls, server) = recording_bot(true, true).await;
+    let llm = mock_server(vec![
+        // A blank question fails validation inside `research` before any
+        // search request leaves the process; the ack must already be sent.
+        tool_response(
+            "research",
+            serde_json::json!({"question": " ", "queries": ["a query", "b query"]}),
+        ),
+        reply_response("ок"),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(2),
+        sender_name: "tester",
+        message_id: 7,
+        owner: true,
+        prompt: "сделай ресерч по rust",
+        image: None,
+        followup: false,
+        reply_context: None,
+        bot: Some(&bot),
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "ок");
+    let calls = calls.lock().await;
+    let reactions: Vec<_> = calls
+        .iter()
+        .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
+        .collect();
+    assert_eq!(reactions.len(), 1, "{calls:?}");
+    let body: Value = serde_json::from_str(&reactions[0].1).unwrap();
+    assert_eq!(body["chat_id"], 1);
+    assert_eq!(body["message_id"], 7);
+    assert_eq!(body["reaction"][0]["type"], "emoji");
+    assert_eq!(body["reaction"][0]["emoji"], "👀");
+    server.abort();
+    llm.task.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn plain_reply_does_not_react_to_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let (bot, calls, server) = recording_bot(true, true).await;
+    let llm = mock_server(vec![reply_response("ок")]).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(2),
+        sender_name: "tester",
+        message_id: 7,
+        owner: true,
+        prompt: "привет",
+        image: None,
+        followup: false,
+        reply_context: None,
+        bot: Some(&bot),
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "ок");
+    assert!(
+        calls
+            .lock()
+            .await
+            .iter()
+            .all(|(path, _)| !api_method_is(path, "setMessageReaction")),
+        "a plain reply must not touch the message reactions"
+    );
+    server.abort();
+    llm.task.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn web_search_marks_the_message_once_per_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let (bot, calls, server) = recording_bot(true, true).await;
+    let llm = mock_server(vec![
+        tool_response("web_search", serde_json::json!({"query": "rust"})),
+        // The search client reads the same mock; unparseable HTML yields no hits.
+        r#"{"error":"nope"}"#.into(),
+        tool_response("web_search", serde_json::json!({"query": "rust lang"})),
+        r#"{"error":"nope"}"#.into(),
+        reply_response("ок"),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(2),
+        sender_name: "tester",
+        message_id: 7,
+        owner: true,
+        prompt: "погугли rust",
+        image: None,
+        followup: false,
+        reply_context: None,
+        bot: Some(&bot),
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "ок");
+    let calls = calls.lock().await;
+    let reactions: Vec<_> = calls
+        .iter()
+        .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
+        .collect();
+    assert_eq!(reactions.len(), 1, "{calls:?}");
+    let body: Value = serde_json::from_str(&reactions[0].1).unwrap();
+    assert_eq!(body["message_id"], 7);
+    assert_eq!(body["reaction"][0]["emoji"], "👀");
+    server.abort();
+    llm.task.abort();
+}
