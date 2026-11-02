@@ -28,6 +28,8 @@ log `image ... is not published yet: manifest unknown`.
   `head_branch == "main"`, `event` in `push` / `workflow_dispatch`. Everything
   else is refused (403 for a non-GitHub delivery, 401 for a bad signature, 404
   for another path, 405 for GET, 413 for oversize bodies) or ignored with 204.
+  A signed `ping` delivery is answered 204 so the repository shows a healthy
+  endpoint without running anything.
 - `workflow_run` is chosen over `push`: the event arrives after the image is
   published, so the deploy never races the registry.
 - The request is not held open for the deploy. The hook answers 202 and starts
