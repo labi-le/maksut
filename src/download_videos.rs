@@ -1,5 +1,6 @@
 use crate::*;
 
+#[tracing::instrument(skip_all)]
 pub(crate) async fn download_videos(
     url: &Url,
     cfg: &Settings,
@@ -141,9 +142,9 @@ pub(crate) async fn download_videos_attempt(
     cmd.arg("--quiet")
         .arg("--no-progress")
         .arg("--max-downloads")
-        .arg(MAX_FILES.to_string())
+        .arg(config().media.max_files.to_string())
         .arg("--playlist-end")
-        .arg(MAX_FILES.to_string())
+        .arg(config().media.max_files.to_string())
         .arg("--max-filesize")
         .arg(cfg.max_media_bytes.to_string())
         .arg("--output")
@@ -241,7 +242,7 @@ pub(crate) async fn download_videos_attempt(
                         return Err("Ошибка проверки места для загрузки".into());
                     }
                 };
-                if usage > cfg.max_media_bytes.saturating_mul(MAX_FILES as u64) {
+                if usage > cfg.max_media_bytes.saturating_mul(config().media.max_files as u64) {
                     limited = true;
                     process.stop();
                     break process.wait().await.map_err(|_| "Ошибка процесса yt-dlp".to_string())?;
@@ -262,7 +263,8 @@ pub(crate) async fn download_videos_attempt(
     // yt-dlp uses exit code 101 for --max-downloads, not just genuine failures.
     let process_ok = !interrupted
         && !limited
-        && (status.success() || (status.code() == Some(101) && selection.files.len() == MAX_FILES));
+        && (status.success()
+            || (status.code() == Some(101) && selection.files.len() == config().media.max_files));
     let size_skipped = selection.size_skipped != 0 || label == "Size limit";
     let diagnostic =
         (!process_ok || size_skipped || status.code() == Some(101)).then_some(FailureDiagnostic {

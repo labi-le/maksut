@@ -437,9 +437,9 @@ async fn metadata_caption_large_playlist_keeps_last_video_description_after_64k_
         "id": 1, "is_bot": false, "first_name": "Kitty", "username": "cat_sender"
     }))
     .unwrap();
-    let descriptions: Vec<_> = (0..MAX_FILES)
+    let descriptions: Vec<_> = (0..config().media.max_files)
         .map(|index| {
-            if index == MAX_FILES - 1 {
+            if index == config().media.max_files - 1 {
                 "Последний котик".to_string()
             } else {
                 format!("Описание {index} {}", "x".repeat(8192))
@@ -500,7 +500,7 @@ cat '{0}/rows'
         result.process_ok,
         "all finished videos should be downloadable"
     );
-    assert_eq!(result.selection.files.len(), MAX_FILES);
+    assert_eq!(result.selection.files.len(), config().media.max_files);
     assert_eq!(result.selection.skipped, 0);
     assert_eq!(
         fs::read_to_string(root.path().join("probes")).unwrap(),
@@ -526,7 +526,7 @@ cat '{0}/rows'
     assert!(first_caption
         .ends_with("\n<code>От Kitty</code>\n<a href=\"https://youtu.be/abc\">Ссылка</a>"));
 
-    let last_path = &result.selection.files[MAX_FILES - 1].path;
+    let last_path = &result.selection.files[config().media.max_files - 1].path;
     let last_description = result
         .file_descriptions
         .iter()
@@ -877,11 +877,11 @@ async fn features_preparation_failures_are_excluded_before_album_selection_witho
 #[tokio::test]
 async fn telegram_bot_client_drops_idle_pooled_socket_after_idle_timeout() {
     assert!(
-        TELEGRAM_POOL_IDLE_TIMEOUT <= Duration::from_secs(30),
+        Duration::from_secs(config().telegram.pool_idle_timeout_secs) <= Duration::from_secs(30),
         "idle timeout must expire pooled Bot API sockets before proxy tunnels drop them"
     );
     assert!(
-        TELEGRAM_TCP_KEEPALIVE <= Duration::from_secs(30),
+        Duration::from_secs(config().telegram.tcp_keepalive_secs) <= Duration::from_secs(30),
         "TCP keepalive must probe Bot API sockets before proxy tunnels drop them"
     );
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))

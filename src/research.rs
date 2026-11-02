@@ -4,21 +4,6 @@ use crate::chat_client::ChatConfig;
 use crate::chat_text::{is_bidi_or_control, strip_url_schemes, truncate_text};
 use crate::search::{clean_text, SearchClient, SearchFailure, SearchHit};
 
-pub(crate) const RESEARCH_COOLDOWN: Duration = Duration::from_secs(20);
-
-const RESEARCH_MIN_QUERIES: usize = 2;
-const RESEARCH_MAX_QUERIES: usize = 4;
-const RESEARCH_RESULTS_PER_QUERY: usize = 4;
-const RESEARCH_MAX_SOURCES: usize = 8;
-const RESEARCH_TITLE_CHARS: usize = 160;
-const RESEARCH_SNIPPET_CHARS: usize = 300;
-const RESEARCH_DOSSIER_CHARS: usize = 5000;
-const RESEARCH_TIMEOUT: Duration = Duration::from_secs(15);
-const RESEARCH_QUERY_MIN_CHARS: usize = 3;
-const RESEARCH_QUERY_MAX_CHARS: usize = 200;
-const RESEARCH_QUESTION_MAX_CHARS: usize = 500;
-const RESEARCH_URL_MAX_CHARS: usize = 2048;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NormalizedUrl {
     /// URL as shown to the user: original query order, no tracking parameters.
@@ -66,13 +51,12 @@ impl ChatConfig {
         budget: usize,
     ) -> Result<ResearchOutcome, String> {
         let question = question.split_whitespace().collect::<Vec<_>>().join(" ");
-        if question.is_empty() || question.chars().count() > RESEARCH_QUESTION_MAX_CHARS {
-            return Err(format!(
-                "нужен вопрос до {RESEARCH_QUESTION_MAX_CHARS} символов"
-            ));
+        let question_max_chars = config().research.question_max_chars;
+        if question.is_empty() || question.chars().count() > question_max_chars {
+            return Err(format!("нужен вопрос до {question_max_chars} символов"));
         }
         let (queries, dropped_queries) = validate_research_queries(raw_queries)?;
-        if budget < RESEARCH_MIN_QUERIES {
+        if budget < config().research.min_queries {
             return Err("лимит поиска на ответ".into());
         }
         let execute = queries.len().min(budget);
@@ -117,13 +101,14 @@ async fn collect_research(
 ) -> (String, Vec<ResearchSource>) {
     let mut tasks = tokio::task::JoinSet::new();
     let mut task_indices = HashMap::new();
+    let results_per_query = config().research.results_per_query;
     for (index, query) in queries.iter().cloned().enumerate() {
         let client = Arc::clone(&client);
         let handle = tasks.spawn(async move {
             (
                 index,
                 client
-                    .public_web_search(&query, RESEARCH_RESULTS_PER_QUERY, None)
+                    .public_web_search(&query, results_per_query, None)
                     .await,
             )
         });
@@ -131,7 +116,8 @@ async fn collect_research(
     }
     let mut completed = vec![false; queries.len()];
     let mut results = Vec::new();
-    let collected = time::timeout(RESEARCH_TIMEOUT, async {
+    let timeout = Duration::from_secs(config().research.timeout_secs);
+    let collected = time::timeout(timeout, async {
         while let Some(joined) = tasks.join_next().await {
             record_research_task(joined, &task_indices, &mut completed, &mut results);
         }
@@ -199,8 +185,9 @@ async fn collect_research(
             .then(left.best_position.cmp(&right.best_position))
             .then(left.url.cmp(&right.url))
     });
-    let hidden_sources = sources.len().saturating_sub(RESEARCH_MAX_SOURCES);
-    sources.truncate(RESEARCH_MAX_SOURCES);
+    let max_sources = config().research.max_sources;
+    let hidden_sources = sources.len().saturating_sub(max_sources);
+    sources.truncate(max_sources);
     for (index, source) in sources.iter_mut().enumerate() {
         source.id = index + 1;
         source.queries.sort_unstable();
@@ -243,12 +230,15 @@ fn record_research_task(
 }
 
 fn validate_research_queries(raw: &[String]) -> Result<(Vec<String>, usize), String> {
+    let query_min_chars = config().research.query_min_chars;
+    let query_max_chars = config().research.query_max_chars;
+    let max_queries = config().research.max_queries;
     let mut seen = std::collections::HashSet::new();
     let mut queries = Vec::new();
     for raw in raw {
         let query = raw.split_whitespace().collect::<Vec<_>>().join(" ");
         let length = query.chars().count();
-        if !(RESEARCH_QUERY_MIN_CHARS..=RESEARCH_QUERY_MAX_CHARS).contains(&length) {
+        if !(query_min_chars..=query_max_chars).contains(&length) {
             continue;
         }
         let key = query.to_lowercase();
@@ -256,11 +246,11 @@ fn validate_research_queries(raw: &[String]) -> Result<(Vec<String>, usize), Str
             queries.push(query);
         }
     }
-    if queries.len() < RESEARCH_MIN_QUERIES {
+    if queries.len() < config().research.min_queries {
         return Err("нужно 2-4 разных запроса".into());
     }
-    let dropped = queries.len().saturating_sub(RESEARCH_MAX_QUERIES);
-    queries.truncate(RESEARCH_MAX_QUERIES);
+    let dropped = queries.len().saturating_sub(max_queries);
+    queries.truncate(max_queries);
     Ok((queries, dropped))
 }
 
@@ -270,13 +260,13 @@ fn research_source(
     position: usize,
 ) -> Option<(String, ResearchSource)> {
     let normalized = normalize_url(&hit.url)?;
-    let title = sanitize_research_text(&hit.title, RESEARCH_TITLE_CHARS);
+    let title = sanitize_research_text(&hit.title, config().research.title_chars);
     let title = if title.is_empty() {
         normalized.domain.clone()
     } else {
         title
     };
-    let snippet = sanitize_research_text(&hit.snippet, RESEARCH_SNIPPET_CHARS);
+    let snippet = sanitize_research_text(&hit.snippet, config().research.snippet_chars);
     Some((
         normalized.canonical.clone(),
         ResearchSource {
@@ -328,7 +318,7 @@ pub(crate) fn normalize_url(raw: &str) -> Option<NormalizedUrl> {
         }
     }
     let display = url.to_string();
-    if display.chars().count() > RESEARCH_URL_MAX_CHARS {
+    if display.chars().count() > config().research.url_max_chars {
         return None;
     }
     let host = url.host_str()?.to_ascii_lowercase();
@@ -407,7 +397,7 @@ fn fit_dossier(
             truncated_queries,
             dropped,
         );
-        if text.chars().count() <= RESEARCH_DOSSIER_CHARS {
+        if text.chars().count() <= config().research.dossier_chars {
             return (text, displayed);
         }
         let trimmed = {
@@ -485,7 +475,8 @@ fn render_dossier(
     }
     if hidden_sources > 0 {
         text.push_str(&format!(
-            "ещё {hidden_sources} источников не показано: лимит {RESEARCH_MAX_SOURCES}\n\n"
+            "ещё {hidden_sources} источников не показано: лимит {}\n\n",
+            config().research.max_sources
         ));
     }
     if !failures.is_empty() {

@@ -1,11 +1,7 @@
 use crate::prelude::*;
 pub(crate) use crate::search_parse::*;
 
-const SEARCH_RESULT_CHARS: usize = 2500;
-const AUTO_SEARCH_DEADLINE: Duration = Duration::from_secs(15);
-const PUBLIC_SOFT_DEADLINE: Duration = Duration::from_secs(5);
-const PUBLIC_HARD_DEADLINE: Duration = Duration::from_secs(12);
-
+pub(crate) const DEFAULT_SEARCH_URL: &str = "https://html.duckduckgo.com/html/";
 pub(crate) const DEFAULT_FIRECRAWL_URL: &str = "https://api.firecrawl.dev/v2/search";
 pub(crate) const DEFAULT_FIRECRAWL_V1_URL: &str = "https://api.firecrawl.dev/v1/search";
 pub(crate) const DEFAULT_PARALLEL_MCP_URL: &str = "https://search.parallel.ai/mcp";
@@ -26,6 +22,48 @@ pub(crate) enum SearchProvider {
     Startpage,
     Mojeek,
     Ecosia,
+}
+
+impl SearchProvider {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "auto" => Self::Auto,
+            "public" => Self::Public,
+            "parallel" => Self::Parallel,
+            "exa" => Self::Exa,
+            "firecrawl" => Self::Firecrawl,
+            "tavily" => Self::Tavily,
+            "ddg" | "duckduckgo" => Self::DuckDuckGo,
+            "startpage" => Self::Startpage,
+            "mojeek" => Self::Mojeek,
+            "ecosia" => Self::Ecosia,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn names() -> &'static [&'static str] {
+        &[
+            "auto",
+            "public",
+            "parallel",
+            "exa",
+            "firecrawl",
+            "tavily",
+            "ddg",
+            "startpage",
+            "mojeek",
+            "ecosia",
+        ]
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SearchProvider {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_name(&raw).ok_or_else(|| {
+            serde::de::Error::custom(format!("must be one of {}", Self::names().join(", ")))
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +113,33 @@ impl SearchClient {
         match self.provider {
             SearchProvider::Auto => self.auto_search(query, limit, recency).await,
             SearchProvider::Public => self.public_web_search(query, limit, recency).await,
+            SearchProvider::Parallel
+            | SearchProvider::Exa
+            | SearchProvider::Firecrawl
+            | SearchProvider::Tavily
+            | SearchProvider::DuckDuckGo
+            | SearchProvider::Startpage
+            | SearchProvider::Mojeek
+            | SearchProvider::Ecosia => {
+                // A single configured engine has no chain deadline of its own,
+                // so the retry loop is bounded by the same budget as auto mode.
+                let budget = Duration::from_secs(config().search.auto_deadline_secs);
+                match time::timeout(budget, self.dispatch_single(query, limit, recency)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(SearchFailure::Timeout),
+                }
+            }
+        }
+    }
+
+    async fn dispatch_single(
+        &self,
+        query: &str,
+        limit: usize,
+        recency: Option<&str>,
+    ) -> Result<Vec<SearchHit>, SearchFailure> {
+        match self.provider {
+            SearchProvider::Auto | SearchProvider::Public => Err(SearchFailure::Unavailable),
             SearchProvider::Parallel => {
                 self.parallel_mcp_search(&self.url, query, limit, recency)
                     .await
@@ -110,7 +175,8 @@ impl SearchClient {
         limit: usize,
         recency: Option<&str>,
     ) -> Result<Vec<SearchHit>, SearchFailure> {
-        let deadline = time::Instant::now() + AUTO_SEARCH_DEADLINE;
+        let deadline =
+            time::Instant::now() + Duration::from_secs(config().search.auto_deadline_secs);
         let mut last_error = SearchFailure::Unavailable;
         let mut saw_empty = false;
         if let Some(key) = self.tavily_key.as_deref() {
@@ -233,8 +299,10 @@ impl SearchClient {
         let mut engine_results: Vec<(usize, Vec<SearchHit>)> = Vec::new();
         let mut last_err = SearchFailure::Unavailable;
         let mut saw_ok = false;
-        let soft = time::Instant::now() + PUBLIC_SOFT_DEADLINE;
-        let hard = time::Instant::now() + PUBLIC_HARD_DEADLINE;
+        let soft =
+            time::Instant::now() + Duration::from_secs(config().search.public_soft_deadline_secs);
+        let hard =
+            time::Instant::now() + Duration::from_secs(config().search.public_hard_deadline_secs);
         loop {
             let deadline = if engine_results.iter().any(|(_, hits)| !hits.is_empty()) {
                 soft
@@ -323,6 +391,7 @@ impl SearchClient {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) async fn web_search_with(
         &self,
         query: &str,
@@ -339,6 +408,7 @@ impl SearchClient {
             return "Ничего не найдено.".into();
         }
         let mut report = String::new();
+        let result_chars = config().search.result_chars;
         for (index, hit) in hits.iter().enumerate() {
             report.push_str(&format!(
                 "{}. {}\n{}\n{}\n\n",
@@ -347,11 +417,11 @@ impl SearchClient {
                 hit.url,
                 hit.snippet
             ));
-            if report.chars().count() > SEARCH_RESULT_CHARS {
+            if report.chars().count() > result_chars {
                 break;
             }
         }
-        report.chars().take(SEARCH_RESULT_CHARS).collect()
+        report.chars().take(result_chars).collect()
     }
 }
 

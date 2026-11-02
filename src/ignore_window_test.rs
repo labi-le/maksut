@@ -34,7 +34,7 @@ async fn injection_in_enabled_group_mutes_member_and_hides_followups() {
         .fetch_one(&fixture.cfg.database)
         .await
         .unwrap();
-    assert_eq!(until, created_at + IGNORE_SECS);
+    assert_eq!(until, created_at + config().memory.ignore_secs);
     assert_eq!(reason, IGNORE_REASON);
     assert_eq!(source_chat, group);
     assert_eq!(source_message, Some(73));
@@ -128,7 +128,7 @@ async fn expired_ignore_allows_normal_processing() {
     assert!(ignore_user(
         &fixture.cfg.database,
         UserId(42),
-        now - IGNORE_SECS - 10,
+        now - config().memory.ignore_secs - 10,
         ChatId(group),
         1,
     )
@@ -261,12 +261,16 @@ async fn ignore_active_boundary() {
         .await
         .unwrap());
     assert!(ignore_active(&pool, user, 1_000).await.unwrap());
-    assert!(ignore_active(&pool, user, 1_000 + IGNORE_SECS - 1)
-        .await
-        .unwrap());
-    assert!(!ignore_active(&pool, user, 1_000 + IGNORE_SECS)
-        .await
-        .unwrap());
+    assert!(
+        ignore_active(&pool, user, 1_000 + config().memory.ignore_secs - 1)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !ignore_active(&pool, user, 1_000 + config().memory.ignore_secs)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -285,7 +289,7 @@ async fn ignore_user_sets_exactly_24_hours() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(until, now + IGNORE_SECS);
+    assert_eq!(until, now + config().memory.ignore_secs);
     assert_eq!(reason, IGNORE_REASON);
     assert_eq!(created_at, now);
     assert_eq!(source_chat, -100123);
@@ -322,7 +326,7 @@ async fn attempt_after_expiry_starts_new_window() {
     assert!(ignore_user(&pool, user, 1_000, ChatId(-100123), 2)
         .await
         .unwrap());
-    let expired = 1_000 + IGNORE_SECS;
+    let expired = 1_000 + config().memory.ignore_secs;
     assert!(ignore_user(&pool, user, expired, ChatId(-100123), 3)
         .await
         .unwrap());
@@ -332,7 +336,7 @@ async fn attempt_after_expiry_starts_new_window() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(until, expired + IGNORE_SECS);
+    assert_eq!(until, expired + config().memory.ignore_secs);
     assert_eq!(created_at, expired);
 }
 

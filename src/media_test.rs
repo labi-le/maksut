@@ -42,7 +42,7 @@ fn enforces_file_count_and_size_boundaries() {
     }
     fs::write(&manifest, paths).unwrap();
     let result = select_media(dir.path(), &manifest, 2).unwrap();
-    assert_eq!(result.files.len(), MAX_FILES);
+    assert_eq!(result.files.len(), config().media.max_files);
     assert_eq!(result.skipped, 2);
     let result = select_media(dir.path(), &manifest, 1).unwrap();
     assert!(result.files.is_empty());

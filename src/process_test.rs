@@ -74,7 +74,7 @@ exit 101
     .unwrap();
     assert!(result.process_ok);
     assert!(!result.limited);
-    assert_eq!(result.selection.files.len(), MAX_FILES);
+    assert_eq!(result.selection.files.len(), config().media.max_files);
     assert_eq!(result.selection.skipped, 0);
 }
 

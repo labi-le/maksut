@@ -1,9 +1,5 @@
 use crate::prelude::*;
-use crate::read_url::{
-    truncate_chars, validate_url, ReadUrlError, READ_URL_MAX_DISCOVERED_LINKS,
-    READ_URL_MAX_HTML_DEPTH, READ_URL_MAX_HTML_ELEMENTS, READ_URL_MAX_LINK_CHARS,
-    READ_URL_TITLE_CHARS,
-};
+use crate::read_url::{truncate_chars, validate_url, ReadUrlError};
 use dom_smoothie::{Config, Readability, TextMode};
 
 pub(crate) fn extract_html_with_links(
@@ -28,7 +24,7 @@ pub(crate) fn extract_html_with_links(
     let config = Config {
         text_mode: TextMode::Markdown,
         char_threshold: 0,
-        max_elements_to_parse: READ_URL_MAX_HTML_ELEMENTS,
+        max_elements_to_parse: config().read_url.max_html_elements,
         ..Config::default()
     };
     if let Ok(mut readability) = Readability::new(cleaned, Some(url.as_str()), Some(config)) {
@@ -87,7 +83,7 @@ fn collect_document_links(
         .select("a[href], link[rel='alternate'][href]")
         .iter()
     {
-        if links.len() >= READ_URL_MAX_DISCOVERED_LINKS {
+        if links.len() >= config().read_url.max_discovered_links {
             break;
         }
         let Some(href) = node.attr("href") else {
@@ -97,7 +93,7 @@ fn collect_document_links(
             continue;
         };
         resolved.set_fragment(None);
-        if resolved.as_str().len() <= READ_URL_MAX_LINK_CHARS
+        if resolved.as_str().len() <= config().read_url.max_link_chars
             && matches!(resolved.scheme(), "http" | "https")
             && validate_url(&resolved).is_ok()
             && !links.iter().any(|(_, existing)| existing == &resolved)
@@ -129,7 +125,7 @@ pub(crate) fn sanitize_title(raw: &str) -> String {
     let cleaned: String = raw.chars().filter(|ch| !ch.is_control()).collect();
     truncate_chars(
         &cleaned.split_whitespace().collect::<Vec<_>>().join(" "),
-        READ_URL_TITLE_CHARS,
+        config().read_url.title_chars,
     )
     .0
 }
@@ -211,13 +207,13 @@ pub(crate) fn html_is_too_complex(html: &str) -> bool {
             continue;
         }
         elements = elements.saturating_add(1);
-        if elements > READ_URL_MAX_HTML_ELEMENTS {
+        if elements > config().read_url.max_html_elements {
             return true;
         }
         if !self_closing && !is_void_element(&name) {
             depth += 1;
             max_depth = max_depth.max(depth);
-            if max_depth > READ_URL_MAX_HTML_DEPTH {
+            if max_depth > config().read_url.max_html_depth {
                 return true;
             }
         }

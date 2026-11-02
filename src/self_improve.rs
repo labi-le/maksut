@@ -108,8 +108,11 @@ pub(crate) async fn handle_improve(
     let goal = rest;
     let reply = if goal.is_empty() {
         "Используйте /improve <задача>.".to_owned()
-    } else if goal.chars().count() > MAX_GOAL_CHARS {
-        format!("Задача длиннее {MAX_GOAL_CHARS} символов.")
+    } else if goal.chars().count() > config().improve.goal_max_chars {
+        format!(
+            "Задача длиннее {} символов.",
+            config().improve.goal_max_chars
+        )
     } else {
         let id = format!("{}-{}", unix_now(), message.id.0);
         let task = json!({
@@ -310,7 +313,7 @@ pub(crate) async fn improvement_notifier(bot: Bot, cfg: Arc<Settings>) {
                 .map(|chat| chat.api_key.as_str())
                 .unwrap_or("");
             if !key.is_empty() && text.contains(key) {
-                eprintln!("Improvement update withheld: credential in output");
+                tracing::warn!("Improvement update withheld: credential in output");
             } else {
                 let markup = notification_markup(&update.value);
                 if update.status == "proposed" && markup.is_none() {

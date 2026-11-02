@@ -1,7 +1,7 @@
 //! Text primitives shared by reply styling: chunking to Telegram's limit,
 //! bounded truncation, and scheme/control-character hygiene.
 
-pub(crate) const TELEGRAM_MESSAGE_CHARS: usize = 3900;
+use crate::config::config;
 
 /// Plain-text chunks within Telegram's message limit, split on line
 /// boundaries where possible.
@@ -9,15 +9,15 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
     for line in text.lines() {
-        if line.chars().count() > TELEGRAM_MESSAGE_CHARS {
+        if line.chars().count() > config().chat.reply_max_chars {
             if !current.trim().is_empty() {
                 chunks.push(std::mem::take(&mut current));
             }
             let mut rest = line;
-            while rest.chars().count() > TELEGRAM_MESSAGE_CHARS {
+            while rest.chars().count() > config().chat.reply_max_chars {
                 let split = rest
                     .char_indices()
-                    .nth(TELEGRAM_MESSAGE_CHARS)
+                    .nth(config().chat.reply_max_chars)
                     .map(|(index, _)| index)
                     .unwrap_or(rest.len());
                 let Some((head, tail)) = rest.split_at_checked(split) else {
@@ -31,7 +31,7 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
         }
         let projected =
             current.chars().count() + usize::from(!current.is_empty()) + line.chars().count();
-        if projected > TELEGRAM_MESSAGE_CHARS {
+        if projected > config().chat.reply_max_chars {
             chunks.push(std::mem::take(&mut current));
         }
         if !current.is_empty() {

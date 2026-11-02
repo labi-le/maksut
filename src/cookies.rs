@@ -10,14 +10,12 @@ pub(crate) fn tiktok_page_cookies(
         return Ok(None);
     };
     let error = || "Не удалось подготовить cookies".to_string();
-    const MAX_JAR_BYTES: u64 = 4 * 1024 * 1024;
-    const MAX_HEADER_BYTES: usize = 8192;
-    if fs::metadata(source).map_err(|_| error())?.len() > MAX_JAR_BYTES {
+    if fs::metadata(source).map_err(|_| error())?.len() > config().cookies.max_jar_bytes {
         return Err(error());
     }
     let file = fs::File::open(source).map_err(|_| error())?;
     let mut bytes = Vec::new();
-    file.take(MAX_JAR_BYTES)
+    file.take(config().cookies.max_jar_bytes)
         .read_to_end(&mut bytes)
         .map_err(|_| error())?;
     let jar = std::str::from_utf8(&bytes).map_err(|_| error())?;
@@ -114,7 +112,7 @@ pub(crate) fn tiktok_page_cookies(
             auth_found = true;
         }
         let extra = name.len() + value.len() + if header.is_empty() { 1 } else { 3 };
-        if header.len() + extra > MAX_HEADER_BYTES {
+        if header.len() + extra > config().cookies.max_header_bytes {
             return Err(error());
         }
         if !header.is_empty() {

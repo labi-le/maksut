@@ -1,15 +1,6 @@
 use crate::prelude::*;
 
-const MAX_FILE_BYTES: u64 = 256 * 1024;
-const MAX_OUTPUT_CHARS: usize = 8000;
-const MAX_MATCHES: usize = 40;
-const MAX_LINE_CHARS: usize = 300;
 pub(crate) const GITHUB_BLOB_BASE: &str = "https://github.com/labi-le/maxwell/blob/main";
-pub(crate) const SELF_MEMORY_MAX_ROWS: i64 = 50;
-pub(crate) const SELF_MEMORY_MAX_CHARS: usize = 1200;
-const SELF_TOPIC_MAX_CHARS: usize = 80;
-const SELF_FACT_MAX_CHARS: usize = 300;
-const SELF_URL_MAX_CHARS: usize = 300;
 const SKIP_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -81,7 +72,7 @@ fn collect_files(root: &Path, files: &mut Vec<PathBuf>) {
 
 fn read_text(path: &Path) -> Option<String> {
     let metadata = std::fs::metadata(path).ok()?;
-    if metadata.len() > MAX_FILE_BYTES {
+    if metadata.len() > config().code.max_file_bytes {
         return None;
     }
     std::fs::read_to_string(path).ok()
@@ -104,14 +95,18 @@ fn search_file(
         .to_string_lossy()
         .replace('\\', "/");
     for (number, line) in text.lines().enumerate() {
-        if *matches >= MAX_MATCHES || *used_chars >= MAX_OUTPUT_CHARS {
+        if *matches >= config().code.max_matches || *used_chars >= config().code.max_output_chars {
             return;
         }
         if !line.to_lowercase().contains(needle) {
             continue;
         }
         let line_no = number + 1;
-        let line: String = line.trim().chars().take(MAX_LINE_CHARS).collect();
+        let line: String = line
+            .trim()
+            .chars()
+            .take(config().code.max_line_chars)
+            .collect();
         let block =
             format!("{relative}:{line_no} ({GITHUB_BLOB_BASE}/{relative}#L{line_no}): {line}\n");
         *used_chars += block.chars().count();
@@ -144,7 +139,7 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
             let mut numbered = String::new();
             for (index, line) in text.lines().enumerate() {
                 let row = format!("{}: {line}\n", index + 1);
-                if numbered.chars().count() + row.chars().count() > MAX_OUTPUT_CHARS {
+                if numbered.chars().count() + row.chars().count() > config().code.max_output_chars {
                     break;
                 }
                 numbered.push_str(&row);
@@ -189,7 +184,7 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
             &mut matches,
             &mut used_chars,
         );
-        if matches >= MAX_MATCHES || used_chars >= MAX_OUTPUT_CHARS {
+        if matches >= config().code.max_matches || used_chars >= config().code.max_output_chars {
             break;
         }
     }
@@ -202,7 +197,7 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
 
 pub(crate) fn valid_self_source_url(base: &Path, url: &str) -> bool {
     let url = url.trim();
-    if url.chars().count() > SELF_URL_MAX_CHARS || url.chars().any(char::is_whitespace) {
+    if url.chars().count() > config().code.url_max_chars || url.chars().any(char::is_whitespace) {
         return false;
     }
     let Some(rest) = url.strip_prefix("https://github.com/labi-le/maxwell/blob/main/") else {
@@ -251,14 +246,14 @@ pub(crate) async fn record_self_fact(
         .replace("[owner]", "[ owner ]")
         .replace('\n', " ")
         .chars()
-        .take(SELF_TOPIC_MAX_CHARS)
+        .take(config().code.topic_max_chars)
         .collect();
     let fact: String = fact
         .trim()
         .replace("[owner]", "[ owner ]")
         .replace('\n', " ")
         .chars()
-        .take(SELF_FACT_MAX_CHARS)
+        .take(config().code.fact_max_chars)
         .collect();
     let source_url = source_url.trim();
     if topic.is_empty() {
@@ -317,7 +312,7 @@ pub(crate) async fn record_self_fact(
     let _ = sqlx::query(
         "DELETE FROM bot_self_memory WHERE topic NOT IN (SELECT topic FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?)",
     )
-    .bind(SELF_MEMORY_MAX_ROWS)
+    .bind(config().code.memory_max_rows)
     .execute(pool)
     .await;
     Ok(())
@@ -327,7 +322,7 @@ pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT topic, fact, source_url FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?",
     )
-    .bind(SELF_MEMORY_MAX_ROWS)
+    .bind(config().code.memory_max_rows)
     .fetch_all(pool)
     .await?;
     if rows.is_empty() {
@@ -342,7 +337,9 @@ pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>
         } else {
             format!("- {topic}: {fact} ({source_url})\n")
         };
-        if out.chars().count() + line.chars().count() > SELF_MEMORY_MAX_CHARS && !out.is_empty() {
+        if out.chars().count() + line.chars().count() > config().code.memory_max_chars
+            && !out.is_empty()
+        {
             break;
         }
         out.push_str(&line);

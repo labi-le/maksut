@@ -1,16 +1,16 @@
-use crate::{MediaKind, MAX_FILES};
+use crate::config::config;
+use crate::MediaKind;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 use url::Url;
 
-const TTL_SECONDS: i64 = 24 * 60 * 60;
-const MAX_PUBLICATIONS: i64 = 200;
-const MAX_DESCRIPTION_UTF16: usize = 1024;
-const MAX_FILE_ID_BYTES: usize = 1024;
 // JSON escaping can use six bytes per original UTF-16 unit or file-ID byte.
-const MAX_ITEMS_JSON_BYTES: usize =
-    MAX_FILES * (6 * (MAX_FILE_ID_BYTES + MAX_DESCRIPTION_UTF16) + 128) + 2;
+fn max_items_json_bytes() -> usize {
+    let cache = &config().media_cache;
+    config().media.max_files * (6 * (cache.max_file_id_bytes + cache.max_description_utf16) + 128)
+        + 2
+}
 
 #[derive(Debug)]
 pub(crate) struct CachedMedia {
@@ -64,7 +64,7 @@ async fn prune_cache(connection: &mut SqliteConnection) -> Result<(), sqlx::Erro
             OR created_at <= unixepoch() - ?
             OR created_at > unixepoch()",
     )
-    .bind(TTL_SECONDS)
+    .bind(config().media_cache.ttl_seconds)
     .execute(&mut *connection)
     .await?;
     sqlx::query(
@@ -72,7 +72,7 @@ async fn prune_cache(connection: &mut SqliteConnection) -> Result<(), sqlx::Erro
             SELECT rowid FROM media_cache ORDER BY created_at DESC, rowid DESC LIMIT ?
         )",
     )
-    .bind(MAX_PUBLICATIONS)
+    .bind(config().media_cache.max_publications)
     .execute(connection)
     .await?;
     Ok(())
@@ -92,7 +92,7 @@ pub(crate) async fn lookup_cache(
             THEN items_json ELSE NULL END
          FROM media_cache WHERE chat_id = ? AND cache_key = ?",
     )
-    .bind(MAX_ITEMS_JSON_BYTES as i64)
+    .bind(max_items_json_bytes() as i64)
     .bind(chat_id)
     .bind(key)
     .fetch_optional(&mut *transaction)
@@ -122,7 +122,7 @@ pub(crate) async fn store_cache(
     items: &[CachedMedia],
 ) -> Result<(), sqlx::Error> {
     if items.is_empty()
-        || items.len() > MAX_FILES
+        || items.len() > config().media.max_files
         || items.iter().any(|item| !valid_file_id(&item.file_id))
     {
         // A failed fresh publication must not leave an older usable entry behind.
@@ -160,7 +160,7 @@ pub(crate) async fn invalidate_cache(
 
 fn valid_file_id(file_id: &str) -> bool {
     !file_id.is_empty()
-        && file_id.len() <= MAX_FILE_ID_BYTES
+        && file_id.len() <= config().media_cache.max_file_id_bytes
         && !file_id
             .chars()
             .any(|ch| ch.is_whitespace() || ch.is_control())
@@ -170,7 +170,7 @@ fn description_prefix(description: &str) -> &str {
     let mut units = 0;
     for (offset, ch) in description.char_indices() {
         units += ch.len_utf16();
-        if units > MAX_DESCRIPTION_UTF16 {
+        if units > config().media_cache.max_description_utf16 {
             return description.get(..offset).unwrap_or_default();
         }
     }
@@ -183,7 +183,9 @@ fn serialize_items(items: &[CachedMedia]) -> Result<String, sqlx::Error> {
         .map(|item| {
             64 + item.file_id.len()
                 + item.description.as_ref().map_or(4, |description| {
-                    description.len().min(MAX_DESCRIPTION_UTF16 * 4)
+                    description
+                        .len()
+                        .min(config().media_cache.max_description_utf16 * 4)
                 })
         })
         .sum::<usize>();
@@ -217,7 +219,7 @@ fn parse_items(json: &str) -> Option<Vec<CachedMedia>> {
     let Value::Array(values) = serde_json::from_str::<Value>(json).ok()? else {
         return None;
     };
-    if values.is_empty() || values.len() > MAX_FILES {
+    if values.is_empty() || values.len() > config().media.max_files {
         return None;
     }
     let mut items = Vec::with_capacity(values.len());
@@ -246,9 +248,9 @@ fn parse_items(json: &str) -> Option<Vec<CachedMedia>> {
             Value::String(description) => {
                 if description
                     .encode_utf16()
-                    .take(MAX_DESCRIPTION_UTF16 + 1)
+                    .take(config().media_cache.max_description_utf16 + 1)
                     .count()
-                    > MAX_DESCRIPTION_UTF16
+                    > config().media_cache.max_description_utf16
                 {
                     return None;
                 }

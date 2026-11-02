@@ -1,27 +1,12 @@
 use crate::browser::{navigation_headers, NONE_SITE};
 use crate::permitted_ipv4;
 use crate::prelude::*;
+pub(crate) use crate::read_url_cache::{cache_get, cache_put};
 pub(crate) use crate::read_url_html::*;
 pub(crate) use crate::read_url_sites::*;
+pub(crate) use crate::read_url_text::*;
 use reqwest::header::HeaderValue;
-use std::sync::{LazyLock, Mutex};
 
-const READ_URL_MAX_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const READ_URL_MAX_CHARS: usize = 24_000;
-const READ_URL_TIMEOUT: Duration = Duration::from_secs(15);
-const READ_URL_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
-pub(crate) const READ_URL_TITLE_CHARS: usize = 200;
-const READ_URL_MAX_REDIRECTS: usize = 5;
-const READ_URL_CACHE_TTL: Duration = Duration::from_secs(600);
-const READ_URL_CACHE_ENTRIES: usize = 16;
-const READ_URL_CACHE_CHARS: usize = 64 * 1024;
-pub(crate) const READ_URL_MAX_DISCOVERED_LINKS: usize = 32;
-pub(crate) const READ_URL_MAX_LINK_CHARS: usize = 500;
-const READ_URL_FOOTER_BUDGET_CHARS: usize = 4000;
-// Parsing hostile markup is CPU work, not just memory. Bound both the number
-// of elements and nesting depth before handing HTML to readability.
-pub(crate) const READ_URL_MAX_HTML_ELEMENTS: usize = 20_000;
-pub(crate) const READ_URL_MAX_HTML_DEPTH: usize = 128;
 // `read_url` negotiates Markdown ahead of HTML: some sites serve a Markdown
 // rendering on request, and every `text/*` body is returned as text.
 const READ_URL_ACCEPT: HeaderValue = HeaderValue::from_static(
@@ -80,18 +65,10 @@ impl ReadUrlError {
     }
 }
 
-#[derive(Clone)]
-struct CachedPage {
-    page: ReadPage,
-    at: std::time::Instant,
-}
-
-static READ_URL_CACHE: LazyLock<Mutex<HashMap<String, CachedPage>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 /// Fetch one public web page and return readable text. This is deliberately a
 /// narrow URL reader: it never reads local files, archives, SQLite, or internal
 /// agent schemes. The page body is untrusted data for the model.
+#[tracing::instrument(skip_all)]
 pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
     let (raw_url, selector) = split_url_selector(raw);
     let parsed_requested = parse_url(raw_url)?;
@@ -103,45 +80,90 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
         Some((rewritten, method)) => (rewritten, Some(method)),
         None => (parsed_requested, None),
     };
-    let deadline = time::Instant::now() + READ_URL_TOTAL_TIMEOUT;
+    let settings = &config().read_url;
+    let deadline = time::Instant::now() + Duration::from_secs(settings.total_timeout_secs);
+    let per_attempt = Duration::from_secs(settings.timeout_secs);
+    let policy = &config().retry.read_url;
     let mut redirects = 0usize;
     let mut http_fallback_tried = false;
-    loop {
+    let mut attempt = 0u32;
+    let mut pinned: Option<(String, reqwest::Client)> = None;
+    'fetch: loop {
         validate_url(&url)?;
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
         }
-        let client = time::timeout(remaining, pinned_public_client(&url))
-            .await
-            .map_err(|_| ReadUrlError::Timeout)??;
-        let request = navigation_headers(
-            client.get(url.clone()),
-            READ_URL_ACCEPT,
-            url.scheme().eq("https").then_some(NONE_SITE),
-        );
-        let remaining = deadline.saturating_duration_since(time::Instant::now());
-        if remaining.is_zero() {
-            return Err(ReadUrlError::Timeout);
-        }
-        let response = match time::timeout(remaining.min(READ_URL_TIMEOUT), request.send()).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => {
-                if !http_fallback_tried && url.scheme() == "https" && url.port().is_none() {
-                    http_fallback_tried = true;
-                    let _ = url.set_scheme("http");
-                    continue;
-                }
-                return Err(if error.is_timeout() {
-                    ReadUrlError::Timeout
-                } else {
-                    ReadUrlError::Network
-                });
+        // One pinned client per URL, reused by every retry, so DNS is resolved
+        // and validated once for the attempt sequence.
+        let client = match pinned.as_ref() {
+            Some((cached, client)) if cached == url.as_str() => client.clone(),
+            _ => {
+                let client = time::timeout(remaining, pinned_public_client(&url))
+                    .await
+                    .map_err(|_| ReadUrlError::Timeout)??;
+                pinned = Some((url.as_str().to_owned(), client.clone()));
+                client
             }
-            Err(_) => return Err(ReadUrlError::Timeout),
+        };
+        let response = loop {
+            let remaining = deadline.saturating_duration_since(time::Instant::now());
+            if remaining.is_zero() {
+                return Err(ReadUrlError::Timeout);
+            }
+            let request = navigation_headers(
+                client.get(url.clone()),
+                READ_URL_ACCEPT,
+                url.scheme().eq("https").then_some(NONE_SITE),
+            );
+            match time::timeout(remaining.min(per_attempt), request.send()).await {
+                Ok(Ok(response)) => {
+                    if !response.status().is_success()
+                        && policy.retry_status(response.status().as_u16())
+                        && policy.should_retry(attempt)
+                    {
+                        if !policy.backoff(attempt, deadline).await {
+                            return Err(ReadUrlError::Timeout);
+                        }
+                        attempt += 1;
+                        continue;
+                    }
+                    break response;
+                }
+                Ok(Err(error)) => {
+                    if policy.retry_transport && policy.should_retry(attempt) {
+                        if !policy.backoff(attempt, deadline).await {
+                            return Err(ReadUrlError::Timeout);
+                        }
+                        attempt += 1;
+                        continue;
+                    }
+                    if !http_fallback_tried && url.scheme() == "https" && url.port().is_none() {
+                        http_fallback_tried = true;
+                        let _ = url.set_scheme("http");
+                        attempt = 0;
+                        continue 'fetch;
+                    }
+                    return Err(if error.is_timeout() {
+                        ReadUrlError::Timeout
+                    } else {
+                        ReadUrlError::Network
+                    });
+                }
+                Err(_) => {
+                    if policy.retry_transport && policy.should_retry(attempt) {
+                        if !policy.backoff(attempt, deadline).await {
+                            return Err(ReadUrlError::Timeout);
+                        }
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(ReadUrlError::Timeout);
+                }
+            }
         };
         if response.status().is_redirection() {
-            if redirects >= READ_URL_MAX_REDIRECTS {
+            if redirects >= settings.max_redirects {
                 return Err(ReadUrlError::TooManyRedirects);
             }
             let location = response
@@ -153,6 +175,7 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
             validate_url(&next)?;
             url = next;
             redirects += 1;
+            attempt = 0;
             continue;
         }
         let status = response.status();
@@ -169,14 +192,35 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
         }
-        let body = time::timeout(remaining, read_body(response))
-            .await
-            .map_err(|_| ReadUrlError::Timeout)??;
+        let body = match time::timeout(remaining, read_body(response)).await {
+            Ok(Ok(body)) => body,
+            Ok(Err(error @ (ReadUrlError::TooLarge | ReadUrlError::Empty))) => return Err(error),
+            Ok(Err(error)) => {
+                if policy.retry_transport && policy.should_retry(attempt) {
+                    if !policy.backoff(attempt, deadline).await {
+                        return Err(ReadUrlError::Timeout);
+                    }
+                    attempt += 1;
+                    continue 'fetch;
+                }
+                return Err(error);
+            }
+            Err(_) => {
+                if policy.retry_transport && policy.should_retry(attempt) {
+                    if !policy.backoff(attempt, deadline).await {
+                        return Err(ReadUrlError::Timeout);
+                    }
+                    attempt += 1;
+                    continue 'fetch;
+                }
+                return Err(ReadUrlError::Timeout);
+            }
+        };
         let page = match special_method {
             Some(method) => render_page_with_method(&url, &content_type, &body, Some(method))?,
             None => render_page(&url, &content_type, &body)?,
         };
-        if page.text.chars().count() <= READ_URL_CACHE_CHARS {
+        if page.text.chars().count() <= settings.cache_chars {
             cache_put(requested.clone(), page.clone());
             cache_put(url.as_str().to_owned(), page.clone());
         }
@@ -209,7 +253,7 @@ pub(crate) fn prompt_urls(text: &str) -> Vec<Url> {
         if (!word.starts_with("http://")
             && !word.starts_with("https://")
             && !word.starts_with("www."))
-            || word.len() > READ_URL_MAX_LINK_CHARS
+            || word.len() > config().read_url.max_link_chars
         {
             continue;
         }
@@ -218,7 +262,7 @@ pub(crate) fn prompt_urls(text: &str) -> Vec<Url> {
         };
         if matches!(url.scheme(), "http" | "https") && !urls.contains(&url) {
             urls.push(url);
-            if urls.len() >= READ_URL_MAX_DISCOVERED_LINKS {
+            if urls.len() >= config().read_url.max_discovered_links {
                 break;
             }
         }
@@ -294,7 +338,7 @@ async fn pinned_public_client(url: &Url) -> Result<reqwest::Client, ReadUrlError
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .redirect(Policy::none())
-        .timeout(READ_URL_TIMEOUT)
+        .timeout(Duration::from_secs(config().read_url.timeout_secs))
         .resolve_to_addrs(host, &addresses);
     if url.scheme() == "https" {
         builder = builder.https_only(true);
@@ -305,7 +349,7 @@ async fn pinned_public_client(url: &Url) -> Result<reqwest::Client, ReadUrlError
 async fn read_body(mut response: reqwest::Response) -> Result<Vec<u8>, ReadUrlError> {
     if response
         .content_length()
-        .is_some_and(|length| length > READ_URL_MAX_BYTES as u64)
+        .is_some_and(|length| length > config().read_url.max_bytes as u64)
     {
         return Err(ReadUrlError::TooLarge);
     }
@@ -317,7 +361,7 @@ async fn read_body(mut response: reqwest::Response) -> Result<Vec<u8>, ReadUrlEr
             ReadUrlError::Network
         }
     })? {
-        if body.len().saturating_add(chunk.len()) > READ_URL_MAX_BYTES {
+        if body.len().saturating_add(chunk.len()) > config().read_url.max_bytes {
             return Err(ReadUrlError::TooLarge);
         }
         body.extend_from_slice(&chunk);
@@ -390,7 +434,7 @@ pub(crate) fn render_page_with_method(
     if text.is_empty() {
         return Err(ReadUrlError::Empty);
     }
-    let shown_url = truncate_chars(url.as_str(), READ_URL_MAX_LINK_CHARS).0;
+    let shown_url = truncate_chars(url.as_str(), config().read_url.max_link_chars).0;
     let shown_kind = truncate_chars(if kind.is_empty() { "unknown" } else { &kind }, 100).0;
     let mut header = format!("URL: {shown_url}\nContent-Type: {shown_kind}\n");
     if let Some(title) = title
@@ -412,7 +456,9 @@ pub(crate) fn render_page_with_method(
             } else {
                 format!("- {label}: {link}\n")
             };
-            if links_footer.chars().count() + row.chars().count() > READ_URL_FOOTER_BUDGET_CHARS {
+            if links_footer.chars().count() + row.chars().count()
+                > config().read_url.footer_budget_chars
+            {
                 break;
             }
             links_footer.push_str(&row);
@@ -421,82 +467,20 @@ pub(crate) fn render_page_with_method(
     const TRUNCATED_SUFFIX: &str = "\n\n[... truncated ...]";
     let reserved =
         header.chars().count() + links_footer.chars().count() + TRUNCATED_SUFFIX.chars().count();
-    let remaining = READ_URL_MAX_CHARS.saturating_sub(reserved);
+    let max_chars = config().read_url.max_chars;
+    let remaining = max_chars.saturating_sub(reserved);
     let (text, truncated) = truncate_chars(&text, remaining);
     header.push_str(&text);
     if truncated {
         header.push_str(TRUNCATED_SUFFIX);
     }
-    if header.chars().count() + links_footer.chars().count() <= READ_URL_MAX_CHARS {
+    if header.chars().count() + links_footer.chars().count() <= max_chars {
         header.push_str(&links_footer);
     } else {
-        header = truncate_chars(&header, READ_URL_MAX_CHARS).0;
+        header = truncate_chars(&header, max_chars).0;
     }
     Ok(ReadPage {
         text: header,
         links,
     })
-}
-
-pub(crate) fn decode_body(body: &[u8], content_type: &str) -> String {
-    let header_encoding = content_type.split(';').skip(1).find_map(|part| {
-        let (key, value) = part.split_once('=')?;
-        if !key.trim().eq_ignore_ascii_case("charset") {
-            return None;
-        }
-        let label = value.trim().trim_matches(['"', '\'']);
-        encoding_rs::Encoding::for_label(label.as_bytes())
-    });
-    let encoding = header_encoding.unwrap_or_else(|| {
-        let mut detector = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
-        detector.feed(body, true);
-        detector.guess(None, chardetng::Utf8Detection::Allow)
-    });
-    encoding.decode(body).0.into_owned()
-}
-
-pub(crate) fn normalize_text(raw: &str) -> String {
-    let mut lines = Vec::new();
-    for line in raw.lines() {
-        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !line.is_empty() || lines.last().is_some_and(|prev: &String| !prev.is_empty()) {
-            lines.push(line);
-        }
-    }
-    lines.join("\n").trim().to_owned()
-}
-
-pub(crate) fn truncate_chars(text: &str, max: usize) -> (String, bool) {
-    if max == 0 {
-        return (String::new(), !text.is_empty());
-    }
-    match text.char_indices().nth(max) {
-        Some((index, _)) => (text.get(..index).unwrap_or_default().to_owned(), true),
-        None => (text.to_owned(), false),
-    }
-}
-
-fn cache_get(url: &str) -> Option<ReadPage> {
-    let mut cache = READ_URL_CACHE.lock().ok()?;
-    let now = std::time::Instant::now();
-    cache.retain(|_, entry| now.duration_since(entry.at) < READ_URL_CACHE_TTL);
-    cache.get(url).map(|entry| entry.page.clone())
-}
-
-fn cache_put(url: String, page: ReadPage) {
-    let Ok(mut cache) = READ_URL_CACHE.lock() else {
-        return;
-    };
-    let now = std::time::Instant::now();
-    cache.retain(|_, entry| now.duration_since(entry.at) < READ_URL_CACHE_TTL);
-    if cache.len() >= READ_URL_CACHE_ENTRIES {
-        if let Some(oldest) = cache
-            .iter()
-            .min_by_key(|(_, entry)| entry.at)
-            .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest);
-        }
-    }
-    cache.insert(url, CachedPage { page, at: now });
 }

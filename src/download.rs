@@ -105,6 +105,7 @@ pub(crate) async fn images_metadata_with_refresh(
     }
 }
 
+#[tracing::instrument(skip_all)]
 pub(crate) async fn download_with_timeout(
     url: &Url,
     cfg: &Settings,
@@ -304,9 +305,9 @@ pub(crate) async fn download_with_timeout(
         result.description = metadata.description;
         result.selection.skipped += metadata.skipped;
         let max_images = if source == Some("tiktok") {
-            MAX_TIKTOK_PHOTOS
+            config().media.max_tiktok_photos
         } else {
-            MAX_FILES
+            config().media.max_files
         };
         if let Err(failures) = add_images(
             &metadata.images,
@@ -357,7 +358,7 @@ pub(crate) async fn retryable_output(dir: &Path, max_bytes: u64) -> bool {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return false,
         _ => {}
     }
-    let limit = max_bytes.saturating_mul(MAX_FILES as u64);
+    let limit = max_bytes.saturating_mul(config().media.max_files as u64);
     matches!(disk_usage_async(dir).await, Ok(usage) if usage <= limit)
 }
 

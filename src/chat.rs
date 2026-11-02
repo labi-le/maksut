@@ -2,12 +2,6 @@ use crate::*;
 use serde_json::json;
 use teloxide::types::ChatAction;
 
-const TOOL_ROUNDS: usize = 8;
-const CHAT_MAX_TOKENS: u32 = 900;
-const STATUS_MAX_TOKENS: u32 = 1200;
-const RESEARCH_MAX_TOKENS: u32 = 1500;
-const TYPING_KEEPALIVE: Duration = Duration::from_secs(4);
-
 /// One inbound chat message plus who sent it.
 pub(crate) struct ChatTurn<'a> {
     pub(crate) chat_id: ChatId,
@@ -56,6 +50,7 @@ async fn record_assistant_reply(pool: &SqlitePool, chat_id: ChatId, text: &str, 
     .await;
 }
 
+#[tracing::instrument(skip_all)]
 pub(crate) async fn reply_with_chat(
     bot: &Bot,
     message: &Message,
@@ -83,8 +78,8 @@ pub(crate) async fn reply_with_chat(
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
     let _chat_guard = chat_lock.lock().await;
     // Hold the image permit across `chat.acquire()` so downloaded bytes are
-    // bounded by `CHAT_IMAGE_CONCURRENCY + CHAT_CONCURRENCY` without occupying
-    // a model slot while Telegram serves the file.
+    // bounded by `config().chat.image_concurrency + config().chat.concurrency`
+    // without occupying a model slot while Telegram serves the file.
     let mut image_permit = None;
     let downloaded_image = match input.pending_media.as_ref() {
         Some((file_id, mime)) => match acquire_image_permit().await {
@@ -107,7 +102,7 @@ pub(crate) async fn reply_with_chat(
         let typing_chat = message.chat.id;
         Some(AbortOnDrop(tokio::spawn(async move {
             loop {
-                time::sleep(TYPING_KEEPALIVE).await;
+                time::sleep(Duration::from_secs(config().chat.typing_keepalive_secs)).await;
                 if typing_bot
                     .send_chat_action(typing_chat, ChatAction::Typing)
                     .await
@@ -158,7 +153,7 @@ pub(crate) async fn reply_with_chat(
     match result {
         Ok(reply) => deliver_chat_reply(bot, message, cfg, chat, turn.followup, reply).await,
         Err(reason) => {
-            eprintln!("Chat reply failed: {reason}");
+            tracing::error!("Chat reply failed: {reason}");
             if message.chat.is_private() {
                 let _ = bot
                     .send_message(message.chat.id, "Не получилось ответить, попробуй ещё раз.")
@@ -395,13 +390,13 @@ pub(crate) async fn chat_reply_with_proposal(
         read_url_targets: read_url_targets.as_slice(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);
-    for _ in 0..TOOL_ROUNDS {
+    for _ in 0..config().chat.tool_rounds {
         let max_tokens = if state.research.used {
-            RESEARCH_MAX_TOKENS
+            config().chat.research_max_tokens
         } else if state.status_fallback.is_some() {
-            STATUS_MAX_TOKENS
+            config().chat.status_max_tokens
         } else {
-            CHAT_MAX_TOKENS
+            config().chat.max_tokens
         };
         let mut request = CompletionRequest::new(&messages, turn.owner, max_tokens)
             .feature_tools(proposal.is_some())
@@ -444,9 +439,15 @@ pub(crate) async fn chat_reply_with_proposal(
             let text = if state.research.used && !state.research.sources.is_empty() {
                 style_research_reply(&content, &state.research.sources)?
             } else {
-                resolve_status_reply(&ctx, &mut state, &mut messages, STATUS_MAX_TOKENS, &content)
-                    .await
-                    .unwrap_or_else(|| style_reply(&content))
+                resolve_status_reply(
+                    &ctx,
+                    &mut state,
+                    &mut messages,
+                    config().chat.status_max_tokens,
+                    &content,
+                )
+                .await
+                .unwrap_or_else(|| style_reply(&content))
             };
             let mut reply = ChatReply {
                 text,

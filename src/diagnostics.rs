@@ -113,7 +113,7 @@ pub(crate) async fn record_failure_with_events(
         transaction.commit().await
     }.await;
     if result.is_err() {
-        eprintln!("Не удалось сохранить диагностику загрузки");
+        tracing::error!("Не удалось сохранить диагностику загрузки");
     }
 }
 

@@ -4,9 +4,38 @@ use crate::search::{SearchClient, SearchFailure, SearchHit};
 use crate::search_parse::*;
 use serde_json::json;
 
-const MAX_SEARCH_BYTES: usize = 512 * 1024;
-
 impl SearchClient {
+    /// One search request with the configured retry policy. Callers bound the
+    /// whole attempt sequence by their own deadline, so a retry cannot extend
+    /// the total budget.
+    async fn send_with_retry<F>(&self, mut build: F) -> Result<reqwest::Response, SearchFailure>
+    where
+        F: FnMut() -> reqwest::RequestBuilder,
+    {
+        let policy = &config().retry.search;
+        let mut attempt = 0u32;
+        loop {
+            match build().send().await {
+                Ok(response) => {
+                    if !response.status().is_success()
+                        && policy.retry_status(response.status().as_u16())
+                        && policy.should_retry(attempt)
+                    {
+                        time::sleep(policy.delay(attempt)).await;
+                        attempt += 1;
+                        continue;
+                    }
+                    return Ok(response);
+                }
+                Err(_) if policy.retry_transport && policy.should_retry(attempt) => {
+                    time::sleep(policy.delay(attempt)).await;
+                    attempt += 1;
+                }
+                Err(error) => return Err(Self::map_error(error)),
+            }
+        }
+    }
+
     fn map_error(error: reqwest::Error) -> SearchFailure {
         if error.is_timeout() {
             SearchFailure::Timeout
@@ -16,14 +45,15 @@ impl SearchClient {
     }
 
     async fn response_bytes(response: reqwest::Response) -> Result<Vec<u8>, SearchFailure> {
+        let max_bytes = config().search.max_bytes;
         if response
             .content_length()
-            .is_some_and(|length| length > MAX_SEARCH_BYTES as u64)
+            .is_some_and(|length| length > max_bytes as u64)
         {
             return Err(SearchFailure::TooLarge);
         }
         let bytes = response.bytes().await.map_err(Self::map_error)?;
-        if bytes.len() > MAX_SEARCH_BYTES {
+        if bytes.len() > max_bytes {
             return Err(SearchFailure::TooLarge);
         }
         Ok(bytes.to_vec())
@@ -39,11 +69,12 @@ impl SearchClient {
             .scheme()
             .eq("https")
             .then(|| referer_site(&url, referer));
-        let response = navigation_headers(self.http.get(url), HTML_ACCEPT, site)
-            .header("referer", referer)
-            .send()
-            .await
-            .map_err(Self::map_error)?;
+        let response = self
+            .send_with_retry(|| {
+                navigation_headers(self.http.get(url.clone()), HTML_ACCEPT, site.clone())
+                    .header("referer", referer)
+            })
+            .await?;
         if !response.status().is_success() {
             return Err(SearchFailure::Unavailable);
         }
@@ -74,14 +105,15 @@ impl SearchClient {
                 obj.insert("time_range".into(), json!(range));
             }
         }
+        let body = body.to_string();
         let response = self
-            .http
-            .post(url.clone())
-            .header("content-type", "application/json")
-            .body(body.to_string())
-            .send()
-            .await
-            .map_err(Self::map_error)?;
+            .send_with_retry(|| {
+                self.http
+                    .post(url.clone())
+                    .header("content-type", "application/json")
+                    .body(body.clone())
+            })
+            .await?;
         if !response.status().is_success() {
             return Err(SearchFailure::Unavailable);
         }
@@ -139,14 +171,15 @@ impl SearchClient {
                 obj.insert("tbs".into(), json!(tbs));
             }
         }
+        let body = body.to_string();
         let response = self
-            .http
-            .post(url.clone())
-            .header("content-type", "application/json")
-            .body(body.to_string())
-            .send()
-            .await
-            .map_err(Self::map_error)?;
+            .send_with_retry(|| {
+                self.http
+                    .post(url.clone())
+                    .header("content-type", "application/json")
+                    .body(body.clone())
+            })
+            .await?;
         if !response.status().is_success() {
             return Err(SearchFailure::Unavailable);
         }
@@ -217,16 +250,17 @@ impl SearchClient {
                 }
             }
         });
+        let body = body.to_string();
         let response = self
-            .http
-            .post(url.clone())
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .header("user-agent", "omp/18.13.2")
-            .body(body.to_string())
-            .send()
-            .await
-            .map_err(Self::map_error)?;
+            .send_with_retry(|| {
+                self.http
+                    .post(url.clone())
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .header("user-agent", "omp/18.13.2")
+                    .body(body.clone())
+            })
+            .await?;
         if !response.status().is_success() {
             return Err(SearchFailure::Unavailable);
         }
@@ -253,16 +287,17 @@ impl SearchClient {
                 }
             }
         });
+        let body = body.to_string();
         let response = self
-            .http
-            .post(url.clone())
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .header("user-agent", USER_AGENT)
-            .body(body.to_string())
-            .send()
-            .await
-            .map_err(Self::map_error)?;
+            .send_with_retry(|| {
+                self.http
+                    .post(url.clone())
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .header("user-agent", USER_AGENT)
+                    .body(body.clone())
+            })
+            .await?;
         if !response.status().is_success() {
             return Err(SearchFailure::Unavailable);
         }

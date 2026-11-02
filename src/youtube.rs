@@ -1,7 +1,10 @@
 use crate::*;
 
 pub(crate) fn youtube_duration_filter() -> String {
-    format!("!is_live & duration <= {MAX_VIDEO_DURATION}")
+    format!(
+        "!is_live & duration <= {}",
+        config().media.max_video_duration_secs
+    )
 }
 
 pub(crate) fn youtube_reject_reason(info: &Value) -> Option<&'static str> {
@@ -14,7 +17,9 @@ pub(crate) fn youtube_reject_reason(info: &Value) -> Option<&'static str> {
     if info
         .get("duration")
         .and_then(Value::as_f64)
-        .is_some_and(|duration| duration.is_finite() && duration > MAX_VIDEO_DURATION as f64)
+        .is_some_and(|duration| {
+            duration.is_finite() && duration > config().media.max_video_duration_secs as f64
+        })
     {
         return Some("Video filtered");
     }
@@ -76,7 +81,7 @@ pub(crate) fn choose_youtube_mp4(info: &Value, max_bytes: u64) -> Option<String>
         video
             .checked_add(audio)
             .and_then(|total| total.checked_add(total / 100))
-            .and_then(|total| total.checked_add(MP4_MUX_HEADROOM))
+            .and_then(|total| total.checked_add(config().media.mp4_mux_headroom))
             .is_some_and(|total| total <= max_bytes)
     };
     type Choice = ((u64, f64, f64), usize, Option<usize>);
@@ -189,14 +194,15 @@ pub(crate) async fn probe_youtube_mp4(
     let Ok(mut process) = DownloadProcess::new(child) else {
         return Ok(None);
     };
-    let Ok(mut stdout) = process.take_stdout(MAX_METADATA_BYTES + 1) else {
+    let Ok(mut stdout) = process.take_stdout(config().media.max_metadata_bytes + 1) else {
         return Ok(None);
     };
-    let probe_deadline = deadline.min(time::Instant::now() + YOUTUBE_PROBE_TIMEOUT);
+    let probe_deadline = deadline
+        .min(time::Instant::now() + Duration::from_secs(config().media.youtube_probe_timeout_secs));
     let Some((bytes, status)) = time::timeout_at(probe_deadline, async {
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes).await.ok()?;
-        if bytes.len() as u64 > MAX_METADATA_BYTES {
+        if bytes.len() as u64 > config().media.max_metadata_bytes {
             return None;
         }
         Some((bytes, process.wait().await.ok()?))

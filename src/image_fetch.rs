@@ -1,15 +1,12 @@
 use crate::*;
 
-// A shared anycast address cannot identify a host, so the cache is keyed by both.
-const MAX_PINNED_CLIENTS: usize = 256;
-const PINNED_CLIENT_TTL: Duration = Duration::from_secs(3600);
-
 pub(crate) struct CachedPinnedClient {
     pub(crate) addresses: Vec<SocketAddr>,
     pub(crate) client: reqwest::Client,
     pub(crate) cached_at: std::time::Instant,
 }
 
+// A shared anycast address cannot identify a host, so the cache is keyed by both.
 pub(crate) static PINNED_CLIENTS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<(String, IpAddr), CachedPinnedClient>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
@@ -26,11 +23,12 @@ pub(crate) async fn pinned_client(url: &Url) -> Result<reqwest::Client, String> 
         return Err("HTTPS-хост не имеет пригодного IPv4-адреса".into());
     };
     let key = (host.to_owned(), first.ip());
+    let ttl = Duration::from_secs(config().image_fetch.pinned_client_ttl_secs);
     let mut cache = PINNED_CLIENTS.lock().ok();
     if let Some(cached) = cache.as_ref().and_then(|cache| cache.get(&key)) {
         // A host-specific DNS override cannot be reused after DNS removes one of
         // its previously pinned addresses.
-        if cached.cached_at.elapsed() < PINNED_CLIENT_TTL && cached.addresses == addresses {
+        if cached.cached_at.elapsed() < ttl && cached.addresses == addresses {
             return Ok(cached.client.clone());
         }
     }
@@ -42,8 +40,8 @@ pub(crate) async fn pinned_client(url: &Url) -> Result<reqwest::Client, String> 
         .build()
         .map_err(|_| "Не удалось настроить безопасное HTTPS-подключение".to_string())?;
     if let Some(cache) = cache.as_mut() {
-        cache.retain(|_, entry| entry.cached_at.elapsed() < PINNED_CLIENT_TTL);
-        if cache.len() >= MAX_PINNED_CLIENTS && !cache.contains_key(&key) {
+        cache.retain(|_, entry| entry.cached_at.elapsed() < ttl);
+        if cache.len() >= config().image_fetch.max_pinned_clients && !cache.contains_key(&key) {
             let oldest = cache
                 .iter()
                 .min_by_key(|(_, entry)| entry.cached_at)
@@ -218,7 +216,7 @@ pub(crate) async fn add_images(
             let remaining = match &used {
                 Ok(used) => cfg
                     .max_media_bytes
-                    .saturating_mul(MAX_FILES as u64)
+                    .saturating_mul(config().media.max_files as u64)
                     .saturating_sub(*used),
                 Err(_) => {
                     failure = Some(FailureDiagnostic::new("photo-cdn", "File I/O error"));

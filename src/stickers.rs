@@ -262,7 +262,7 @@ impl StickerReplies {
 
 pub(crate) async fn load_sticker_replies(bot: &Bot) -> StickerReplies {
     let Ok(set) = bot.get_sticker_set(STICKER_SET).await else {
-        eprintln!("Sticker replies are unavailable: the sticker set could not be read");
+        tracing::warn!("Sticker replies are unavailable: the sticker set could not be read");
         return StickerReplies::default();
     };
     let mut replies = StickerReplies::default();
@@ -405,7 +405,7 @@ impl StickerEntry {
 }
 
 pub(crate) async fn load_sticker_catalog(bot: &Bot) -> StickerCatalog {
-    let path = env::var("STICKER_SETS_FILE").unwrap_or_else(|_| "sticker_sets.txt".into());
+    let path = PathBuf::from(config().paths.sticker_sets_file.as_str());
     let mut names: Vec<String> = fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
@@ -447,7 +447,7 @@ pub(crate) async fn load_sticker_catalog(bot: &Bot) -> StickerCatalog {
         .iter()
         .filter(|entry| !entry.description.is_empty())
         .count();
-    eprintln!(
+    tracing::warn!(
         "Sticker catalog: {} stickers from {} sets ({} described, {} packs unavailable)",
         catalog.entries.len(),
         catalog.sets,
@@ -458,8 +458,7 @@ pub(crate) async fn load_sticker_catalog(bot: &Bot) -> StickerCatalog {
 }
 
 fn load_descriptions() -> std::collections::HashMap<String, String> {
-    let path = env::var("STICKER_DESCRIPTIONS_FILE")
-        .unwrap_or_else(|_| "sticker_descriptions.json".into());
+    let path = PathBuf::from(config().paths.sticker_descriptions_file.as_str());
     let text = fs::read_to_string(path).unwrap_or_default();
     let records: Vec<Value> = serde_json::from_str(&text).unwrap_or_default();
     records

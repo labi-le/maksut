@@ -6,11 +6,6 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub(crate) const MAX_GOAL_CHARS: usize = 2000;
-const MAX_FEEDBACK_CHARS: usize = 4000;
-const MAX_PREVIOUS_SPEC_CHARS: usize = 16000;
-const MAX_PREVIOUS_REVIEW_CHARS: usize = 8000;
-
 /// Several Tokio tasks may write the same queue file, so the temp name carries
 /// a process-wide sequence to keep concurrent renames on distinct inodes.
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -107,7 +102,7 @@ pub(crate) fn queue_plan(proposal: PlanProposal<'_>) -> std::io::Result<String> 
         previous_spec,
         previous_review,
     } = proposal;
-    if goal.chars().count() > MAX_GOAL_CHARS {
+    if goal.chars().count() > config().improve.goal_max_chars {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "goal too long",
@@ -124,9 +119,12 @@ pub(crate) fn queue_plan(proposal: PlanProposal<'_>) -> std::io::Result<String> 
         "goal": goal,
         "stage": "plan",
         "parent": parent.unwrap_or(""),
-        "feedback": truncate_chars(feedback, MAX_FEEDBACK_CHARS),
-        "previous_spec": truncate_chars(previous_spec, MAX_PREVIOUS_SPEC_CHARS),
-        "previous_review": truncate_chars(previous_review, MAX_PREVIOUS_REVIEW_CHARS),
+        "feedback": truncate_chars(feedback, config().improve.feedback_max_chars),
+        "previous_spec": truncate_chars(previous_spec, config().improve.previous_spec_max_chars),
+        "previous_review": truncate_chars(
+            previous_review,
+            config().improve.previous_review_max_chars,
+        ),
         "created_at": unix_now(),
     });
     atomic_write(
@@ -164,7 +162,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
     if goal.is_empty() {
         return Err("пустая заявка".to_owned());
     }
-    if goal.chars().count() > MAX_GOAL_CHARS && refines.is_none() {
+    if goal.chars().count() > config().improve.goal_max_chars && refines.is_none() {
         return Err("заявка слишком длинная".to_owned());
     }
     if proposed_by != owner && has_pending_proposal(dir, proposed_by) {
@@ -229,7 +227,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
     // The orchestrator only shows `feedback` next to a previous spec, so a
     // remark on a spec-less failed plan has to ride in the child goal.
     let child_goal = if previous_spec.trim().is_empty() {
-        truncate_chars(goal, MAX_GOAL_CHARS)
+        truncate_chars(goal, config().improve.goal_max_chars)
     } else {
         parent_goal.to_owned()
     };

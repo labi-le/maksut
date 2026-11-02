@@ -48,7 +48,9 @@ pub(crate) async fn request_cookie_refresh(
         trace_event(events, FailureDiagnostic::new("refresh", "Timed out"));
         return false;
     }
-    let timeout = remaining.min(COOKIE_REFRESH_TIMEOUT);
+    let timeout = remaining.min(Duration::from_secs(
+        config().media.cookie_refresh_timeout_secs,
+    ));
     let Ok(target) = base.join("refresh") else {
         trace_event(events, FailureDiagnostic::new("refresh", "Request failed"));
         return false;

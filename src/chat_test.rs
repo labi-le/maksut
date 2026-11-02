@@ -1412,7 +1412,11 @@ async fn empty_reasoning_reply_retries_without_reasoning() {
     assert_eq!(reply.text, "ответ после повтора");
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    let expected = crate::reasoning_effort_from_env();
+    let expected = crate::config()
+        .llm
+        .reasoning_effort
+        .clone()
+        .filter(|value| !value.trim().is_empty() && !value.eq_ignore_ascii_case("none"));
     assert_eq!(
         body_of(&requests[0])
             .get("reasoning_effort")
