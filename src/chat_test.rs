@@ -1787,3 +1787,67 @@ async fn web_search_marks_the_message_once_per_reply() {
     server.abort();
     llm.task.abort();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn read_url_marks_the_message_once_per_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let (bot, calls, server) = recording_bot(true, true).await;
+    let page_url = "https://read-url-ack.test/page";
+    let llm = mock_server(vec![
+        tool_response("read_url", serde_json::json!({"url": page_url})),
+        tool_response("read_url", serde_json::json!({"url": page_url})),
+        reply_response("ок"),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let prompt = format!("открой {page_url}");
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(2),
+        sender_name: "tester",
+        message_id: 7,
+        owner: true,
+        prompt: &prompt,
+        image: None,
+        followup: false,
+        reply_context: None,
+        bot: Some(&bot),
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "ок");
+    let calls = calls.lock().await;
+    let reactions: Vec<_> = calls
+        .iter()
+        .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
+        .collect();
+    assert_eq!(reactions.len(), 1, "{calls:?}");
+    let body: Value = serde_json::from_str(&reactions[0].1).unwrap();
+    assert_eq!(body["chat_id"], 1);
+    assert_eq!(body["message_id"], 7);
+    assert_eq!(body["reaction"][0]["emoji"], "👀");
+    server.abort();
+    llm.task.abort();
+}
