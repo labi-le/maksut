@@ -1,6 +1,6 @@
 # Free chat, memory, stickers, and tools
 
-> **When to read this:** Read before touching `src/chat.rs`, `src/chat_client.rs`, `src/chat_media.rs`, `src/chat_status.rs`, `src/chat_style.rs`, `src/chat_tools.rs`, `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs`, `src/research.rs`, `src/tool_registry.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`, `src/memory.rs`, `src/stickers.rs`, or `tools/build_sticker_index.py`.
+> **When to read this:** Read before touching `src/chat.rs`, `src/chat_client.rs`, `src/chat_media.rs`, `src/chat_status.rs`, `src/chat_style.rs`, `src/chat_tools.rs`, `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs`, `src/browser.rs`, `src/research.rs`, `src/tool_registry.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`, `src/memory.rs`, `src/stickers.rs`, or `tools/build_sticker_index.py`.
 
 ## Module map
 
@@ -15,6 +15,7 @@ Free chat is split by concern across focused modules and subsystem test files:
 | `src/chat_style.rs`, `src/chat_text.rs` | `src/chat_test.rs` | addressing (`chat_prompt`, `resolve_addressed_chat`), spam suppression (`is_repeated_user_spam`), non-owner system notice (`non_owner_system_notice`), empty-reply detection (`reply_is_empty`), author/reply-context formatting, chunking (`split_message`, `TELEGRAM_MESSAGE_CHARS`), reply styling, Moscow timestamp formatting, citation sanitizing |
 | `src/chat_tools.rs` | `src/chat_test.rs` | function-tool execution and per-reply budgets |
 | `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs` | `src/chat_test.rs`, `src/research_test.rs` | omp-style keyless search chain (`Auto`), `Public` multi-engine consensus fanout, provider transports, and HTML/JSON/MCP parsers |
+| `src/browser.rs` | `src/browser_test.rs` | Firefox navigation header set shared by `read_url` and the public HTML search engines |
 | `src/research.rs` | `src/research_test.rs` | multi-query research over `public_web_search` and dossier rendering |
 | `src/tool_registry.rs` | `src/tool_registry_test.rs` | tool schemas, visibility, authorization |
 | `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs` | `src/read_url_test.rs` | public page reader, `:A-B`/`:-N`/`:raw` selectors, special site handlers (GitHub/Reddit/Wikipedia/HN/crates.io/PyPI), RSS/Atom markdown, HTML extraction, and complexity guard |

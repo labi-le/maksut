@@ -1,11 +1,10 @@
+use crate::browser::{navigation_headers, referer_site, HTML_ACCEPT, USER_AGENT};
 use crate::prelude::*;
 use crate::search::{SearchClient, SearchFailure, SearchHit};
 use crate::search_parse::*;
 use serde_json::json;
 
 const MAX_SEARCH_BYTES: usize = 512 * 1024;
-const SEARCH_USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
 
 impl SearchClient {
     fn map_error(error: reqwest::Error) -> SearchFailure {
@@ -36,10 +35,11 @@ impl SearchClient {
         referer: &str,
         blocked_markers: &[&str],
     ) -> Result<String, SearchFailure> {
-        let response = self
-            .http
-            .get(url)
-            .header("user-agent", SEARCH_USER_AGENT)
+        let site = url
+            .scheme()
+            .eq("https")
+            .then(|| referer_site(&url, referer));
+        let response = navigation_headers(self.http.get(url), HTML_ACCEPT, site)
             .header("referer", referer)
             .send()
             .await
@@ -258,7 +258,7 @@ impl SearchClient {
             .post(url.clone())
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream")
-            .header("user-agent", SEARCH_USER_AGENT)
+            .header("user-agent", USER_AGENT)
             .body(body.to_string())
             .send()
             .await

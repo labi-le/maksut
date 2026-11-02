@@ -1,7 +1,9 @@
+use crate::browser::{navigation_headers, NONE_SITE};
 use crate::permitted_ipv4;
 use crate::prelude::*;
 pub(crate) use crate::read_url_html::*;
 pub(crate) use crate::read_url_sites::*;
+use reqwest::header::HeaderValue;
 use std::sync::{LazyLock, Mutex};
 
 const READ_URL_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -20,7 +22,11 @@ const READ_URL_FOOTER_BUDGET_CHARS: usize = 4000;
 // of elements and nesting depth before handing HTML to readability.
 pub(crate) const READ_URL_MAX_HTML_ELEMENTS: usize = 20_000;
 pub(crate) const READ_URL_MAX_HTML_DEPTH: usize = 128;
-const READ_URL_USER_AGENT: &str = "Maksut/0.1 (+https://github.com/labi-le/maxwell)";
+// `read_url` negotiates Markdown ahead of HTML: some sites serve a Markdown
+// rendering on request, and every `text/*` body is returned as text.
+const READ_URL_ACCEPT: HeaderValue = HeaderValue::from_static(
+    "text/markdown,text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5",
+);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReadPage {
@@ -109,14 +115,11 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
         let client = time::timeout(remaining, pinned_public_client(&url))
             .await
             .map_err(|_| ReadUrlError::Timeout)??;
-        let request = client
-            .get(url.clone())
-            .header(
-                reqwest::header::ACCEPT,
-                "text/markdown,text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5",
-            )
-            .header(reqwest::header::ACCEPT_LANGUAGE, "ru,en;q=0.8")
-            .header(reqwest::header::USER_AGENT, READ_URL_USER_AGENT);
+        let request = navigation_headers(
+            client.get(url.clone()),
+            READ_URL_ACCEPT,
+            url.scheme().eq("https").then_some(NONE_SITE),
+        );
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
