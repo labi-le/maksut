@@ -306,5 +306,33 @@ class ApprovalTests(unittest.TestCase):
             self.assertEqual(stored["feedback"], "сделай иначе")
 
 
+class SourceReloadTests(unittest.TestCase):
+    def test_changed_source_requests_a_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load(tmp)
+            script = pathlib.Path(tmp) / "orchestrator.py"
+            script.write_text("POLL_SECONDS = 5\n")
+            started = module.source_fingerprint(script)
+            self.assertFalse(module.newer_source(started, script))
+            script.write_text("POLL_SECONDS = 6\n")
+            self.assertTrue(module.newer_source(started, script))
+
+    def test_half_written_source_keeps_the_running_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load(tmp)
+            script = pathlib.Path(tmp) / "orchestrator.py"
+            script.write_text("POLL_SECONDS = 5\n")
+            started = module.source_fingerprint(script)
+            script.write_text("def main(:\n")
+            self.assertFalse(module.newer_source(started, script))
+
+    def test_missing_source_keeps_the_running_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module = load(tmp)
+            started = module.source_fingerprint(pathlib.Path(tmp) / "gone.py")
+            self.assertIsNone(started)
+            self.assertFalse(module.newer_source(started, pathlib.Path(tmp) / "gone.py"))
+
+
 if __name__ == "__main__":
     unittest.main()

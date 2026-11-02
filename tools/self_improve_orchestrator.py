@@ -10,6 +10,7 @@ It never interprets chat text as a shell command.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -26,10 +27,40 @@ GITHUB_REPO = os.environ.get("SELF_IMPROVE_GITHUB_REPO", "labi-le/maxwell")
 GH = os.environ.get("SELF_IMPROVE_GH", shutil.which("gh") or "gh")
 POLL_SECONDS = 5
 MAX_PROCESSED = 1000
+SCRIPT = Path(__file__).resolve()
 
 
 def log(message: str) -> None:
     print(f"self-improve: {message}", file=sys.stderr, flush=True)
+
+
+def source_fingerprint(path: Path = SCRIPT) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def newer_source(started: str | None, path: Path = SCRIPT) -> bool:
+    """True when `path` holds compilable code that differs from the loaded one.
+
+    The host checkout moves under this process on every deploy, so the loop
+    re-executes itself instead of waiting for a manual `systemctl restart`.
+    A file caught mid-write must not take the service down with a SyntaxError.
+    """
+    if started is None:
+        return False
+    try:
+        source = path.read_bytes()
+    except OSError:
+        return False
+    if hashlib.sha256(source).hexdigest() == started:
+        return False
+    try:
+        compile(source, str(path), "exec")
+    except (SyntaxError, ValueError):
+        return False
+    return True
 
 
 def run(
@@ -242,7 +273,11 @@ def main() -> int:
     for name in ("inbox", "outbox", "approvals", "rejections", "tmp", "notified"):
         (QUEUE / name).mkdir(parents=True, exist_ok=True)
     processed: dict[str, None] = {}
+    fingerprint = source_fingerprint()
     while True:
+        if newer_source(fingerprint):
+            log("source changed on disk, restarting with the new code")
+            os.execv(sys.executable, [sys.executable, str(SCRIPT)])
         if (QUEUE / "off").exists():
             time.sleep(POLL_SECONDS)
             continue
