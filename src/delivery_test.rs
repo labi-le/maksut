@@ -814,6 +814,16 @@ async fn features_single_photo_and_audio_document_fallback_cache_the_actual_deli
         assert_eq!(media[1].method, "senddocument");
         assert_eq!(requests.last().unwrap().method, "deletemessage");
         feature_silent(&requests);
+        let (_, recent) = crate::memory::load_memory(&fixture.cfg.database, ChatId(1), 999)
+            .await
+            .unwrap();
+        assert!(
+            recent.iter().any(|m| m.role == "assistant"
+                && m.text
+                    .contains("[отправил файл по ссылке https://www.youtube.com/playlist]")),
+            "delivered media must be recorded in chat_messages so follow-up chat knows what was sent: {:?}",
+            recent.iter().map(|m| &m.text).collect::<Vec<_>>()
+        );
         let calls = fixture.calls();
         fixture.api.clear().await;
         fixture.send(1, 1, "Current", LINK).await;

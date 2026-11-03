@@ -396,17 +396,55 @@ fn speaker_handles(sender_name: &str, username: Option<&str>) -> Vec<String> {
     handles
 }
 
-fn line_matches_speaker(line: &str, speaker_handles: &[String]) -> bool {
+fn speaker_name_stems(sender_name: &str, owner: bool) -> Vec<String> {
+    let head = sender_name.split('(').next().unwrap_or(sender_name);
+    let mut stems: Vec<String> = head
+        .split(|c: char| !c.is_alphanumeric())
+        .filter_map(|w| {
+            let lower = w.to_lowercase();
+            (lower.chars().count() >= 4).then(|| lower.chars().take(4).collect())
+        })
+        .collect();
+    if owner {
+        let d = "дени".to_owned();
+        if !stems.contains(&d) {
+            stems.push(d);
+        }
+    }
+    stems
+}
+
+fn directive_topic(line: &str) -> Option<&str> {
+    line.strip_prefix("- [owner] ")?
+        .split_once(':')
+        .map(|(t, _)| t.trim())
+}
+
+fn topic_matches_speaker(line: &str, stems: &[String]) -> bool {
+    let Some(topic) = directive_topic(line) else {
+        return false;
+    };
+    topic
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 4)
+        .any(|w| {
+            let lower = w.to_lowercase();
+            stems.iter().any(|s| lower.starts_with(s))
+        })
+}
+
+fn line_matches_speaker(line: &str, speaker_handles: &[String], speaker_stems: &[String]) -> bool {
     let line_handles = extract_at_handles(line);
     line_handles.is_empty()
         || line_handles
             .iter()
             .any(|lh| speaker_handles.iter().any(|sh| sh == lh))
+        || topic_matches_speaker(line, speaker_stems)
 }
 
 /// Keeps code-verified facts, general `- [owner]` directives (no `@handle`),
-/// and per-user `- [owner]` directives whose `@handle` matches the current
-/// speaker (all rows stay visible on owner turns so the owner sees every rule).
+/// and per-user `- [owner]` directives whose `@handle` or topic name matches the
+/// current speaker (all rows stay visible on owner turns so the owner sees every rule).
 pub(crate) fn filter_self_memory(
     self_memory: &str,
     sender_name: &str,
@@ -417,9 +455,10 @@ pub(crate) fn filter_self_memory(
         return self_memory.to_owned();
     }
     let handles = speaker_handles(sender_name, username);
+    let stems = speaker_name_stems(sender_name, owner);
     self_memory
         .lines()
-        .filter(|l| !l.starts_with("- [owner]") || line_matches_speaker(l, &handles))
+        .filter(|l| !l.starts_with("- [owner]") || line_matches_speaker(l, &handles, &stems))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -431,8 +470,8 @@ fn extract_reply_author_handles(reply_context: &str) -> Vec<String> {
     extract_at_handles(header)
 }
 
-/// Retains `- [owner]` directives that are general or whose `@handle` matches
-/// the current speaker (or, on owner turns, the replied-to author in `reply_context`).
+/// Retains `- [owner]` directives that are general or whose `@handle` or topic
+/// name matches the current speaker (or, on owner turns, the replied-to author).
 pub(crate) fn speaker_owner_directives(
     self_memory: &str,
     sender_name: &str,
@@ -441,6 +480,7 @@ pub(crate) fn speaker_owner_directives(
     reply_context: Option<&str>,
 ) -> String {
     let mut handles = speaker_handles(sender_name, username);
+    let stems = speaker_name_stems(sender_name, owner);
     if owner {
         if let Some(ctx) = reply_context {
             for h in extract_reply_author_handles(ctx) {
@@ -452,7 +492,7 @@ pub(crate) fn speaker_owner_directives(
     }
     self_memory
         .lines()
-        .filter(|l| l.starts_with("- [owner]") && line_matches_speaker(l, &handles))
+        .filter(|l| l.starts_with("- [owner]") && line_matches_speaker(l, &handles, &stems))
         .collect::<Vec<_>>()
         .join("\n")
 }

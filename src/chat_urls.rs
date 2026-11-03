@@ -196,3 +196,38 @@ fn normalize_line_anchor(frag: &str) -> Option<String> {
 fn is_line_num(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('0') && s.chars().all(|c| c.is_ascii_digit())
 }
+
+pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
+    let msk = unix_secs.saturating_add(3 * 3600).max(0);
+    let days = msk.div_euclid(86_400);
+    let rem = msk.rem_euclid(86_400);
+    let hour = rem / 3600;
+    let minute = (rem % 3600) / 60;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    if month <= 2 {
+        year += 1;
+    }
+    let weekday = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"]
+        .get((days + 4).rem_euclid(7) as usize)
+        .copied()
+        .unwrap_or("сб");
+    format!("{year:04}-{month:02}-{day:02} ({weekday}) {hour:02}:{minute:02} МСК (UTC+3)")
+}
+
+pub(crate) fn sticker_turn_hint(prompt: &str) -> &'static str {
+    if crate::chat_style::explicit_sticker_request(prompt) {
+        "пользователь просит стикер — обязательно вызови send_sticker в этом ответе\n"
+    } else if crate::chat_style::sticker_emotion_hint(prompt) {
+        "в реплике яркая эмоция или рофл — если это не research, вызови send_sticker (с коротким query по смыслу или через find_stickers) вместе с ответом\n"
+    } else {
+        ""
+    }
+}

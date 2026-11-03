@@ -167,6 +167,11 @@ fn style_reply_keeps_fenced_code_blocks_on_their_own_lines() {
         render_telegram_html(&md_link).as_deref(),
         Some("смотри <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L400\">snapcompact.rs#L400</a> и <code>fn build</code> в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L300\">chat.rs</a>")
     );
+    let bold_and_heading = style_reply("## Заголовок\n\n**Суть.** текст с `<tag>`.");
+    assert_eq!(
+        render_telegram_html(&bold_and_heading).as_deref(),
+        Some("<b>Заголовок</b>\n\n<b>Суть.</b> текст с <code>&lt;tag&gt;</code>")
+    );
 }
 
 #[test]
@@ -1755,6 +1760,19 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
             && !owner_reinforced.contains("(@newmdoupdate)"),
         "{owner_reinforced}"
     );
+    let cross_mentioned = "- [owner] обращение к денису: «сладкий» - только для Вадика (@CptIdea). К Денису обращаться повелитель\n- [owner] вадик: С Вадиком (@CptIdea) обращаться только «сладкий»";
+    let denis_directives = crate::code_inspect::speaker_owner_directives(
+        cross_mentioned,
+        "Денис (@crudoshlepa)",
+        Some("crudoshlepa"),
+        true,
+        None,
+    );
+    assert!(
+        denis_directives.contains("обращение к денису:")
+            && !denis_directives.contains("- [owner] вадик:"),
+        "owner topic matching must retain Denis's rule even when it mentions @CptIdea, without pulling Vadik's rule: {denis_directives}"
+    );
     let owner_replying_to_danya = crate::code_inspect::speaker_owner_directives(
         sample,
         "Денис",
@@ -2507,11 +2525,15 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
     assert!(crate::telegraph::explicit_article_request("разверни тему"));
     assert!(crate::telegraph::should_publish_telegraph(
         "расскажи подробнее",
-        &"а".repeat(900)
+        &"а".repeat(500)
     ));
     assert!(!crate::telegraph::should_publish_telegraph(
         "расскажи подробнее",
-        &"а".repeat(899)
+        &"а".repeat(499)
+    ));
+    assert!(crate::telegraph::should_publish_telegraph(
+        "на телеграфе статью",
+        &"а".repeat(220)
     ));
     assert!(crate::telegraph::should_publish_telegraph(
         "обычный вопрос",

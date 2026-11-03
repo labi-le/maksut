@@ -165,8 +165,9 @@ pub(crate) async fn download_videos_attempt(
     {
         cmd.arg("--add-header")
             .arg(format!("User-Agent: {TIKTOK_USER_AGENT}"));
-        // HEVC renditions can be silent even when yt-dlp reports an AAC codec.
-        cmd.arg("-S").arg("res,vcodec:h264");
+        // HEVC (bytevc1) renditions on TikTok are rejected by Telegram inline
+        // video playback; put `vcodec:h264` first so H.264 wins over higher-res HEVC.
+        cmd.arg("-S").arg("vcodec:h264,res");
     }
     let filter_applied = matches!(
         url.host_str(),
