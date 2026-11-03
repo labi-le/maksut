@@ -1,5 +1,20 @@
 use crate::*;
 
+const SECRET_MARKERS: &[&str] = &[
+    "sk-",
+    "ghp_",
+    "xoxb",
+    "akia",
+    "-----begin",
+    "password=",
+    "password:",
+    "token=",
+    "token:",
+    "cookie:",
+    "api_key",
+    "api key",
+];
+
 pub(crate) fn detect_flags(text: &str) -> i64 {
     let trimmed = text.trim();
     let mut flags = 0;
@@ -35,20 +50,6 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
     if INJECTIONS.iter().any(|marker| lowered.contains(marker)) {
         flags |= FLAG_INJECTION;
     }
-    const SECRET_MARKERS: &[&str] = &[
-        "sk-",
-        "ghp_",
-        "xoxb",
-        "akia",
-        "-----begin",
-        "password=",
-        "password:",
-        "token=",
-        "token:",
-        "cookie:",
-        "api_key",
-        "api key",
-    ];
     if SECRET_MARKERS.iter().any(|marker| lowered.contains(marker)) {
         flags |= FLAG_SECRET;
     }
@@ -63,6 +64,25 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
         flags |= FLAG_INJECTION;
     }
     flags
+}
+
+/// Credential check for text leaving the process, used before publishing an
+/// article. `detect_flags` treats any 40-character alphanumeric run with a
+/// digit as a secret, which every technical answer about `HTTP 204` or `esp32`
+/// trips; publication blocks only on the marker list or one unbroken token
+/// shaped like a key.
+pub(crate) fn credential_like(text: &str) -> bool {
+    let lowered = text.to_lowercase();
+    if SECRET_MARKERS.iter().any(|marker| lowered.contains(marker)) {
+        return true;
+    }
+    text.split_whitespace().any(|token| {
+        token.chars().count() >= 40
+            && token.chars().any(|ch| ch.is_ascii_digit())
+            && token
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    })
 }
 
 /// High-confidence prompt-injection markers that justify a 24-hour ignore.
