@@ -22,7 +22,7 @@ exit 1
     assert!(!result.process_ok);
     let args = fs::read_to_string(root.path().join("args")).unwrap();
     assert!(args.contains(&format!("--add-header\nUser-Agent: {TIKTOK_USER_AGENT}\n")));
-    assert!(args.contains("-S\nres,vcodec:h264\n"));
+    assert!(args.contains("-S\nvcodec:h264,res\n"));
     assert!(!args.lines().any(|arg| arg == "--cookies"));
     assert_eq!(
         fs::read_to_string(root.path().join("calls"))

@@ -1,9 +1,9 @@
 //! Publishes long-form or explicitly requested article/code replies to `telegra.ph`
-//! (`>= 900` chars on explicit article/detail requests, `>= 1800` chars across
-//! multiple lines/paragraphs/code blocks, or `> chat.reply_max_chars`), returning
-//! a concise chat message with a brief preview and the verified `https://telegra.ph/...`
-//! article link; falls back to `split_message` when Telegraph is unreachable or
-//! the text carries a credential (`credential_like`).
+//! (`>= 200` chars on explicit `telegra.ph` requests, `>= 500` chars on explicit
+//! article/detail requests, `>= 1800` chars across multiple lines/paragraphs/code
+//! blocks, or `> chat.reply_max_chars`), returning a concise chat message with a
+//! brief preview and the verified `https://telegra.ph/...` article link; falls back
+//! to `split_message` when Telegraph is unreachable or the text carries a credential.
 
 use crate::chat_text::{fence_open_ticks, is_fence_close, shorten};
 use crate::config::config;
@@ -180,9 +180,7 @@ async fn ensure_telegraph_token(client: &reqwest::Client, base: &Url) -> Option<
 }
 
 /// Article text leaves the process only when it carries no high-confidence
-/// credential. `detect_flags` flags `FLAG_SECRET` on 40+ ASCII alphanumerics
-/// counted across the whole text plus one digit, so it marks ordinary technical
-/// prose; publication uses `credential_like` instead.
+/// credential (`credential_like`).
 pub(crate) fn article_is_publishable(text: &str) -> bool {
     !crate::memory_guard::credential_like(text)
 }
@@ -225,10 +223,10 @@ pub(crate) async fn publish_telegraph_with_base(
 }
 
 /// Publishes `text` to `https://api.telegra.ph` when `text` exceeds
-/// `config().chat.reply_max_chars` (or `>= 900` chars when `prompt` explicitly
-/// asks for an article/detailed breakdown, or `>= 1800` chars across multiple
-/// paragraphs/code blocks), returning the formatted short chat message with the
-/// `telegra.ph` link.
+/// `config().chat.reply_max_chars` (or `>= 200` chars on an explicit `telegra.ph`
+/// request, `>= 500` chars when `prompt` asks for an article/detailed breakdown,
+/// or `>= 1800` chars across multiple paragraphs/code blocks), returning the
+/// formatted short chat message with the `telegra.ph` link.
 pub(crate) async fn maybe_publish_reply(title: &str, prompt: &str, text: &str) -> Option<String> {
     if !should_publish_telegraph(prompt, text) {
         return None;
@@ -241,22 +239,23 @@ pub(crate) async fn maybe_publish_reply(title: &str, prompt: &str, text: &str) -
 pub(crate) fn should_publish_telegraph(prompt: &str, text: &str) -> bool {
     let count = text.chars().count();
     let over_limit = count > config().chat.reply_max_chars;
-    let long_form = (explicit_article_request(prompt) && count >= 900)
+    let direct_telegraph = explicit_telegraph_request(prompt) && count >= 200;
+    let long_form = (explicit_article_request(prompt) && count >= 500)
         || (text.contains('\n') && count >= 1800);
-    over_limit || long_form
+    over_limit || direct_telegraph || long_form
+}
+
+pub(crate) fn explicit_telegraph_request(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    ["телеграф", "telegra.ph", "telegraph"]
+        .iter()
+        .any(|kw| lower.contains(kw))
 }
 
 pub(crate) fn explicit_article_request(prompt: &str) -> bool {
     let lower = prompt.to_lowercase();
-    [
-        "стать",
-        "телеграф",
-        "telegra.ph",
-        "подробн",
-        "развёрн",
-        "разверн",
-        "лонгрид",
-    ]
-    .iter()
-    .any(|kw| lower.contains(kw))
+    explicit_telegraph_request(prompt)
+        || ["стать", "подробн", "развёрн", "разверн", "лонгрид"]
+            .iter()
+            .any(|kw| lower.contains(kw))
 }

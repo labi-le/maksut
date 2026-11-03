@@ -1057,7 +1057,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "chat": {"id": group.0, "type": "supergroup"},
         "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
         "forward_origin": {"type": "hidden_user", "date": 1700000000, "sender_user_name": "Мышеловка"},
-        "text": "ок",
+        "text": "?!",
     }))
     .unwrap();
     handle_message(api.bot.clone(), forwarded_short, Arc::clone(&cfg))
@@ -1114,8 +1114,8 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "forwarded post must record both first_name and @username plus [переслано]: {first_raw}"
     );
     assert!(
-        !first_raw.contains("Вадик (@CptIdea) [28]: [переслано] ок"),
-        "forwarded short junk (<4 chars) must retain FLAG_JUNK and be excluded from recent memory: {first_raw}"
+        !first_raw.contains("Вадик (@CptIdea) [28]: [переслано] ?!"),
+        "forwarded punctuation-only junk must retain FLAG_JUNK and be excluded from recent memory: {first_raw}"
     );
     assert!(
         first_raw.contains("Владулик (@zettpower) [46]: oluhi zabili turn off vpn"),
@@ -1358,7 +1358,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "date": 1700000009,
         "chat": {"id": group.0, "type": "supergroup"},
         "from": {"id": 28, "is_bot": false, "first_name": "Вадик", "username": "CptIdea"},
-        "text": "максут сука да отъебись",
+        "text": "максут НЕ ПИЗДИ",
     }))
     .unwrap();
     handle_message(api.bot.clone(), non_owner_addressed_stop, Arc::clone(&cfg))
@@ -1367,6 +1367,27 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
     assert!(
         !cfg.chat.as_ref().unwrap().followup_active(group).await,
         "addressed non-owner stop phrase must clear followup window after delivery"
+    );
+    cfg.chat.as_ref().unwrap().note_reply(group).await;
+    api.clear().await;
+    let followup_stop: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 210,
+        "date": 1700000010,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис", "username": "crudoshlepa"},
+        "text": "НЕ ПИЗДИ",
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), followup_stop, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    assert!(
+        api.snapshot().await.is_empty(),
+        "stop phrase in active followup must silence the bot without sending a reply"
+    );
+    assert!(
+        !cfg.chat.as_ref().unwrap().followup_active(group).await,
+        "stop phrase in active followup must clear the followup window"
     );
     llm.task.abort();
 }

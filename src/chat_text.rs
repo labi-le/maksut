@@ -140,10 +140,15 @@ pub(crate) fn flatten_reply_text(text: &str) -> String {
 }
 
 /// Renders a styled plain-text chunk into Telegram HTML (`ParseMode::Html`)
-/// when it contains a fenced code block, inline backtick span, or markdown
-/// link `[label](url)`, or `None` when plain-text delivery suffices.
+/// when it contains a fenced code block, inline backtick span, markdown link
+/// `[label](url)`, `**bold**` span, or `#` heading, or `None` when plain-text
+/// delivery suffices.
 pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
-    if !text.contains('`') && !text.contains("](") {
+    if !text.contains('`')
+        && !text.contains("](")
+        && !text.contains("**")
+        && !text.lines().any(|l| markdown_heading_body(l).is_some())
+    {
         return None;
     }
     let mut out = String::with_capacity(text.len() + 32);
@@ -171,6 +176,10 @@ pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
             in_code = true;
             fence_ticks = ticks;
             lang = fence_language(line, ticks);
+        } else if let Some(heading) = markdown_heading_body(line) {
+            let (rendered, _) = render_inline_code_html(heading);
+            push_line(&mut out, &format!("<b>{rendered}</b>"));
+            formatted = true;
         } else {
             let (rendered, line_has_code) = render_inline_code_html(line);
             formatted |= line_has_code;
@@ -247,15 +256,49 @@ fn render_inline_code_html(line: &str) -> (String, bool) {
     (out, formatted)
 }
 
+fn markdown_heading_body(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
+    if !(1..=4).contains(&hashes) {
+        return None;
+    }
+    let rest = trimmed.get(hashes..)?.strip_prefix(' ')?.trim();
+    (!rest.is_empty()).then_some(rest)
+}
+
+fn push_prose_with_bold_html(out: &mut String, text: &str) -> bool {
+    let mut rest = text;
+    let mut formatted = false;
+    while let Some(open) = rest.find("**") {
+        push_escaped_html(out, rest.get(..open).unwrap_or(""));
+        let after_open = rest.get(open + 2..).unwrap_or("");
+        if let Some(close) = after_open.find("**") {
+            let span = after_open.get(..close).unwrap_or("").trim();
+            if !span.is_empty() && !span.contains('\n') {
+                out.push_str("<b>");
+                push_escaped_html(out, span);
+                out.push_str("</b>");
+                formatted = true;
+                rest = after_open.get(close + 2..).unwrap_or("");
+                continue;
+            }
+        }
+        out.push_str("**");
+        rest = after_open;
+    }
+    push_escaped_html(out, rest);
+    formatted
+}
+
 fn push_prose_with_links_html(out: &mut String, text: &str) -> bool {
     let mut rest = text;
     let mut formatted = false;
     while let Some(open) = rest.find('[') {
-        push_escaped_html(out, rest.get(..open).unwrap_or(""));
+        formatted |= push_prose_with_bold_html(out, rest.get(..open).unwrap_or(""));
         let after_open = rest.get(open + 1..).unwrap_or("");
         let Some(mid) = after_open.find("](") else {
             out.push('[');
-            push_escaped_html(out, after_open);
+            formatted |= push_prose_with_bold_html(out, after_open);
             return formatted;
         };
         let label = after_open.get(..mid).unwrap_or("").trim();
@@ -287,7 +330,7 @@ fn push_prose_with_links_html(out: &mut String, text: &str) -> bool {
         out.push('[');
         rest = after_open;
     }
-    push_escaped_html(out, rest);
+    formatted |= push_prose_with_bold_html(out, rest);
     formatted
 }
 
@@ -343,17 +386,15 @@ fn push_escaped_html(out: &mut String, text: &str) {
 /// `true` when `text` ends inside an unclosed fenced code block, so trailing
 /// prose punctuation must not be stripped from code.
 pub(crate) fn ends_inside_fence(text: &str) -> bool {
-    let mut in_code = false;
-    let mut fence_ticks = 0;
-    for line in text.lines() {
-        if in_code {
-            in_code = !is_fence_close(line, fence_ticks);
-        } else if let Some(ticks) = fence_open_ticks(line) {
-            in_code = true;
-            fence_ticks = ticks;
-        }
-    }
-    in_code
+    text.lines()
+        .fold((false, 0), |(in_code, ticks), line| {
+            if in_code {
+                (!is_fence_close(line, ticks), ticks)
+            } else {
+                fence_open_ticks(line).map_or((false, 0), |t| (true, t))
+            }
+        })
+        .0
 }
 
 /// Backtick count of an opening fence line (at least three), or `None` for
@@ -403,23 +444,19 @@ pub(crate) fn truncate_text(text: &str, max_chars: usize) -> String {
         return text.to_owned();
     };
     let cut = head.rfind(char::is_whitespace).unwrap_or(head.len());
-    let head = if cut == 0 {
-        head
-    } else {
-        head.get(..cut).unwrap_or(head)
-    };
+    let head = (cut != 0)
+        .then(|| head.get(..cut))
+        .flatten()
+        .unwrap_or(head);
     head.trim_end().to_owned()
 }
 
 pub(crate) fn is_bidi_or_control(ch: char) -> bool {
     ch.is_control()
-        || matches!(ch as u32,
-            0x00AD
-            | 0x200B..=0x200F
-            | 0x202A..=0x202E
-            | 0x2066..=0x2069
-            | 0xFEFF)
+        || matches!(ch as u32, 0x00AD | 0x200B..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069 | 0xFEFF)
 }
+
+pub(crate) use crate::chat_urls::format_moscow_time;
 
 pub(crate) fn strip_url_schemes(text: &str) -> String {
     const SCHEMES: [&str; 7] = [
@@ -459,34 +496,4 @@ pub(crate) fn strip_url_schemes(text: &str) -> String {
         index += ch.len_utf8();
     }
     output
-}
-
-pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
-    let msk = unix_secs.saturating_add(3 * 3600).max(0);
-    let days = msk.div_euclid(86_400);
-    let rem = msk.rem_euclid(86_400);
-    let hour = rem / 3600;
-    let minute = (rem % 3600) / 60;
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    if month <= 2 {
-        year += 1;
-    }
-    let weekday = match (days + 4).rem_euclid(7) {
-        0 => "вс",
-        1 => "пн",
-        2 => "вт",
-        3 => "ср",
-        4 => "чт",
-        5 => "пт",
-        _ => "сб",
-    };
-    format!("{year:04}-{month:02}-{day:02} ({weekday}) {hour:02}:{minute:02} МСК (UTC+3)")
 }
