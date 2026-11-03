@@ -271,18 +271,34 @@ fn expects_answer(text: &str) -> bool {
         return true;
     }
     let lower = text.to_lowercase();
-    if lower.starts_with("а если ")
-        || lower.starts_with("а про ")
-        || lower.starts_with("а по ")
-        || lower.starts_with("а насчет ")
-        || lower.starts_with("а насчёт ")
-        || lower.starts_with("а без ")
-        || lower.starts_with("а с ")
-        || lower.contains("твои мысли")
-        || lower.contains("че думаешь")
-        || lower.contains("чё думаешь")
-        || lower.contains("что думаешь")
-        || lower.contains("как думаешь")
+    const FOLLOWUP_PREFIXES: &[&str] = &[
+        "а если ",
+        "а про ",
+        "а по ",
+        "а насчет ",
+        "а насчёт ",
+        "а без ",
+        "а с ",
+        "а не ",
+        "а давай",
+        "а может",
+        "не хочешь",
+        "может ",
+        "давай ",
+    ];
+    const FOLLOWUP_PHRASES: &[&str] = &[
+        "твои мысли",
+        "че думаешь",
+        "чё думаешь",
+        "что думаешь",
+        "как думаешь",
+        "а не лучше",
+        "а не проще",
+        "а не хочешь",
+        "не лучше ли",
+    ];
+    if FOLLOWUP_PREFIXES.iter().any(|p| lower.starts_with(p))
+        || FOLLOWUP_PHRASES.iter().any(|p| lower.contains(p))
     {
         return true;
     }

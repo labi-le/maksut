@@ -118,9 +118,13 @@ fn push_expanded_repo_token(out: &mut String, word: &str) {
         return;
     };
     out.push_str(word.get(..start).unwrap_or("").trim_end_matches('`'));
+    out.push('[');
+    out.push_str(&normalized);
+    out.push_str("](");
     out.push_str(crate::code_inspect::GITHUB_BLOB_BASE);
     out.push('/');
     out.push_str(&normalized);
+    out.push(')');
     out.push_str(word.get(end..).unwrap_or("").trim_start_matches('`'));
 }
 

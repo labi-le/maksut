@@ -477,8 +477,7 @@ pub(crate) fn should_publish_telegraph(prompt: &str, text: &str) -> bool {
     let count = text.chars().count();
     let over_limit = count > config().chat.reply_max_chars;
     let direct_telegraph = explicit_telegraph_request(prompt) && count >= 200;
-    let long_form = (explicit_article_request(prompt) && count >= 500)
-        || (text.contains('\n') && count >= 1800);
+    let long_form = explicit_article_request(prompt) && count >= 500;
     over_limit || direct_telegraph || long_form
 }
 

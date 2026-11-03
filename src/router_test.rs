@@ -123,6 +123,14 @@ fn followup_questions_and_requests_reply() {
         decide_rules(&followup("а если из эротики")),
         Decision::Reply
     );
+    assert_eq!(
+        decide_rules(&followup("а не хочешь себе возможность смотреть ишью и тд")),
+        Decision::Reply
+    );
+    assert_eq!(
+        decide_rules(&followup("а не лучше это в тулы вынести")),
+        Decision::Reply
+    );
     assert_eq!(decide_rules(&followup("извинись")), Decision::Reply);
     assert_eq!(decide_rules(&followup("оформи заявку")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);

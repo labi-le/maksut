@@ -486,7 +486,7 @@ pub(crate) async fn chat_reply_with_proposal(
         }
         if state.inspect_calls > 0 && !state.inspect_announced {
             state.inspect_announced = true;
-            messages.push(json!({"role": "system", "content": "Ты проверил свой код через inspect_code. В ответе ОБЯЗАТЕЛЬНО встрой прямые кликабельные ссылки на GitHub в текст (например `[src/snapcompact.rs#L400](https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L400)` или полную ссылку `https://github.com/labi-le/maxwell/blob/main/src/...#L...`), а код и идентификаторы оборачивай в `inline` или ```rust блоки, разбивая длинный ответ на абзацы."}));
+            messages.push(json!({"role": "system", "content": "Ты проверил свой код через inspect_code. В ответе ОБЯЗАТЕЛЬНО оформи ссылки на файлы как компактные кликабельные markdown-ссылки `[src/snapcompact.rs#L400](https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L400)` (не вставляй длинный сырой URL без анкора), а код и идентификаторы оборачивай в `inline` или ```rust блоки, разбивая длинный ответ на абзацы."}));
         }
         if state.research.used && !state.research.sources.is_empty() && !state.research.announced {
             state.research.announced = true;

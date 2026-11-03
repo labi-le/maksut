@@ -77,7 +77,7 @@ fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
     );
     assert_eq!(
         style_reply("пруф в /docs/adr/012-free-chat.md#L8, docs/guides/chat.md#delivery, см. src/chat.rs:10:, config_sections.rs#L275-277 и (src/memory.rs:15)."),
-        "пруф в https://github.com/labi-le/maxwell/blob/main/docs/adr/012-free-chat.md#L8, https://github.com/labi-le/maxwell/blob/main/docs/guides/chat.md#delivery, см. https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10:, https://github.com/labi-le/maxwell/blob/main/src/config_sections.rs#L275-L277 и (https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L15)"
+        "пруф в [docs/adr/012-free-chat.md#L8](https://github.com/labi-le/maxwell/blob/main/docs/adr/012-free-chat.md#L8), [docs/guides/chat.md#delivery](https://github.com/labi-le/maxwell/blob/main/docs/guides/chat.md#delivery), см. [src/chat.rs#L10](https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10):, [src/config_sections.rs#L275-L277](https://github.com/labi-le/maxwell/blob/main/src/config_sections.rs#L275-L277) и ([src/memory.rs#L15](https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L15))"
     );
     let near_limit = format!("{} src/chat.rs#L10 хвост", "слово ".repeat(645));
     let styled_near_limit = style_reply(&near_limit);
@@ -2432,11 +2432,11 @@ async fn inspect_code_injects_github_link_reminder_and_expands_bare_filenames() 
     .unwrap();
     assert_eq!(
         reply.text,
-        "сжатие контекста лежит в [snapcompact.rs#L1](https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1), а вызов идёт из https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260"
+        "сжатие контекста лежит в [snapcompact.rs#L1](https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1), а вызов идёт из [src/memory.rs#L260](https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260)"
     );
     assert_eq!(
         render_telegram_html(&reply.text).as_deref(),
-        Some("сжатие контекста лежит в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1\">snapcompact.rs#L1</a>, а вызов идёт из https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260")
+        Some("сжатие контекста лежит в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1\">snapcompact.rs#L1</a>, а вызов идёт из <a href=\"https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260\">src/memory.rs#L260</a>")
     );
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
@@ -2539,9 +2539,13 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
         "на телеграфе статью",
         &"а".repeat(220)
     ));
-    assert!(crate::telegraph::should_publish_telegraph(
+    assert!(!crate::telegraph::should_publish_telegraph(
         "обычный вопрос",
         &format!("первый абзац\n{}", "б".repeat(1800))
+    ));
+    assert!(crate::telegraph::should_publish_telegraph(
+        "обычный вопрос",
+        &format!("первый абзац\n{}", "б".repeat(3900))
     ));
     assert!(!crate::telegraph::should_publish_telegraph(
         "обычный вопрос",
