@@ -66,6 +66,7 @@ pub(crate) async fn fake_settings(root: &Path, script: &str) -> Settings {
         cookies_file: None,
         cookie_refresh_url: None,
         chat: None,
+        router: Router::default(),
         chat_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         self_improve_dir: root.join("self-improve"),
         sticker_replies: StickerReplies::for_tests(),

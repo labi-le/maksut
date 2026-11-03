@@ -1,6 +1,5 @@
 use crate::*;
 use serde_json::json;
-use teloxide::types::ChatAction;
 
 /// One inbound chat message plus who sent it.
 pub(crate) struct ChatTurn<'a> {
@@ -21,12 +20,6 @@ pub(crate) struct ChatReply {
     pub(crate) text: String,
     pub(crate) sticker: Option<FileId>,
     pub(crate) decision: Option<crate::self_improve::PendingDecision>,
-}
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 async fn record_assistant_reply(pool: &SqlitePool, chat_id: ChatId, text: &str, message_id: i32) {
     let _ = crate::memory::record_message(
@@ -59,6 +52,9 @@ pub(crate) async fn reply_with_chat(
             .await
             .is_ok_and(|e| e)
     {
+        return;
+    }
+    if cfg.router.gate(chat, message, &input).await != Decision::Reply {
         return;
     }
     chat.pace(sender.id).await;
@@ -188,19 +184,6 @@ async fn deliver_chat_reply(
     } else if delivered {
         chat.note_reply(message.chat.id).await;
     }
-}
-
-fn spawn_typing_keepalive(bot: Bot, chat_id: ChatId) -> AbortOnDrop {
-    AbortOnDrop(tokio::spawn(async move {
-        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
-        let d = Duration::from_secs(config().chat.typing_keepalive_secs);
-        while {
-            time::sleep(d).await;
-            bot.send_chat_action(chat_id, ChatAction::Typing)
-                .await
-                .is_ok()
-        } {}
-    }))
 }
 
 async fn send_chat_chunk(

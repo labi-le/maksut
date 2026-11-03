@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::RouterMode;
 
 #[derive(Clone)]
 pub(crate) struct ChatImage {
@@ -163,6 +164,7 @@ async fn download_image_once(
 pub(crate) struct ResolvedChatInput {
     pub(crate) prompt: String,
     pub(crate) followup: bool,
+    pub(crate) address: crate::addressing::AddressKind,
     pub(crate) pending_media: Option<(FileId, String)>,
     pub(crate) warn_missing_image: bool,
     pub(crate) reply_context: Option<String>,
@@ -204,6 +206,13 @@ pub(crate) async fn resolve_chat_input(
             .then(|| message.reply_to_message().and_then(message_image))
             .flatten()
     });
+    // The classifier repeats the name-form scan `resolve_addressed_chat` does
+    // next; mode `off` never reads the result, so do not pay for it.
+    let address = if cfg.router.mode() == RouterMode::Off {
+        crate::addressing::AddressKind::None
+    } else {
+        crate::addressing::address_kind(message, text, &cfg.bot_username)
+    };
     let (addressed, bare_sticker_reply) = crate::chat_style::resolve_addressed_chat(
         message,
         text,
@@ -220,7 +229,15 @@ pub(crate) async fn resolve_chat_input(
                 } else {
                     false
                 };
-            active.then(|| (trimmed.to_owned(), true))?
+            if active {
+                (trimmed.to_owned(), true)
+            } else if cfg.router.mode() != RouterMode::Off && !trimmed.is_empty() {
+                // A router mode may wake the bot on an unaddressed message;
+                // the decision happens before any model or media work.
+                (trimmed.to_owned(), false)
+            } else {
+                return None;
+            }
         }
         None => return None,
     };
@@ -232,6 +249,7 @@ pub(crate) async fn resolve_chat_input(
     Some(ResolvedChatInput {
         prompt,
         followup,
+        address,
         pending_media,
         warn_missing_image,
         reply_context,
