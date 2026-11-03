@@ -2,7 +2,8 @@
 //! (`>= 900` chars on explicit article/detail requests, `>= 1800` chars across
 //! multiple lines/paragraphs/code blocks, or `> chat.reply_max_chars`), returning
 //! a concise chat message with a brief preview and the verified `https://telegra.ph/...`
-//! article link; falls back to `split_message` when Telegraph is unreachable.
+//! article link; falls back to `split_message` when Telegraph is unreachable or
+//! the text carries a credential (`credential_like`).
 
 use crate::chat_text::{fence_open_ticks, is_fence_close, shorten};
 use crate::config::config;
@@ -179,9 +180,9 @@ async fn ensure_telegraph_token(client: &reqwest::Client, base: &Url) -> Option<
 }
 
 /// Article text leaves the process only when it carries no high-confidence
-/// credential; `credential_like` is deliberately narrower than
-/// `detect_flags`, whose "long alphanumeric run with a digit" rule flags every
-/// technical answer.
+/// credential. `detect_flags` flags `FLAG_SECRET` on 40+ ASCII alphanumerics
+/// counted across the whole text plus one digit, so it marks ordinary technical
+/// prose; publication uses `credential_like` instead.
 pub(crate) fn article_is_publishable(text: &str) -> bool {
     !crate::memory_guard::credential_like(text)
 }

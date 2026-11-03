@@ -67,22 +67,34 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
 }
 
 /// Credential check for text leaving the process, used before publishing an
-/// article. `detect_flags` treats any 40-character alphanumeric run with a
-/// digit as a secret, which every technical answer about `HTTP 204` or `esp32`
-/// trips; publication blocks only on the marker list or one unbroken token
-/// shaped like a key.
+/// article. `detect_flags` sets `FLAG_SECRET` when the trimmed text holds 40+
+/// ASCII alphanumerics in total (whitespace and punctuation discarded) and at
+/// least one digit, which is why every technical answer trips it; that
+/// whole-text rule still governs memory hygiene, while publication uses this
+/// narrower predicate.
+///
+/// A key is caught by an assignment marker or by one contiguous run of 32+
+/// `[A-Za-z0-9_-]` characters carrying a digit, so JWT segments, base64
+/// padding, `id:secret` Bot API tokens, and quoted literals stay visible
+/// without punctuation hiding them.
 pub(crate) fn credential_like(text: &str) -> bool {
     let lowered = text.to_lowercase();
-    if SECRET_MARKERS.iter().any(|marker| lowered.contains(marker)) {
+    let assigns_value = |name: &str| {
+        lowered
+            .split(name)
+            .skip(1)
+            .any(|rest| matches!(rest.trim_start().chars().next(), Some('=') | Some(':')))
+    };
+    let marked = SECRET_MARKERS
+        .iter()
+        .copied()
+        .filter(|name| !matches!(*name, "api_key" | "api key"))
+        .any(|name| lowered.contains(name));
+    if marked || assigns_value("api_key") || assigns_value("api key") {
         return true;
     }
-    text.split_whitespace().any(|token| {
-        token.chars().count() >= 40
-            && token.chars().any(|ch| ch.is_ascii_digit())
-            && token
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    })
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        .any(|run| run.chars().count() >= 32 && run.chars().any(|ch| ch.is_ascii_digit()))
 }
 
 /// High-confidence prompt-injection markers that justify a 24-hour ignore.

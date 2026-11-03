@@ -2543,3 +2543,27 @@ fn telegraph_publishes_technical_articles_and_withholds_credentials() {
         "one unbroken key-shaped token with digits blocks publication"
     );
 }
+
+#[test]
+fn telegraph_sees_keys_through_punctuation_and_quotes() {
+    let publishable = crate::telegraph::article_is_publishable;
+    let bot_token = format!("токен бота {}:{}", "5".repeat(9), "Qx7".repeat(12));
+    assert!(!publishable(&bot_token), "id:secret Bot API token");
+    let jwt = format!(
+        "Authorization: Bearer {}.{}.{}",
+        "h".repeat(40) + "1",
+        "p".repeat(40) + "2",
+        "s".repeat(10)
+    );
+    assert!(!publishable(&jwt), "JWT segments separated by dots");
+    let literal = format!("let key = \"{}\";", "Z".repeat(40) + "1");
+    assert!(!publishable(&literal), "quoted string literal in code");
+    assert!(
+        publishable("api key authenticates requests; X-API-Key is a header"),
+        "naming a credential without a value is not a credential"
+    );
+    assert!(
+        !publishable("export API_KEY=REPLACED"),
+        "an assigned api key name still blocks publication"
+    );
+}
