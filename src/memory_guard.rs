@@ -55,8 +55,9 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
     }
     // Deliberately coarse: this counter keeps long technical text out of the
     // memory-hygiene paths (load_memory, compaction, reply context), not out of
-    // the process. Text that leaves for `telegra.ph` is checked by the narrower
-    // `credential_like` instead.
+    // the process. Text that leaves for `telegra.ph` is checked by
+    // `credential_like` instead, whose run rule is about key shape rather than
+    // total length.
     let compact: String = trimmed
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
@@ -75,12 +76,14 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
 /// ASCII alphanumerics in total (whitespace and punctuation discarded) and at
 /// least one digit, which is why every technical answer trips it; that
 /// whole-text rule still governs memory hygiene, while publication uses this
-/// narrower predicate.
+/// predicate instead.
 ///
-/// A key is caught by an assignment marker or by one contiguous run of 32+
+/// A key is caught by one of the unconditional markers, by an `api_key` /
+/// `api key` name followed by `=` or `:`, or by one contiguous run of 32+
 /// `[A-Za-z0-9_-]` characters carrying a digit, so JWT segments, base64
 /// padding, `id:secret` Bot API tokens, and quoted literals stay visible
-/// without punctuation hiding them.
+/// without punctuation hiding them. The run rule also withholds an article that
+/// quotes a hex digest, a UUID, or another long digit-bearing identifier.
 pub(crate) fn credential_like(text: &str) -> bool {
     let lowered = text.to_lowercase();
     let assigns_value = |name: &str| {
