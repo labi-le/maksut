@@ -92,6 +92,18 @@ impl Router {
                 reply_context: input.reply_context.as_deref(),
             })
             .await;
+        if self.mode != RouterMode::Off {
+            tracing::info!(
+                chat_id = message.chat.id.0,
+                msg_id = message.id.0,
+                mode = ?self.mode,
+                address = ?input.address,
+                followup = input.followup,
+                stop = crate::chat_style::is_stop_followup(&input.prompt),
+                decision = ?decision,
+                "router decision"
+            );
+        }
         if decision == Decision::Silent {
             chat.clear_followup(message.chat.id).await;
         }
@@ -177,17 +189,23 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
 
 const QUESTION_WORDS: &[&str] = &[
     "что",
+    "че",
+    "чё",
+    "чо",
     "кто",
     "как",
     "где",
     "когда",
     "почему",
     "зачем",
+    "хули",
+    "нахуя",
     "какой",
     "какая",
     "какие",
     "каков",
     "сколько",
+    "скок",
     "куда",
     "откуда",
     "чей",
@@ -224,6 +242,10 @@ const REQUEST_STEMS: &[&str] = &[
     "нарису",
     "состав",
     "придум",
+    "предлож",
+    "попробу",
+    "кинь",
+    "глян",
 ];
 
 /// Followup turns answer only when they look like a real request; a plain
@@ -276,6 +298,10 @@ const REACTIONS: &[&str] = &[
     "кайф",
     "норм",
     "нормально",
+    "по факту",
+    "база",
+    "жиза",
+    "бывает",
 ];
 
 fn is_short_reaction(text: &str) -> bool {

@@ -279,7 +279,7 @@ fn normalize_spam_text(text: &str) -> String {
 }
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
     let t = text.to_lowercase();
-    ["скинь", "покажи", "добавь", "кинь"]
+    ["скинь", "покажи", "добавь", "кинь", "перестал", "не шл"]
         .iter()
         .any(|v| t.contains(v))
         && ["стикер", "пак", "девоч", "девуш"]
@@ -338,11 +338,18 @@ pub(crate) fn sticker_emotion_hint(text: &str) -> bool {
         "жесть",
         "капец",
         "имба",
+        "скуф",
+        "лалк",
+        "ботяр",
+        "красав",
+        "спизд",
+        "угор",
+        "ржу",
     ];
     STEMS.iter().any(|stem| text.contains(stem))
         || text
             .split(|ch: char| !ch.is_alphanumeric())
-            .any(|w| matches!(w, "ору" | "прод" | "лол" | "кек" | "ура"))
+            .any(|w| matches!(w, "ору" | "прод" | "лол" | "кек" | "ура" | "топ" | "жиза"))
 }
 
 pub(crate) fn display_author_name(user: &teloxide::types::User) -> String {

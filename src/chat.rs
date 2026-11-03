@@ -153,10 +153,11 @@ async fn deliver_chat_reply(
         .as_ref()
         .and_then(crate::self_improve::decision_markup);
     let p = message.text().or_else(|| message.caption()).unwrap_or("");
+    let mut out = None;
     let mut chunks = if followup && is_pass_reply(&reply.text) {
         Vec::new()
     } else {
-        let out = crate::telegraph::maybe_publish_reply(p, &reply.text).await;
+        out = crate::telegraph::maybe_publish_reply(p, &reply.text).await;
         split_message(out.as_deref().unwrap_or(&reply.text))
     };
     if chunks.is_empty() && markup.is_some() {
@@ -172,10 +173,10 @@ async fn deliver_chat_reply(
         }
     }
     if let Some(id) = first_id {
-        let rec = if reply.text.trim().is_empty() {
-            "жми кнопку"
-        } else {
-            &reply.text
+        let rec = match out.as_deref() {
+            Some(published) => published,
+            None if reply.text.trim().is_empty() => "жми кнопку",
+            None => &reply.text,
         };
         record_assistant_reply(&cfg.database, message.chat.id, rec, id).await;
     }

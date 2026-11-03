@@ -55,8 +55,39 @@ fn name_forms_reply_only_with_content() {
         decide_rules(&input("", AddressKind::Named)),
         Decision::Silent
     );
+    for msg in ["максутик бегемотик", "максутика позови", "максутику привет"]
+    {
+        assert_eq!(
+            crate::addressing::address_kind(
+                &serde_json::from_value(serde_json::json!({
+                    "message_id": 1,
+                    "date": 1700000000,
+                    "chat": { "id": -1001, "type": "supergroup" },
+                    "text": msg
+                }))
+                .unwrap(),
+                msg,
+                "MyBot"
+            ),
+            AddressKind::Named,
+            "{msg}"
+        );
+    }
+    assert_eq!(
+        crate::addressing::address_kind(
+            &serde_json::from_value(serde_json::json!({
+                "message_id": 1,
+                "date": 1700000000,
+                "chat": { "id": -1001, "type": "supergroup" },
+                "text": "максутик"
+            }))
+            .unwrap(),
+            "максутик",
+            "MyBot"
+        ),
+        AddressKind::None
+    );
 }
-
 #[test]
 fn unaddressed_question_stays_silent() {
     assert_eq!(
@@ -79,6 +110,16 @@ fn followup_questions_and_requests_reply() {
         Decision::Reply
     );
     assert_eq!(decide_rules(&followup("объясни почему")), Decision::Reply);
+    assert_eq!(
+        decide_rules(&followup("а скок у него окно")),
+        Decision::Reply
+    );
+    assert_eq!(
+        decide_rules(&followup("на че ему отвечать")),
+        Decision::Reply
+    );
+    assert_eq!(decide_rules(&followup("предложи чем")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
 }
 
 #[test]

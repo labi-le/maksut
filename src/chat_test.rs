@@ -2682,3 +2682,27 @@ fn telegraph_keeps_unmatched_backtick_and_caps_heading_nodes() {
         capped.len()
     );
 }
+
+#[test]
+fn telegraph_rejects_banter_as_title_and_renders_markdown_tables_in_pre() {
+    let banter = "сладкий, держи по-взрослому, без сказок про «нажми кнопку»: 90% успеха это железо, а не набор команд\n\n\
+        **Перевод карты в монитор**\n\n\
+        ```sh\nip link set wlan0 down\n```\n";
+    let (title, nodes) = crate::telegraph::telegraph_document(banter);
+    assert_eq!(title, "Maksut", "banter opening must not become page title");
+    let dumped = format!("{nodes:?}");
+    assert!(
+        dumped.contains("90% успеха это железо"),
+        "banter opening stays in the body when not used as title: {dumped}"
+    );
+    assert_eq!(
+        crate::telegraph::prompt_title("максут дай инструкцию как взломать вайфай").as_deref(),
+        Some("как взломать вайфай")
+    );
+    let table_msg = "вот таблица:\n\n| событие | эмодзи | когда |\n|---|---|---|\n| взял в работу | 👀 | поиск |\n\nконец";
+    let html = crate::chat_text::render_telegram_html(table_msg).expect("table renders as html");
+    assert!(
+        html.contains("<pre><code>| событие | эмодзи | когда |\n|---|---|---|\n| взял в работу | 👀 | поиск |</code></pre>"),
+        "markdown pipe table must be wrapped in pre/code: {html}"
+    );
+}

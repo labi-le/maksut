@@ -144,15 +144,18 @@ pub(crate) fn flatten_reply_text(text: &str) -> String {
 /// `[label](url)`, `**bold**` span, or `#` heading, or `None` when plain-text
 /// delivery suffices.
 pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
+    let has_table = has_markdown_table(text);
     if !text.contains('`')
         && !text.contains("](")
         && !text.contains("**")
+        && !has_table
         && !text.lines().any(|l| markdown_heading_body(l).is_some())
     {
         return None;
     }
     let mut out = String::with_capacity(text.len() + 32);
     let mut code = String::new();
+    let mut table = String::new();
     let mut lang = String::new();
     let mut in_code = false;
     let mut fence_ticks = 0;
@@ -173,18 +176,39 @@ pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
                 code.push_str(&escape_html(line));
             }
         } else if let Some(ticks) = fence_open_ticks(line) {
+            if !table.is_empty() {
+                push_html_pre(&mut out, "", &table);
+                table.clear();
+                formatted = true;
+            }
             in_code = true;
             fence_ticks = ticks;
             lang = fence_language(line, ticks);
-        } else if let Some(heading) = markdown_heading_body(line) {
-            let (rendered, _) = render_inline_code_html(heading);
-            push_line(&mut out, &format!("<b>{rendered}</b>"));
-            formatted = true;
+        } else if has_table && is_markdown_table_row(line) {
+            if !table.is_empty() {
+                table.push('\n');
+            }
+            table.push_str(&escape_html(line.trim()));
         } else {
-            let (rendered, line_has_code) = render_inline_code_html(line);
-            formatted |= line_has_code;
-            push_line(&mut out, &rendered);
+            if !table.is_empty() {
+                push_html_pre(&mut out, "", &table);
+                table.clear();
+                formatted = true;
+            }
+            if let Some(heading) = markdown_heading_body(line) {
+                let (rendered, _) = render_inline_code_html(heading);
+                push_line(&mut out, &format!("<b>{rendered}</b>"));
+                formatted = true;
+            } else {
+                let (rendered, line_has_code) = render_inline_code_html(line);
+                formatted |= line_has_code;
+                push_line(&mut out, &rendered);
+            }
         }
+    }
+    if !table.is_empty() {
+        push_html_pre(&mut out, "", &table);
+        formatted = true;
     }
     if in_code {
         push_html_pre(&mut out, &lang, &code);
@@ -264,6 +288,24 @@ fn markdown_heading_body(line: &str) -> Option<&str> {
     }
     let rest = trimmed.get(hashes..)?.strip_prefix(' ')?.trim();
     (!rest.is_empty()).then_some(rest)
+}
+
+fn is_markdown_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.matches('|').count() >= 3
+}
+
+fn has_markdown_table(text: &str) -> bool {
+    text.lines()
+        .scan(0usize, |run, line| {
+            *run = if is_markdown_table_row(line) {
+                *run + 1
+            } else {
+                0
+            };
+            Some(*run >= 2)
+        })
+        .any(|ok| ok)
 }
 
 fn push_prose_with_bold_html(out: &mut String, text: &str) -> bool {
@@ -451,49 +493,4 @@ pub(crate) fn truncate_text(text: &str, max_chars: usize) -> String {
     head.trim_end().to_owned()
 }
 
-pub(crate) fn is_bidi_or_control(ch: char) -> bool {
-    ch.is_control()
-        || matches!(ch as u32, 0x00AD | 0x200B..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069 | 0xFEFF)
-}
-
-pub(crate) use crate::chat_urls::format_moscow_time;
-
-pub(crate) fn strip_url_schemes(text: &str) -> String {
-    const SCHEMES: [&str; 7] = [
-        "https://",
-        "http://",
-        "tg://",
-        "javascript:",
-        "data:",
-        "file:",
-        "ftp://",
-    ];
-    let lower = text.to_ascii_lowercase();
-    let mut output = String::with_capacity(text.len());
-    let mut index = 0;
-    while let Some(rest) = text.get(index..) {
-        let boundary = text
-            .get(..index)
-            .and_then(|head| head.chars().next_back())
-            .is_none_or(|ch| !ch.is_alphanumeric());
-        let matched = if boundary {
-            SCHEMES.into_iter().find(|scheme| {
-                lower
-                    .get(index..)
-                    .is_some_and(|tail| tail.starts_with(*scheme))
-            })
-        } else {
-            None
-        };
-        if let Some(scheme) = matched {
-            index += scheme.len();
-            continue;
-        }
-        let Some(ch) = rest.chars().next() else {
-            break;
-        };
-        output.push(ch);
-        index += ch.len_utf8();
-    }
-    output
-}
+pub(crate) use crate::chat_urls::{format_moscow_time, is_bidi_or_control, strip_url_schemes};

@@ -49,34 +49,20 @@ fn strip_marks(text: &str) -> String {
 fn heading_line(line: &str) -> Option<(usize, String)> {
     let trimmed = line.trim();
     let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
-    if hashes == 0 || hashes > 6 {
-        return None;
-    }
     let rest = trimmed.trim_start_matches('#').trim_start();
-    if rest.is_empty() {
-        return None;
-    }
-    Some((hashes, strip_marks(rest)))
+    ((1..=6).contains(&hashes) && !rest.is_empty()).then(|| (hashes, strip_marks(rest)))
 }
 
 /// `Some(text)` when the whole line is one `**bold**` run; the model uses that
 /// shape for section titles.
 fn bold_heading(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    let inner = trimmed.strip_prefix("**")?.strip_suffix("**")?;
-    if inner.contains("**") || inner.trim().is_empty() {
-        return None;
-    }
-    Some(unescape_markdown(inner.trim()))
+    let inner = line.trim().strip_prefix("**")?.strip_suffix("**")?;
+    (!inner.contains("**") && !inner.trim().is_empty()).then(|| unescape_markdown(inner.trim()))
 }
 
 fn plain_line(line: &str) -> String {
-    match bold_heading(line) {
-        Some(inner) => inner,
-        None => strip_marks(line.trim_start_matches('#').trim_start()),
-    }
+    bold_heading(line).unwrap_or_else(|| strip_marks(line.trim_start_matches('#').trim_start()))
 }
-
 /// Lines that are prose, i.e. outside fenced code blocks, trimmed of `\r`.
 fn prose_lines(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
@@ -98,20 +84,97 @@ fn prose_lines(text: &str) -> Vec<&str> {
     out
 }
 
-/// First prose line of the reply, which is the title the model writes for an
-/// article; `Maksut` when the reply has no usable line.
+fn explicit_title_line(line: &str) -> Option<String> {
+    let raw = heading_line(line)
+        .map(|(_, t)| t)
+        .or_else(|| bold_heading(line))?;
+    let title: String = raw.chars().take(80).collect();
+    let title = title.trim().to_owned();
+    (!title.is_empty()).then_some(title)
+}
+
+/// Clean title from the user's prompt when the reply itself opens with prose
+/// banter instead of an explicit `#` or `**bold**` heading.
+pub(crate) fn prompt_title(prompt: &str) -> Option<String> {
+    let mut cleaned = prompt.trim().to_owned();
+    if cleaned.is_empty() {
+        return None;
+    }
+    for name in crate::addressing::BOT_NAME_FORMS {
+        if let (rest, true) = crate::addressing::strip_name(&cleaned, name) {
+            cleaned = rest;
+        }
+    }
+    let mut s = crate::addressing::trim_name_edges(&cleaned);
+    const PREFIXES: &[&str] = &[
+        "напиши подробную статью про ",
+        "напиши статью про ",
+        "напиши статью о ",
+        "напиши статью ",
+        "сделай статью про ",
+        "сделай статью ",
+        "дай инструкцию ",
+        "напиши инструкцию ",
+        "расскажи подробно про ",
+        "расскажи про ",
+        "объясни подробно ",
+        "объясни ",
+        "разбери подробно ",
+        "разбери ",
+    ];
+    for p in PREFIXES {
+        if let Some(rest) = s
+            .get(..p.len())
+            .filter(|h| h.eq_ignore_ascii_case(p))
+            .and_then(|_| s.get(p.len()..))
+        {
+            s = rest.trim();
+            break;
+        }
+    }
+    let c: String = plain_line(s).chars().take(80).collect();
+    let c = c.trim().to_owned();
+    (c.chars().count() >= 4 && !c.contains("://")).then_some(c)
+}
+
+/// First prose line of the reply when it is an explicit heading or short title;
+/// falls back to `Maksut` when the opening line is conversational prose.
 pub(crate) fn article_title(text: &str) -> String {
     let line = prose_lines(text)
         .into_iter()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or_default();
-    let title: String = plain_line(line.trim()).chars().take(80).collect();
-    let title = title.trim().to_owned();
-    if title.is_empty() {
-        "Maksut".to_owned()
-    } else {
-        title
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default()
+        .trim();
+    if let Some(explicit) = explicit_title_line(line) {
+        return explicit;
     }
+    let plain = plain_line(line);
+    let t = plain.trim();
+    if !t.is_empty() && t.chars().count() <= 72 && !t.contains("://") && !is_banter_opening(t) {
+        return t.to_owned();
+    }
+    "Maksut".to_owned()
+}
+
+fn is_banter_opening(line: &str) -> bool {
+    let l = line.to_lowercase();
+    const P: &[&str] = &[
+        "сладкий,",
+        "повелитель,",
+        "император,",
+        "держи ",
+        "давай,",
+        "слушай,",
+        "смотри,",
+        "короче,",
+        "вот ",
+        "по факту,",
+        "согласен,",
+    ];
+    P.iter().any(|p| l.starts_with(p))
+        || l.contains(", сладкий")
+        || l.contains(", повелитель")
+        || l.ends_with('.')
 }
 
 /// Drops the title line so the published page does not repeat it above the body.
@@ -287,18 +350,15 @@ pub(crate) fn format_telegraph_chat_message(text: &str, page_url: &str) -> Strin
 
 /// Validates that a URL returned by the Telegraph API is a safe `https://telegra.ph/<slug>` link.
 pub(crate) fn valid_telegraph_url(raw: &str) -> Option<String> {
-    let url = Url::parse(raw.trim()).ok()?;
-    if url.scheme() != "https"
-        || url.host_str() != Some("telegra.ph")
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port().is_some()
-        || url.query().is_some()
-        || url.path().len() <= 1
-    {
-        return None;
-    }
-    Some(url.into())
+    let u = Url::parse(raw.trim()).ok()?;
+    let ok = u.scheme() == "https"
+        && u.host_str() == Some("telegra.ph")
+        && u.username().is_empty()
+        && u.password().is_none()
+        && u.port().is_none()
+        && u.query().is_none()
+        && u.path().len() > 1;
+    ok.then(|| u.into())
 }
 
 async fn telegraph_client(base: &Url) -> Option<reqwest::Client> {
@@ -344,20 +404,14 @@ async fn ensure_telegraph_token(client: &reqwest::Client, base: &Url) -> Option<
     if let Some(token) = TELEGRAPH_TOKEN.lock().await.clone() {
         return Some(token);
     }
-    let create_url = base.join("createAccount").ok()?;
-    let body = json!({
-        "short_name": "maksut",
-        "author_name": "Maksut"
-    });
-    let resp = post_telegraph_json(client, create_url, &body).await?;
+    let body = json!({"short_name": "maksut", "author_name": "Maksut"});
+    let resp = post_telegraph_json(client, base.join("createAccount").ok()?, &body).await?;
     let token = resp
         .pointer("/result/access_token")
         .and_then(Value::as_str)?
         .trim()
         .to_owned();
-    if token.is_empty() {
-        return None;
-    }
+    (!token.is_empty()).then(|| token.clone())?;
     *TELEGRAPH_TOKEN.lock().await = Some(token.clone());
     Some(token)
 }
@@ -376,27 +430,24 @@ pub(crate) fn telegraph_document(text: &str) -> (String, Vec<Value>) {
     (title, markdown_to_telegraph_nodes(&body))
 }
 
-pub(crate) async fn publish_telegraph_with_base(base: &Url, text: &str) -> Option<String> {
+pub(crate) async fn publish_telegraph_with_prompt(
+    base: &Url,
+    prompt: &str,
+    text: &str,
+) -> Option<String> {
     if !article_is_publishable(text) {
         return None;
     }
     let client = telegraph_client(base).await?;
     let token = ensure_telegraph_token(&client, base).await?;
-    let (clean_title, nodes) = telegraph_document(text);
-    let clean_title: String = clean_title
-        .lines()
-        .next()
-        .unwrap_or("Maksut")
-        .trim()
-        .chars()
-        .take(80)
-        .collect();
-    let title = if clean_title.is_empty() {
-        "Maksut"
-    } else {
-        clean_title.as_str()
-    };
-    let create_page = base.join("createPage").ok()?;
+    let (mut t, nodes) = telegraph_document(text);
+    if t == "Maksut" {
+        if let Some(p) = prompt_title(prompt) {
+            t = p;
+        }
+    }
+    let title = t.lines().next().unwrap_or("Maksut").trim();
+    let title = if title.is_empty() { "Maksut" } else { title };
     let payload = json!({
         "access_token": token,
         "title": title,
@@ -404,9 +455,8 @@ pub(crate) async fn publish_telegraph_with_base(base: &Url, text: &str) -> Optio
         "content": nodes,
         "return_content": false
     });
-    let resp = post_telegraph_json(&client, create_page, &payload).await?;
-    let url = resp.pointer("/result/url").and_then(Value::as_str)?;
-    valid_telegraph_url(url)
+    let resp = post_telegraph_json(&client, base.join("createPage").ok()?, &payload).await?;
+    valid_telegraph_url(resp.pointer("/result/url").and_then(Value::as_str)?)
 }
 
 /// Publishes `text` to `https://api.telegra.ph` when `text` exceeds
@@ -419,7 +469,7 @@ pub(crate) async fn maybe_publish_reply(prompt: &str, text: &str) -> Option<Stri
         return None;
     }
     let base = Url::parse(&format!("https://{TELEGRAPH_HOST}/")).ok()?;
-    let page_url = publish_telegraph_with_base(&base, text).await?;
+    let page_url = publish_telegraph_with_prompt(&base, prompt, text).await?;
     Some(format_telegraph_chat_message(text, &page_url))
 }
 
@@ -433,16 +483,16 @@ pub(crate) fn should_publish_telegraph(prompt: &str, text: &str) -> bool {
 }
 
 pub(crate) fn explicit_telegraph_request(prompt: &str) -> bool {
-    let lower = prompt.to_lowercase();
+    let l = prompt.to_lowercase();
     ["телеграф", "telegra.ph", "telegraph"]
         .iter()
-        .any(|kw| lower.contains(kw))
+        .any(|k| l.contains(k))
 }
 
 pub(crate) fn explicit_article_request(prompt: &str) -> bool {
-    let lower = prompt.to_lowercase();
+    let l = prompt.to_lowercase();
     explicit_telegraph_request(prompt)
         || ["стать", "подробн", "развёрн", "разверн", "лонгрид"]
             .iter()
-            .any(|kw| lower.contains(kw))
+            .any(|k| l.contains(k))
 }

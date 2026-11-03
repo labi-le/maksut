@@ -224,10 +224,58 @@ pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
 
 pub(crate) fn sticker_turn_hint(prompt: &str) -> &'static str {
     if crate::chat_style::explicit_sticker_request(prompt) {
-        "пользователь просит стикер — обязательно вызови send_sticker в этом ответе\n"
+        "пользователь просит стикер или спрашивает про стикеры — обязательно вызови send_sticker в этом ответе\n"
     } else if crate::chat_style::sticker_emotion_hint(prompt) {
-        "в реплике яркая эмоция или рофл — если это не research, вызови send_sticker (с коротким query по смыслу или через find_stickers) вместе с ответом\n"
+        "в реплике яркая эмоция, подкол или живой диалог — если это не research и не длинный разбор кода, вызови send_sticker (с коротким query по смыслу или через find_stickers) вместе с ответом\n"
     } else {
         ""
     }
+}
+
+pub(crate) fn is_bidi_or_control(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch as u32,
+            0x00AD | 0x200B..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069 | 0xFEFF
+        )
+}
+
+pub(crate) fn strip_url_schemes(text: &str) -> String {
+    const SCHEMES: [&str; 7] = [
+        "https://",
+        "http://",
+        "tg://",
+        "javascript:",
+        "data:",
+        "file:",
+        "ftp://",
+    ];
+    let lower = text.to_ascii_lowercase();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while let Some(rest) = text.get(index..) {
+        let boundary = text
+            .get(..index)
+            .and_then(|head| head.chars().next_back())
+            .is_none_or(|ch| !ch.is_alphanumeric());
+        let matched = if boundary {
+            SCHEMES.into_iter().find(|scheme| {
+                lower
+                    .get(index..)
+                    .is_some_and(|tail| tail.starts_with(*scheme))
+            })
+        } else {
+            None
+        };
+        if let Some(scheme) = matched {
+            index += scheme.len();
+            continue;
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+        output.push(ch);
+        index += ch.len_utf8();
+    }
+    output
 }
