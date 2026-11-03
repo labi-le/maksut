@@ -2531,6 +2531,10 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
         "расскажи подробнее",
         &"а".repeat(499)
     ));
+    assert!(!crate::telegraph::should_publish_telegraph(
+        "давай добавим пропоз и максимально подробно логировать контекст",
+        &"а".repeat(700)
+    ));
     assert!(crate::telegraph::should_publish_telegraph(
         "на телеграфе статью",
         &"а".repeat(220)

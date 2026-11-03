@@ -20,6 +20,7 @@ pub(crate) struct ChatReply {
     pub(crate) text: String,
     pub(crate) sticker: Option<FileId>,
     pub(crate) decision: Option<crate::self_improve::PendingDecision>,
+    pub(crate) proposed_feature: bool,
 }
 async fn record_assistant_reply(pool: &SqlitePool, chat_id: ChatId, text: &str, message_id: i32) {
     let _ = crate::memory::record_message(
@@ -157,7 +158,9 @@ async fn deliver_chat_reply(
     let mut chunks = if followup && is_pass_reply(&reply.text) {
         Vec::new()
     } else {
-        out = crate::telegraph::maybe_publish_reply(p, &reply.text).await;
+        if !reply.proposed_feature {
+            out = crate::telegraph::maybe_publish_reply(p, &reply.text).await;
+        }
         split_message(out.as_deref().unwrap_or(&reply.text))
     };
     if chunks.is_empty() && markup.is_some() {
@@ -251,7 +254,16 @@ pub(crate) async fn chat_reply_with_proposal(
         .await
         .ok()
         .flatten();
-    let mut system_prompt = format!("{}\n\n{}", chat.system_prompt, catalog.summary());
+    let router_mode = match config().router.mode {
+        RouterMode::Off => "off",
+        RouterMode::Rules => "rules",
+        RouterMode::Jev => "jev",
+    };
+    let mut system_prompt = format!(
+        "{}\n\n{}\nАктивный режим роутера (router.mode в рантайме): {router_mode}.",
+        chat.system_prompt,
+        catalog.summary()
+    );
     if turn.owner {
         let available = chat.tools.names(true).join(", ");
         system_prompt.push_str(&format!("\n\nТебе доступны инструменты владельца: {available}. Используй их проактивно и комбинируй в цепочки.\n\n{OWNER_CODE_PROMPT}"));
@@ -452,6 +464,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 text,
                 sticker,
                 decision: state.decision,
+                proposed_feature: state.proposed_feature,
             });
         }
         if let (Some(i), Some(t)) = (snap_msg_idx, snap_text.as_deref()) {

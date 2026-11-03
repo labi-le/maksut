@@ -119,6 +119,12 @@ fn followup_questions_and_requests_reply() {
         Decision::Reply
     );
     assert_eq!(decide_rules(&followup("предложи чем")), Decision::Reply);
+    assert_eq!(
+        decide_rules(&followup("а если из эротики")),
+        Decision::Reply
+    );
+    assert_eq!(decide_rules(&followup("извинись")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("оформи заявку")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
 }
 

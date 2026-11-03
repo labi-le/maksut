@@ -212,6 +212,10 @@ const QUESTION_WORDS: &[&str] = &[
     "чья",
     "разве",
     "неужели",
+    "еще",
+    "ещё",
+    "алло",
+    "ало",
 ];
 
 const REQUEST_STEMS: &[&str] = &[
@@ -246,6 +250,18 @@ const REQUEST_STEMS: &[&str] = &[
     "попробу",
     "кинь",
     "глян",
+    "оформ",
+    "созда",
+    "запиш",
+    "сохран",
+    "запомн",
+    "забуд",
+    "извин",
+    "выбер",
+    "прочит",
+    "откро",
+    "разбер",
+    "поясн",
 ];
 
 /// Followup turns answer only when they look like a real request; a plain
@@ -255,6 +271,21 @@ fn expects_answer(text: &str) -> bool {
         return true;
     }
     let lower = text.to_lowercase();
+    if lower.starts_with("а если ")
+        || lower.starts_with("а про ")
+        || lower.starts_with("а по ")
+        || lower.starts_with("а насчет ")
+        || lower.starts_with("а насчёт ")
+        || lower.starts_with("а без ")
+        || lower.starts_with("а с ")
+        || lower.contains("твои мысли")
+        || lower.contains("че думаешь")
+        || lower.contains("чё думаешь")
+        || lower.contains("что думаешь")
+        || lower.contains("как думаешь")
+    {
+        return true;
+    }
     lower
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| !word.is_empty())

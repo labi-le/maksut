@@ -491,8 +491,8 @@ pub(crate) fn explicit_telegraph_request(prompt: &str) -> bool {
 
 pub(crate) fn explicit_article_request(prompt: &str) -> bool {
     let l = prompt.to_lowercase();
+    const PROP: &[&str] = &["пропоз", "хотелк", "бэклог", "ишью", "issue", "задач"];
+    const ART: &[&str] = &["стать", "подробн", "развёрн", "разверн", "лонгрид"];
     explicit_telegraph_request(prompt)
-        || ["стать", "подробн", "развёрн", "разверн", "лонгрид"]
-            .iter()
-            .any(|k| l.contains(k))
+        || (!PROP.iter().any(|k| l.contains(k)) && ART.iter().any(|k| l.contains(k)))
 }

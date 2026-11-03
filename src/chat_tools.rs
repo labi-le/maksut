@@ -30,6 +30,7 @@ pub(crate) struct ToolState {
     pub(crate) inspect_calls: usize,
     pub(crate) inspect_announced: bool,
     pub(crate) remember_calls: usize,
+    pub(crate) proposed_feature: bool,
     pub(crate) discovered_urls: Vec<Url>,
     pub(crate) allow_sticker: bool,
     pub(crate) allow_feature: bool,
@@ -50,6 +51,7 @@ impl ToolState {
             inspect_calls: 0,
             inspect_announced: false,
             remember_calls: 0,
+            proposed_feature: false,
             discovered_urls: Vec::new(),
             allow_sticker,
             allow_feature,
@@ -139,12 +141,16 @@ pub(crate) async fn run_tool_call(
                     .await
                     .unwrap_or_else(|_| Err("не удалось поставить идею в очередь".to_string()));
                     match result {
-                    Ok(id) if ctx.owner => {
-                        format!("хотелка #{id} записана; после аппрува создадим issue на GitHub")
+                        Ok(id) => {
+                            state.proposed_feature = true;
+                            if ctx.owner {
+                                format!("хотелка #{id} записана; после аппрува создадим issue на GitHub")
+                            } else {
+                                format!("хотелка #{id} передана владельцу; после аппрува появится issue на GitHub")
+                            }
+                        }
+                        Err(reason) => reason,
                     }
-                    Ok(id) => format!("хотелка #{id} передана владельцу; после аппрува появится issue на GitHub"),
-                    Err(reason) => reason,
-                }
                 }
             }
         }
