@@ -1,4 +1,4 @@
-use crate::config_validate::{count, signed, usize_count};
+use crate::config_validate::{count, non_empty, signed, usize_count};
 use crate::*;
 
 impl CodeSettings {
@@ -145,6 +145,27 @@ impl RetryPolicy {
                 100,
                 599,
             )?;
+        }
+        Ok(())
+    }
+}
+
+impl RouterSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        non_empty("router.jev_model", &self.jev_model)?;
+        count("router.jev_timeout_ms", self.jev_timeout_ms, 50, 10_000)?;
+        usize_count(
+            "router.jev_max_response_bytes",
+            self.jev_max_response_bytes,
+            1024,
+            1024 * 1024,
+        )?;
+        usize_count("router.jev_concurrency", self.jev_concurrency, 1, 64)?;
+        if !self.jev_min_confidence.is_finite() || !(0.0..=1.0).contains(&self.jev_min_confidence) {
+            return Err("router.jev_min_confidence must be between 0 and 1".into());
+        }
+        if self.mode == RouterMode::Jev {
+            parse_http_endpoint(&self.jev_url, "router.jev_url")?;
         }
         Ok(())
     }

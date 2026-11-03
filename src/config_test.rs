@@ -42,6 +42,25 @@ fn zero_retry_attempts_are_rejected() {
 }
 
 #[test]
+fn router_bounds_are_validated() {
+    let mut cfg = Config::default();
+    cfg.router.jev_min_confidence = 1.5;
+    let error = cfg.validate().unwrap_err();
+    assert!(error.contains("router.jev_min_confidence"), "{error}");
+
+    let mut cfg = Config::default();
+    cfg.router.mode = RouterMode::Jev;
+    cfg.router.jev_url = "file:///tmp/systemone".into();
+    let error = cfg.validate().unwrap_err();
+    assert!(error.contains("router.jev_url"), "{error}");
+
+    let mut cfg = Config::default();
+    cfg.router.jev_timeout_ms = 0;
+    let error = cfg.validate().unwrap_err();
+    assert!(error.contains("router.jev_timeout_ms"), "{error}");
+}
+
+#[test]
 fn media_bytes_must_fit_the_telegram_limit() {
     let mut cfg = Config::default();
     cfg.media.max_bytes = cfg.telegram.file_limit_bytes + 1;
