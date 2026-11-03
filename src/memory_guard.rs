@@ -52,11 +52,17 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
     if SECRET_MARKERS.iter().any(|marker| lowered.contains(marker)) {
         flags |= FLAG_SECRET;
     }
+    // A pasted credential is a single unbroken token; multi-line prose with
+    // digits (ports, versions, article numbers) is ordinary technical text and
+    // must stay publishable to telegra.ph.
     let compact: String = trimmed
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
         .collect();
-    if compact.len() >= 40 && compact.chars().any(|ch| ch.is_ascii_digit()) {
+    if !trimmed.contains(char::is_whitespace)
+        && compact.len() >= 40
+        && compact.chars().any(|ch| ch.is_ascii_digit())
+    {
         flags |= FLAG_SECRET;
     }
     if injection_attempt(trimmed) {

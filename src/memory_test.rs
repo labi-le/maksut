@@ -65,6 +65,25 @@ fn memory_flags_detect_injection_secrets_and_junk() {
 }
 
 #[test]
+fn memory_flags_do_not_treat_technical_prose_with_digits_as_secret() {
+    let article = "Разбор статьи 204 УК РФ и сетевых портов: HTTP/2 на 8443, TLS 1.3, \
+        p99 упал с 204 ms до 80 ms, throughput вырос до 27272 rps. Сравнили Go 1.22, \
+        Rust 1.78 и PostgreSQL 16: задержка прокси, ретраи и таймауты описаны ниже.";
+    assert_eq!(
+        crate::memory_guard::detect_flags(article) & crate::memory::FLAG_SECRET,
+        0,
+        "technical prose with digits is not a credential"
+    );
+    assert_eq!(
+        crate::memory_guard::detect_flags(
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        ) & crate::memory::FLAG_SECRET,
+        crate::memory::FLAG_SECRET,
+        "a single unbroken key-like token stays secret"
+    );
+}
+
+#[test]
 fn memory_summary_rejects_urls_and_instructions() {
     assert!(crate::memory::validate_summary("Вадик говорил, что ел борщ").is_ok());
     assert!(crate::memory::validate_summary("see https://example.com").is_err());
