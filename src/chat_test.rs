@@ -2567,3 +2567,58 @@ fn telegraph_sees_keys_through_punctuation_and_quotes() {
         "an assigned api key name still blocks publication"
     );
 }
+
+#[test]
+fn telegraph_page_title_comes_from_the_reply_and_markdown_becomes_nodes() {
+    let text = "**systemd таймеры: когда**\n\n\
+        таймер - это юнит `.timer`, а `AccuracySec` по умолчанию **1 минута**.\n\n\
+        **OnCalendar**\n\n\
+        ### формат\n\n\
+        что используется:\n\\- списки и диапазоны\n\\- шаг\n\n\
+        ```ini\nOnCalendar=*-*-* 03:30:00\n```\n";
+    let (title, nodes) = crate::telegraph::telegraph_document(text);
+    assert_eq!(title, "systemd таймеры: когда");
+    let dumped = serde_json::to_string(&nodes).unwrap();
+    assert!(
+        !dumped.contains("systemd таймеры"),
+        "the title line leaves the body: {dumped}"
+    );
+    assert!(
+        dumped.contains("таймер - это юнит"),
+        "body follows: {dumped}"
+    );
+    assert!(!dumped.contains("**"), "emphasis markers leak: {dumped}");
+    assert!(!dumped.contains('`'), "backticks leak: {dumped}");
+    assert!(!dumped.contains("\\-"), "escapes leak: {dumped}");
+    assert!(
+        dumped.contains("*-*-* 03:30:00"),
+        "a Calendar spec keeps its single stars: {dumped}"
+    );
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["tag"] == "h3" && node["children"][0] == "OnCalendar"),
+        "a standalone bold line becomes a heading: {dumped}"
+    );
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["tag"] == "h4" && node["children"][0] == "формат"),
+        "a ### line becomes h4: {dumped}"
+    );
+    assert!(
+        dumped.contains("\"code\""),
+        "inline backticks become code nodes: {dumped}"
+    );
+    assert!(
+        nodes.iter().any(|node| node["tag"] == "pre"),
+        "fenced code keeps its pre node: {dumped}"
+    );
+    let teaser = crate::telegraph::format_telegraph_chat_message(text, "https://telegra.ph/x");
+    assert!(
+        teaser.starts_with("таймер - это юнит .timer"),
+        "teaser is the line after the title: {teaser}"
+    );
+    assert!(!teaser.contains("**") && !teaser.contains('`'), "{teaser}");
+    assert!(teaser.contains("https://telegra.ph/x"), "{teaser}");
+}

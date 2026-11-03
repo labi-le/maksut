@@ -17,11 +17,141 @@ const TELEGRAPH_HOST: &str = "api.telegra.ph";
 const TELEGRAPH_MAX_NODES_BYTES: usize = 60 * 1024;
 const TELEGRAPH_MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const TELEGRAPH_PREVIEW_CHARS: usize = 500;
+const TELEGRAPH_TITLE_CHARS: usize = 80;
+const TELEGRAPH_FALLBACK_TITLE: &str = "Maksut";
 
 static TELEGRAPH_TOKEN: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
-/// Converts markdown-like reply text (paragraphs, fenced code blocks, and
-/// `источники:` lines) into Telegraph Node JSON (`[{"tag": "p"|"pre", ...}]`).
+/// Removes what the model writes for the Telegram MarkdownV2 rendering: the
+/// backslash escapes it puts before punctuation (`\-`, `\.`) and the doubled
+/// `**`/`__` emphasis markers. Single `*` and `_` survive because Calendar
+/// specs (`*-*-*`) and identifiers use them as data.
+fn strip_marks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.peek().copied() {
+                Some(next) if next.is_ascii_punctuation() => {
+                    out.push(next);
+                    chars.next();
+                }
+                _ => out.push(ch),
+            },
+            '`' => {}
+            '*' | '_' => {
+                if chars.peek() == Some(&ch) {
+                    chars.next();
+                } else {
+                    out.push(ch);
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// `Some((hashes, text))` for a `#`-prefixed heading line.
+fn heading_line(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim();
+    let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = trimmed.trim_start_matches('#').trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    Some((hashes, strip_marks(rest)))
+}
+
+/// `Some(text)` when the whole line is one `**bold**` run, the shape the model
+/// uses for section titles.
+fn bold_heading(line: &str) -> Option<String> {
+    let inner = line.trim().strip_prefix("**")?.strip_suffix("**")?;
+    if inner.contains("**") || inner.trim().is_empty() {
+        return None;
+    }
+    Some(strip_marks(inner))
+}
+
+/// The line as reader-facing text: heading markers gone, emphasis gone.
+fn plain_line(line: &str) -> String {
+    if let Some((_, text)) = heading_line(line) {
+        return text;
+    }
+    bold_heading(line).unwrap_or_else(|| strip_marks(line))
+}
+
+/// Index and text of the reply's first line that carries prose rather than a
+/// fence; the model writes that line as the article title.
+fn prose_line(text: &str) -> Option<(usize, &str)> {
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| (index, line.trim()))
+        .find(|(_, line)| !line.is_empty() && !line.starts_with("```"))
+}
+
+/// Page title for a reply: its first prose line without markers, `Maksut` when
+/// the reply has no usable line.
+pub(crate) fn article_title(text: &str) -> String {
+    let title = prose_line(text)
+        .map(|(_, line)| plain_line(line))
+        .unwrap_or_default();
+    let title: String = title.trim().chars().take(TELEGRAPH_TITLE_CHARS).collect();
+    if title.trim().is_empty() {
+        TELEGRAPH_FALLBACK_TITLE.to_owned()
+    } else {
+        title
+    }
+}
+
+/// Paragraph children: inline `code` spans become `code` nodes, everything else
+/// is prose with the markers stripped.
+fn inline_nodes(text: &str) -> Vec<Value> {
+    let mut nodes = Vec::new();
+    let mut buf = String::new();
+    for (index, part) in text.split('`').enumerate() {
+        if index % 2 == 1 {
+            if !buf.is_empty() {
+                nodes.push(Value::String(std::mem::take(&mut buf)));
+            }
+            if !part.is_empty() {
+                nodes.push(json!({"tag": "code", "children": [part]}));
+            }
+            continue;
+        }
+        buf.push_str(&strip_marks(part));
+    }
+    if !buf.is_empty() {
+        nodes.push(Value::String(buf));
+    }
+    if nodes.is_empty() {
+        nodes.push(Value::String(String::new()));
+    }
+    nodes
+}
+
+/// Page title and body nodes for one reply: the title is the reply's first
+/// prose line and that line leaves the body, so the page does not repeat it.
+pub(crate) fn telegraph_document(text: &str) -> (String, Vec<Value>) {
+    let title = article_title(text);
+    let title_line = prose_line(text).map(|(index, _)| index);
+    let mut body = String::with_capacity(text.len());
+    for (index, line) in text.lines().enumerate() {
+        if Some(index) == title_line {
+            continue;
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    (title, markdown_to_telegraph_nodes(&body))
+}
+
+/// Converts markdown-like reply text (paragraphs, `#`/`**bold**` headings,
+/// fenced code blocks, and `источники:` lines) into Telegraph Node JSON
+/// (`[{"tag": "p"|"h3"|"h4"|"pre", ...}]`), with inline backticks as `code`.
 pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
     let mut nodes = Vec::new();
     let mut in_code = false;
@@ -34,7 +164,7 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
         let trimmed = para.trim();
         if !trimmed.is_empty() && *used < TELEGRAPH_MAX_NODES_BYTES {
             *used += trimmed.len() + 32;
-            nodes.push(json!({"tag": "p", "children": [trimmed]}));
+            nodes.push(json!({"tag": "p", "children": inline_nodes(trimmed)}));
         }
         para.clear();
     };
@@ -72,6 +202,23 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
             flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
             continue;
         }
+        if let Some((level, text)) = heading_line(line) {
+            flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
+            if used_bytes < TELEGRAPH_MAX_NODES_BYTES {
+                used_bytes += text.len() + 32;
+                let tag = if level <= 2 { "h3" } else { "h4" };
+                nodes.push(json!({"tag": tag, "children": inline_nodes(&text)}));
+            }
+            continue;
+        }
+        if let Some(text) = bold_heading(line) {
+            flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
+            if used_bytes < TELEGRAPH_MAX_NODES_BYTES {
+                used_bytes += text.len() + 32;
+                nodes.push(json!({"tag": "h3", "children": inline_nodes(&text)}));
+            }
+            continue;
+        }
         if !para_buf.is_empty() {
             para_buf.push('\n');
         }
@@ -85,20 +232,28 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
     }
     flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
     if nodes.is_empty() {
-        nodes.push(json!({"tag": "p", "children": [shorten(text, 2000)]}));
+        nodes.push(json!({"tag": "p", "children": inline_nodes(shorten(text, 2000))}));
     }
     nodes
 }
 
 /// Formats the short chat summary message pointing to the published Telegraph
-/// page, keeping the opening summary sentence/paragraph and the article URL.
+/// page: the first prose line after the article title, with markdown markers
+/// removed, plus the article URL.
 pub(crate) fn format_telegraph_chat_message(text: &str, page_url: &str) -> String {
-    let first_prose = text
+    let title = article_title(text);
+    let title_line = prose_line(text).map(|(index, _)| index);
+    let preview = text
         .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with("```"))
-        .unwrap_or("ответ");
-    let preview = shorten(first_prose, TELEGRAPH_PREVIEW_CHARS).trim_end_matches(['.', '…']);
+        .enumerate()
+        .filter(|(index, _)| Some(*index) != title_line)
+        .map(|(_, line)| line.trim())
+        .filter(|line| !line.is_empty() && !line.starts_with("```"))
+        .map(plain_line)
+        .find(|line| !line.is_empty())
+        .unwrap_or_else(|| title.clone());
+    let preview = shorten(&preview, TELEGRAPH_PREVIEW_CHARS);
+    let preview = preview.trim_end_matches(['.', '…']);
     format!("{preview}\n\nполный текст и код: {page_url}")
 }
 
@@ -187,30 +342,13 @@ pub(crate) fn article_is_publishable(text: &str) -> bool {
     !crate::memory_guard::credential_like(text)
 }
 
-pub(crate) async fn publish_telegraph_with_base(
-    base: &Url,
-    title: &str,
-    text: &str,
-) -> Option<String> {
+pub(crate) async fn publish_telegraph_with_base(base: &Url, text: &str) -> Option<String> {
     if !article_is_publishable(text) {
         return None;
     }
     let client = telegraph_client(base).await?;
     let token = ensure_telegraph_token(&client, base).await?;
-    let nodes = markdown_to_telegraph_nodes(text);
-    let clean_title: String = title
-        .lines()
-        .next()
-        .unwrap_or("Maksut")
-        .trim()
-        .chars()
-        .take(80)
-        .collect();
-    let title = if clean_title.is_empty() {
-        "Maksut"
-    } else {
-        clean_title.as_str()
-    };
+    let (title, nodes) = telegraph_document(text);
     let create_page = base.join("createPage").ok()?;
     let payload = json!({
         "access_token": token,
@@ -228,13 +366,13 @@ pub(crate) async fn publish_telegraph_with_base(
 /// `config().chat.reply_max_chars` (or `>= 900` chars when `prompt` explicitly
 /// asks for an article/detailed breakdown, or `>= 1800` chars across multiple
 /// paragraphs/code blocks), returning the formatted short chat message with the
-/// `telegra.ph` link.
-pub(crate) async fn maybe_publish_reply(title: &str, prompt: &str, text: &str) -> Option<String> {
+/// `telegra.ph` link. The page title comes from the reply itself.
+pub(crate) async fn maybe_publish_reply(prompt: &str, text: &str) -> Option<String> {
     if !should_publish_telegraph(prompt, text) {
         return None;
     }
     let base = Url::parse(&format!("https://{TELEGRAPH_HOST}/")).ok()?;
-    let page_url = publish_telegraph_with_base(&base, title, text).await?;
+    let page_url = publish_telegraph_with_base(&base, text).await?;
     Some(format_telegraph_chat_message(text, &page_url))
 }
 
