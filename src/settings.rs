@@ -12,6 +12,7 @@ pub(crate) struct Settings {
     pub(crate) cookies_file: Option<PathBuf>,
     pub(crate) cookie_refresh_url: Option<Url>,
     pub(crate) chat: Option<ChatConfig>,
+    pub(crate) router: Router,
     pub(crate) chat_locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::RwLock<()>>>>>,
     pub(crate) self_improve_dir: PathBuf,
     pub(crate) sticker_replies: StickerReplies,
@@ -69,6 +70,7 @@ impl Settings {
             }
             _ => None,
         };
+        let router = Router::from_config(&cfg.router)?;
         let cookie_refresh_url = cfg
             .paths
             .cookie_refresh_url
@@ -86,6 +88,7 @@ impl Settings {
             cookies_file,
             cookie_refresh_url,
             chat,
+            router,
             chat_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             self_improve_dir: PathBuf::from(&cfg.paths.self_improve_dir),
             sticker_replies: StickerReplies::default(),

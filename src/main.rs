@@ -34,6 +34,7 @@ pub(crate) use media_cache::{
     cache_key, init_cache, invalidate_cache, lookup_cache, store_cache, CachedMedia,
 };
 
+mod addressing;
 mod chat;
 pub(crate) use chat::*;
 mod chat_client;
@@ -49,7 +50,12 @@ pub(crate) use chat_text::*;
 mod chat_tools;
 pub(crate) use chat_tools::*;
 mod chat_urls;
+mod jev;
 mod reaction;
+mod router;
+pub(crate) use router::*;
+mod typing;
+pub(crate) use typing::*;
 mod snapcompact;
 mod telegraph;
 pub(crate) use reaction::*;
@@ -219,6 +225,8 @@ async fn callback_endpoint(
 }
 
 #[cfg(test)]
+mod addressing_test;
+#[cfg(test)]
 mod browser_test;
 #[cfg(test)]
 mod caption_test;
@@ -268,6 +276,8 @@ mod process_test;
 mod read_url_test;
 #[cfg(test)]
 mod research_test;
+#[cfg(test)]
+mod router_test;
 #[cfg(test)]
 mod self_improve_test;
 #[cfg(test)]

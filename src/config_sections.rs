@@ -76,6 +76,57 @@ pub(crate) struct LlmSettings {
     pub(crate) max_response_bytes: usize,
 }
 
+/// Where the pre-model reply decision comes from. `off` keeps the historical
+/// behavior, `rules` is the deterministic table in `src/router.rs`, and `jev`
+/// asks the TypeSafe System One API with a rules fallback.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RouterMode {
+    #[default]
+    Off,
+    Rules,
+    Jev,
+}
+
+impl RouterMode {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "off" => Self::Off,
+            "rules" => Self::Rules,
+            "jev" => Self::Jev,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn names() -> &'static [&'static str] {
+        &["off", "rules", "jev"]
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RouterMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_name(&raw).ok_or_else(|| {
+            serde::de::Error::custom(format!("must be one of {}", Self::names().join(", ")))
+        })
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct RouterSettings {
+    pub(crate) mode: RouterMode,
+    pub(crate) jev_url: String,
+    pub(crate) jev_model: String,
+    pub(crate) jev_timeout_ms: u64,
+    pub(crate) jev_max_response_bytes: usize,
+    /// Concurrent jev requests; excess messages fall back to the rules table
+    /// instead of queueing in front of a 400 ms call.
+    pub(crate) jev_concurrency: usize,
+    /// Minimum probability of the selected choice; below it the rules
+    /// decision wins instead of a shaky model answer.
+    pub(crate) jev_min_confidence: f64,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct SearchSettings {
@@ -305,6 +356,16 @@ defaults!(LlmSettings {
     reasoning_effort: Some("low".into()),
     request_timeout_secs: 40,
     max_response_bytes: 64 * 1024,
+});
+
+defaults!(RouterSettings {
+    mode: RouterMode::Off,
+    jev_url: "https://api.typesafe.ai/v1/systemone".into(),
+    jev_model: "jev-latest".into(),
+    jev_timeout_ms: 400,
+    jev_max_response_bytes: 16 * 1024,
+    jev_concurrency: 8,
+    jev_min_confidence: 0.6,
 });
 
 defaults!(SearchSettings {

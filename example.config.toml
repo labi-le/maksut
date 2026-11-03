@@ -6,7 +6,8 @@
 #
 # Precedence: built-in defaults < this file < the legacy environment variables
 # (DATABASE_URL, DOWNLOAD_DIR, MAX_MEDIA_BYTES, LLM_BASE_URL, LLM_MODEL, ...).
-# Secrets never belong here: BOT_TOKEN, OWNER_ID, LLM_API_KEY, TAVILY_API_KEY.
+# Secrets never belong here: BOT_TOKEN, OWNER_ID, LLM_API_KEY, JEV_API_KEY,
+# TAVILY_API_KEY.
 #
 # Every section and key is optional. Unknown keys are a startup error, and every
 # value is range-checked: a zero timeout, a zero retry count, or a cache cap
@@ -73,6 +74,17 @@ model = "deepseek-v4.1-flash"
 reasoning_effort = "low"
 request_timeout_secs = 40
 max_response_bytes = 65536
+
+[router]
+# off: historical addressing gate only; rules: deterministic decision table;
+# jev: TypeSafe System One API with the rules table as fallback.
+mode = "off"
+jev_url = "https://api.typesafe.ai/v1/systemone"
+jev_model = "jev-latest"
+jev_timeout_ms = 400
+jev_max_response_bytes = 16384
+jev_concurrency = 8
+jev_min_confidence = 0.6
 
 [search]
 # auto, public, parallel, exa, firecrawl, tavily, ddg, startpage, mojeek, ecosia
