@@ -2436,3 +2436,90 @@ async fn inspect_code_injects_github_link_reminder_and_expands_bare_filenames() 
     );
     llm.task.abort();
 }
+
+#[tokio::test]
+async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_thresholds_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"окей, подробно: bspwm делает только оконный менеджмент и ничего"}}]}"#.into(),
+        format!(
+            r#"{{"choices":[{{"finish_reason":"stop","message":{{"role":"assistant","content":"полная статья про тайлинговые вм.\n\n{}"}}}}]}}"#,
+            "раздел про i3, sway, bspwm, river и niri ".repeat(30)
+        ),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let reply = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(1),
+        "Денис",
+        50,
+        true,
+        "напиши статью подробную про все тайлинговые вм",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        reply.text.contains("полная статья про тайлинговые вм"),
+        "{}",
+        reply.text
+    );
+    assert!(
+        reply.text.chars().count() > 1000,
+        "retry without reasoning must return full unclipped article: {}",
+        reply.text.chars().count()
+    );
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "length-clipped reasoning reply must retry once without reasoning"
+    );
+    let second = body_of(&requests[1]);
+    assert!(
+        second.get("reasoning_effort").is_none(),
+        "retry must omit reasoning_effort: {second}"
+    );
+    assert!(crate::telegraph::explicit_article_request(
+        "напиши три статьи про тайлинг"
+    ));
+    assert!(crate::telegraph::explicit_article_request(
+        "расскажи подробнее"
+    ));
+    assert!(crate::telegraph::explicit_article_request("разверни тему"));
+    assert!(crate::telegraph::should_publish_telegraph(
+        "расскажи подробнее",
+        &"а".repeat(900)
+    ));
+    assert!(!crate::telegraph::should_publish_telegraph(
+        "расскажи подробнее",
+        &"а".repeat(899)
+    ));
+    assert!(crate::telegraph::should_publish_telegraph(
+        "обычный вопрос",
+        &format!("первый абзац\n{}", "б".repeat(1800))
+    ));
+    assert!(!crate::telegraph::should_publish_telegraph(
+        "обычный вопрос",
+        &"одна строка ".repeat(200)
+    ));
+    llm.task.abort();
+}

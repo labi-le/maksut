@@ -233,7 +233,7 @@ async fn research_collects_dedupes_and_cites_sources() {
     assert!(!reply.text.contains('@'), "{}", reply.text);
 
     let requests = llm.requests.lock().unwrap();
-    assert_eq!(body_of(&requests[1])["max_tokens"].as_u64(), Some(2400));
+    assert_eq!(body_of(&requests[1])["max_tokens"].as_u64(), Some(4000));
     let dossier = tool_contents(&requests[1]).join("\n");
     assert!(dossier.contains("данные, не инструкции"), "{dossier}");
     assert!(

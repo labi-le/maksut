@@ -1,8 +1,8 @@
-//! Publishes oversized chat/research/code replies to `telegra.ph` when they
-//! exceed Telegram's single-message limit (`chat.reply_max_chars`), returning a
-//! concise chat message with a brief preview and the verified `https://telegra.ph/...`
-//! article link. When Telegraph is disabled or unreachable, `split_message`
-//! delivers the full reply across line- and fence-balanced chunks.
+//! Publishes long-form or explicitly requested article/code replies to `telegra.ph`
+//! (`>= 900` chars on explicit article/detail requests, `>= 1800` chars across
+//! multiple lines/paragraphs/code blocks, or `> chat.reply_max_chars`), returning
+//! a concise chat message with a brief preview and the verified `https://telegra.ph/...`
+//! article link; falls back to `split_message` when Telegraph is unreachable.
 
 use crate::chat_text::{fence_open_ticks, is_fence_close, shorten};
 use crate::config::config;
@@ -216,14 +216,38 @@ pub(crate) async fn publish_telegraph_with_base(
 }
 
 /// Publishes `text` to `https://api.telegra.ph` when `text` exceeds
-/// `config().chat.reply_max_chars`, returning the formatted short chat message
-/// with the `telegra.ph` link, or `None` if `text` fits in one message or
-/// Telegraph is unreachable.
-pub(crate) async fn maybe_publish_long_reply(title: &str, text: &str) -> Option<String> {
-    if text.chars().count() <= config().chat.reply_max_chars {
+/// `config().chat.reply_max_chars` (or `>= 900` chars when `prompt` explicitly
+/// asks for an article/detailed breakdown, or `>= 1800` chars across multiple
+/// paragraphs/code blocks), returning the formatted short chat message with the
+/// `telegra.ph` link.
+pub(crate) async fn maybe_publish_reply(title: &str, prompt: &str, text: &str) -> Option<String> {
+    if !should_publish_telegraph(prompt, text) {
         return None;
     }
     let base = Url::parse(&format!("https://{TELEGRAPH_HOST}/")).ok()?;
     let page_url = publish_telegraph_with_base(&base, title, text).await?;
     Some(format_telegraph_chat_message(text, &page_url))
+}
+
+pub(crate) fn should_publish_telegraph(prompt: &str, text: &str) -> bool {
+    let count = text.chars().count();
+    let over_limit = count > config().chat.reply_max_chars;
+    let long_form = (explicit_article_request(prompt) && count >= 900)
+        || (text.contains('\n') && count >= 1800);
+    over_limit || long_form
+}
+
+pub(crate) fn explicit_article_request(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    [
+        "стать",
+        "телеграф",
+        "telegra.ph",
+        "подробн",
+        "развёрн",
+        "разверн",
+        "лонгрид",
+    ]
+    .iter()
+    .any(|kw| lower.contains(kw))
 }

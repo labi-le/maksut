@@ -271,9 +271,9 @@ defaults!(TelegramSettings {
 
 defaults!(ChatSettings {
     tool_rounds: 8,
-    max_tokens: 2400,
+    max_tokens: 4000,
     status_max_tokens: 1500,
-    research_max_tokens: 2400,
+    research_max_tokens: 4000,
     feature_title_max_tokens: 100,
     typing_keepalive_secs: 4,
     cooldown_ms: 3000,

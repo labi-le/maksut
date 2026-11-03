@@ -22,7 +22,6 @@ pub(crate) struct ChatReply {
     pub(crate) sticker: Option<FileId>,
     pub(crate) decision: Option<crate::self_improve::PendingDecision>,
 }
-
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
@@ -138,12 +137,11 @@ async fn deliver_chat_reply(
     {
         return;
     }
-    let reply_params = || ReplyParameters::new(message.id).allow_sending_without_reply();
     let mut delivered = false;
     if let Some(id) = reply.sticker {
         if let Ok(s) = bot
             .send_sticker(message.chat.id, InputFile::file_id(id))
-            .reply_parameters(reply_params())
+            .reply_parameters(ReplyParameters::new(message.id).allow_sending_without_reply())
             .disable_notification(true)
             .await
         {
@@ -155,10 +153,11 @@ async fn deliver_chat_reply(
         .decision
         .as_ref()
         .and_then(crate::self_improve::decision_markup);
+    let p = message.text().or_else(|| message.caption()).unwrap_or("");
     let mut chunks = if followup && is_pass_reply(&reply.text) {
         Vec::new()
     } else {
-        let out = crate::telegraph::maybe_publish_long_reply("Maksut", &reply.text).await;
+        let out = crate::telegraph::maybe_publish_reply("Maksut", p, &reply.text).await;
         split_message(out.as_deref().unwrap_or(&reply.text))
     };
     if chunks.is_empty() && markup.is_some() {
@@ -181,10 +180,9 @@ async fn deliver_chat_reply(
         };
         record_assistant_reply(&cfg.database, message.chat.id, rec, id).await;
     }
-    let stop = is_stop_followup(message.text().or_else(|| message.caption()).unwrap_or(""));
-    if stop {
+    if is_stop_followup(p) {
         chat.clear_followup(message.chat.id).await;
-    } else if delivered && !stop {
+    } else if delivered {
         chat.note_reply(message.chat.id).await;
     }
 }
@@ -224,8 +222,8 @@ async fn send_chat_chunk(
         match apply(bot.send_message(chat_id, html).parse_mode(ParseMode::Html)).await {
             Ok(s) => return Some(s.id.0),
             Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => {}
-            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref msg)))
-                if msg.contains("can't parse entities") => {}
+            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref m)))
+                if m.contains("can't parse entities") => {}
             Err(_) => return None,
         }
     }
@@ -412,8 +410,10 @@ pub(crate) async fn chat_reply_with_proposal(
             .await
             .map_err(|_| "model".to_string())?;
         if request.reasoning && reply_is_empty(&reply) {
-            if let Ok(retry) = chat.complete_with(&request, true, false).await {
-                reply = retry;
+            if let Ok(r) = chat.complete_with(&request, true, false).await {
+                if !reply_is_empty(&r) {
+                    reply = r;
+                }
             }
         }
         let calls = reply

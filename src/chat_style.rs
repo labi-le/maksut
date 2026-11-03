@@ -474,12 +474,8 @@ pub(crate) fn resolve_addressed_chat(
 }
 
 pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal: bool) -> String {
-    let names = tools.names(false);
-    let available = if names.is_empty() {
-        "нет".to_owned()
-    } else {
-        names.join(", ")
-    };
+    let names = tools.names(false).join(", ");
+    let available = if names.is_empty() { "нет" } else { &names };
     let scope = if has_proposal && tools.find("feature_status", false).is_some() {
         " feature_status показывает только ваши заявки; очередь владельца недоступна, не выдумывай её статусы."
     } else {
@@ -488,13 +484,15 @@ pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal:
     format!("Это не владелец бота. Доступные инструменты: {available}.{scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки».")
 }
 
-pub(crate) fn reply_is_empty(reply: &serde_json::Value) -> bool {
-    reply
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .is_none_or(|s| s.trim().is_empty())
-        && reply
-            .get("tool_calls")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(Vec::is_empty)
+pub(crate) fn reply_is_empty(r: &serde_json::Value) -> bool {
+    let no_calls = r
+        .get("tool_calls")
+        .and_then(serde_json::Value::as_array)
+        .is_none_or(Vec::is_empty);
+    let c = r.get("content").and_then(serde_json::Value::as_str);
+    // Reasoning can exhaust max_tokens mid-sentence (finish_reason == "length")
+    // while emitting < 2500 chars; retrying without reasoning reclaims the full budget.
+    let clip = r.get("finish_reason").and_then(serde_json::Value::as_str) == Some("length")
+        && c.is_some_and(|s| s.chars().count() < 2500);
+    no_calls && (c.is_none_or(|s| s.trim().is_empty()) || clip)
 }
