@@ -53,6 +53,10 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
     if SECRET_MARKERS.iter().any(|marker| lowered.contains(marker)) {
         flags |= FLAG_SECRET;
     }
+    // Deliberately coarse: this counter keeps long technical text out of the
+    // memory-hygiene paths (load_memory, compaction, reply context), not out of
+    // the process. Text that leaves for `telegra.ph` is checked by the narrower
+    // `credential_like` instead.
     let compact: String = trimmed
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
