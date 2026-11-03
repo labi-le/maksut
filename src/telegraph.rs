@@ -326,18 +326,22 @@ pub(crate) fn article_is_publishable(text: &str) -> bool {
     !crate::memory_guard::credential_like(text)
 }
 
-pub(crate) async fn publish_telegraph_with_base(
-    base: &Url,
-    title: &str,
-    text: &str,
-) -> Option<String> {
+/// Page title and body nodes for one reply, the single composition point for
+/// the published article: the title is the reply's first line and leaves the body.
+pub(crate) fn telegraph_document(text: &str) -> (String, Vec<Value>) {
+    let title = article_title(text);
+    let body = body_after_title(text, &title);
+    (title, markdown_to_telegraph_nodes(&body))
+}
+
+pub(crate) async fn publish_telegraph_with_base(base: &Url, text: &str) -> Option<String> {
     if !article_is_publishable(text) {
         return None;
     }
     let client = telegraph_client(base).await?;
     let token = ensure_telegraph_token(&client, base).await?;
-    let nodes = markdown_to_telegraph_nodes(&body_after_title(text, title));
-    let clean_title: String = title
+    let (clean_title, nodes) = telegraph_document(text);
+    let clean_title: String = clean_title
         .lines()
         .next()
         .unwrap_or("Maksut")
@@ -373,8 +377,7 @@ pub(crate) async fn maybe_publish_reply(prompt: &str, text: &str) -> Option<Stri
         return None;
     }
     let base = Url::parse(&format!("https://{TELEGRAPH_HOST}/")).ok()?;
-    let title = article_title(text);
-    let page_url = publish_telegraph_with_base(&base, &title, text).await?;
+    let page_url = publish_telegraph_with_base(&base, text).await?;
     Some(format_telegraph_chat_message(text, &page_url))
 }
 

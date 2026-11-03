@@ -2576,15 +2576,13 @@ fn telegraph_renders_markdown_and_keeps_the_teaser_plain() {
         ### формат\n\n\
         что используется:\n\\- списки и диапазоны\n\\- шаг\n\n\
         ```ini\nOnCalendar=*-*-* 03:30:00\n```\n";
-    let title = crate::telegraph::article_title(text);
+    let (title, nodes) = crate::telegraph::telegraph_document(text);
     assert_eq!(title, "systemd таймеры: когда");
-    let body = crate::telegraph::body_after_title(text, &title);
-    assert!(
-        !body.contains("systemd таймеры"),
-        "title leaves the body: {body}"
-    );
-    let nodes = crate::telegraph::markdown_to_telegraph_nodes(&body);
     let dumped = format!("{nodes:?}");
+    assert!(
+        !dumped.contains("systemd таймеры"),
+        "title leaves the body: {dumped}"
+    );
     assert!(!dumped.contains("**"), "emphasis markers leak: {dumped}");
     assert!(
         !dumped.contains("\\\\-"),
