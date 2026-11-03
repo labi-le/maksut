@@ -1,5 +1,20 @@
 use crate::*;
 
+const SECRET_MARKERS: &[&str] = &[
+    "sk-",
+    "ghp_",
+    "xoxb",
+    "akia",
+    "-----begin",
+    "password=",
+    "password:",
+    "token=",
+    "token:",
+    "cookie:",
+    "api_key",
+    "api key",
+];
+
 pub(crate) fn detect_flags(text: &str) -> i64 {
     let trimmed = text.trim();
     let mut flags = 0;
@@ -35,23 +50,14 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
     if INJECTIONS.iter().any(|marker| lowered.contains(marker)) {
         flags |= FLAG_INJECTION;
     }
-    const SECRET_MARKERS: &[&str] = &[
-        "sk-",
-        "ghp_",
-        "xoxb",
-        "akia",
-        "-----begin",
-        "password=",
-        "password:",
-        "token=",
-        "token:",
-        "cookie:",
-        "api_key",
-        "api key",
-    ];
     if SECRET_MARKERS.iter().any(|marker| lowered.contains(marker)) {
         flags |= FLAG_SECRET;
     }
+    // Deliberately coarse: this counter keeps long technical text out of the
+    // memory-hygiene paths (load_memory, compaction, reply context), not out of
+    // the process. Text that leaves for `telegra.ph` is checked by
+    // `credential_like` instead, whose run rule is about key shape rather than
+    // total length.
     let compact: String = trimmed
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
@@ -63,6 +69,39 @@ pub(crate) fn detect_flags(text: &str) -> i64 {
         flags |= FLAG_INJECTION;
     }
     flags
+}
+
+/// Credential check for text leaving the process, used before publishing an
+/// article. `detect_flags` sets `FLAG_SECRET` when the trimmed text holds 40+
+/// ASCII alphanumerics in total (whitespace and punctuation discarded) and at
+/// least one digit, which is why every technical answer trips it; that
+/// whole-text rule still governs memory hygiene, while publication uses this
+/// predicate instead.
+///
+/// A key is caught by one of the unconditional markers, by an `api_key` /
+/// `api key` name followed by `=` or `:`, or by one contiguous run of 32+
+/// `[A-Za-z0-9_-]` characters carrying a digit, so JWT segments, base64
+/// padding, `id:secret` Bot API tokens, and quoted literals stay visible
+/// without punctuation hiding them. The run rule also withholds an article that
+/// quotes a hex digest, a UUID, or another long digit-bearing identifier.
+pub(crate) fn credential_like(text: &str) -> bool {
+    let lowered = text.to_lowercase();
+    let assigns_value = |name: &str| {
+        lowered
+            .split(name)
+            .skip(1)
+            .any(|rest| matches!(rest.trim_start().chars().next(), Some('=') | Some(':')))
+    };
+    let marked = SECRET_MARKERS
+        .iter()
+        .copied()
+        .filter(|name| !matches!(*name, "api_key" | "api key"))
+        .any(|name| lowered.contains(name));
+    if marked || assigns_value("api_key") || assigns_value("api key") {
+        return true;
+    }
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        .any(|run| run.chars().count() >= 32 && run.chars().any(|ch| ch.is_ascii_digit()))
 }
 
 /// High-confidence prompt-injection markers that justify a 24-hour ignore.
