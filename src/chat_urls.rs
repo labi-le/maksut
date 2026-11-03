@@ -61,3 +61,138 @@ impl ChatConfig {
         }
     }
 }
+
+/// Expands repository paths (`src/foo.rs#L10`, `chat_client.rs#L275-277`,
+/// `tools/omp_worker.py:12`, `/docs/adr/012-free-chat.md:8`) into full GitHub
+/// blob URLs while leaving existing `http(s)://` URLs untouched.
+pub(crate) fn expand_repo_blob_links(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for word in text.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        push_expanded_repo_token(&mut out, word);
+    }
+    out
+}
+
+fn push_expanded_repo_token(out: &mut String, word: &str) {
+    if word.contains("://") {
+        out.push_str(word);
+        return;
+    }
+    if let Some((open_bracket, mid)) = word.split_once("](") {
+        if open_bracket.contains('[') {
+            if let Some((target, close_rest)) = mid.split_once(')') {
+                if let Some(rel) = resolve_repo_target(target) {
+                    out.push_str(open_bracket);
+                    out.push_str("](");
+                    out.push_str(crate::code_inspect::GITHUB_BLOB_BASE);
+                    out.push('/');
+                    out.push_str(&rel);
+                    out.push(')');
+                    out.push_str(close_rest);
+                    return;
+                }
+            }
+        }
+    }
+    let start = word
+        .char_indices()
+        .find(|(_, ch)| !matches!(ch, '(' | '[' | '<' | '"' | '\'' | '«' | '`'))
+        .map_or(word.len(), |(idx, _)| idx);
+    let tail = word.get(start..).unwrap_or("");
+    let end = tail
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| {
+            !matches!(
+                ch,
+                ')' | ']' | '>' | '"' | '\'' | '»' | '`' | ',' | '.' | ';' | ':' | '!' | '?'
+            )
+        })
+        .map_or(start, |(idx, ch)| start + idx + ch.len_utf8());
+    let core = word.get(start..end).unwrap_or("");
+    let Some(normalized) = resolve_repo_target(core) else {
+        out.push_str(word);
+        return;
+    };
+    out.push_str(word.get(..start).unwrap_or("").trim_end_matches('`'));
+    out.push_str(crate::code_inspect::GITHUB_BLOB_BASE);
+    out.push('/');
+    out.push_str(&normalized);
+    out.push_str(word.get(end..).unwrap_or("").trim_start_matches('`'));
+}
+
+pub(crate) fn resolve_repo_target(core: &str) -> Option<String> {
+    let trimmed = core.trim_matches('`');
+    let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    if trimmed.is_empty() || trimmed.contains("..") || trimmed.starts_with('.') {
+        return None;
+    }
+    let (raw_path, anchor) = match trimmed.split_once('#') {
+        Some((p, frag)) => (
+            p,
+            normalize_line_anchor(frag).or_else(|| (!frag.is_empty()).then(|| frag.to_owned())),
+        ),
+        None => match trimmed.rsplit_once(':') {
+            Some((p, frag)) => match normalize_line_anchor(frag) {
+                Some(a) => (p, Some(a)),
+                None => (trimmed, None),
+            },
+            None => (trimmed, None),
+        },
+    };
+    let repo_path = if raw_path.starts_with("src/")
+        || raw_path.starts_with("docs/")
+        || raw_path.starts_with("tools/")
+        || matches!(
+            raw_path,
+            "Cargo.toml"
+                | "README.md"
+                | "AGENTS.md"
+                | "Dockerfile"
+                | "compose.yaml"
+                | "example.config.toml"
+        ) {
+        raw_path.to_owned()
+    } else if !raw_path.contains('/') {
+        if let Some(stem) = raw_path.strip_suffix(".rs").filter(|s| is_safe_ident(s)) {
+            format!("src/{stem}.rs")
+        } else {
+            let stem = raw_path.strip_suffix(".py")?;
+            if !is_safe_ident(stem) {
+                return None;
+            }
+            format!("tools/{raw_path}")
+        }
+    } else {
+        return None;
+    };
+    Some(match anchor {
+        Some(a) => format!("{repo_path}#{a}"),
+        None => repo_path,
+    })
+}
+
+fn is_safe_ident(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+fn normalize_line_anchor(frag: &str) -> Option<String> {
+    let rest = frag.strip_prefix('L').unwrap_or(frag);
+    if let Some((start, end)) = rest.split_once('-') {
+        let end = end.strip_prefix('L').unwrap_or(end);
+        if is_line_num(start) && is_line_num(end) {
+            return Some(format!("L{start}-L{end}"));
+        }
+        return None;
+    }
+    is_line_num(rest).then(|| format!("L{rest}"))
+}
+
+fn is_line_num(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with('0') && s.chars().all(|c| c.is_ascii_digit())
+}

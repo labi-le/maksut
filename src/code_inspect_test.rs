@@ -46,8 +46,9 @@ fn inspect_rejects_traversal_and_unknown_files() {
     assert!(!inspect(dir.path(), "hello", Some("secret.txt")).contains("hello"));
     let file_view = inspect(dir.path(), "", Some("README.md"));
     assert!(
-        file_view.contains("README.md (https://github.com/labi-le/maxwell/blob/main/README.md):"),
+        file_view
+            .contains("README.md (https://github.com/labi-le/maxwell/blob/main/README.md#L1):"),
         "{file_view}"
     );
-    assert!(file_view.contains("1: hello"), "{file_view}");
+    assert!(file_view.contains("#L1: hello"), "{file_view}");
 }

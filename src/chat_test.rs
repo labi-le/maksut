@@ -67,14 +67,17 @@ fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
         style_reply("Привет, Вадик. Как дела?"),
         "Привет, Вадик. Как дела?"
     );
-    assert_eq!(style_reply("привет...\n\nкак дела."), "привет... как дела");
+    assert_eq!(
+        style_reply("привет...\n\nкак дела."),
+        "привет...\n\nкак дела"
+    );
     assert_eq!(
         style_reply("Смотри https://Example.com/Path."),
         "Смотри https://Example.com/Path"
     );
     assert_eq!(
-        style_reply("пруф в /docs/adr/012-free-chat.md#L8, см. src/chat.rs:10: и (src/memory.rs:15)."),
-        "пруф в https://github.com/labi-le/maxwell/blob/main/docs/adr/012-free-chat.md#L8, см. https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10: и (https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L15)"
+        style_reply("пруф в /docs/adr/012-free-chat.md#L8, docs/guides/chat.md#delivery, см. src/chat.rs:10:, config_sections.rs#L275-277 и (src/memory.rs:15)."),
+        "пруф в https://github.com/labi-le/maxwell/blob/main/docs/adr/012-free-chat.md#L8, https://github.com/labi-le/maxwell/blob/main/docs/guides/chat.md#delivery, см. https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10:, https://github.com/labi-le/maxwell/blob/main/src/config_sections.rs#L275-L277 и (https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L15)"
     );
     let near_limit = format!("{} src/chat.rs#L10 хвост", "слово ".repeat(645));
     let styled_near_limit = style_reply(&near_limit);
@@ -157,8 +160,13 @@ fn style_reply_keeps_fenced_code_blocks_on_their_own_lines() {
         Some("<pre><code class=\"language-bash\">cargo test.</code></pre>")
     );
     let prose_only = "первая строка\nвторая строка";
-    assert_eq!(style_reply(prose_only), "первая строка вторая строка");
+    assert_eq!(style_reply(prose_only), "первая строка\nвторая строка");
     assert_eq!(render_telegram_html(&style_reply(prose_only)), None);
+    let md_link = style_reply("смотри [snapcompact.rs#L400](snapcompact.rs:400) и `fn build` в [chat.rs](https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L300).");
+    assert_eq!(
+        render_telegram_html(&md_link).as_deref(),
+        Some("смотри <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L400\">snapcompact.rs#L400</a> и <code>fn build</code> в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L300\">chat.rs</a>")
+    );
 }
 
 #[test]
@@ -2358,4 +2366,73 @@ fn repeated_user_spam_suppresses_parroted_assistant_reply() {
         "максут знаменатель не обнуляется при таком сдвиге вообще никогда",
         &recent,
     ));
+}
+
+#[tokio::test]
+async fn inspect_code_injects_github_link_reminder_and_expands_bare_filenames() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src/snapcompact.rs"),
+        "pub(crate) fn build_snap_archive() {}\n",
+    )
+    .unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_ic","type":"function","function":{"name":"inspect_code","arguments":"{\"query\":\"build_snap_archive\",\"path\":\"src/snapcompact.rs\"}"}}]}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"сжатие контекста лежит в [snapcompact.rs#L1](snapcompact.rs:1), а вызов идёт из memory.rs:260."}}]}"#.into(),
+    ])
+    .await;
+    let mut config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    config.code_dir = dir.path().to_path_buf();
+    let reply = chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(1),
+        "Денис",
+        42,
+        true,
+        "я кста сделал как в омп snap compact",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reply.text,
+        "сжатие контекста лежит в [snapcompact.rs#L1](https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1), а вызов идёт из https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260"
+    );
+    assert_eq!(
+        render_telegram_html(&reply.text).as_deref(),
+        Some("сжатие контекста лежит в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1\">snapcompact.rs#L1</a>, а вызов идёт из https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260")
+    );
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let round2_body = body_of(&requests[1]);
+    let has_reminder = round2_body["messages"].as_array().unwrap().iter().any(|m| {
+        m["role"] == "system"
+            && m["content"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Ты проверил свой код через inspect_code")
+    });
+    assert!(
+        has_reminder,
+        "second round after inspect_code must include GitHub link reminder: {round2_body}"
+    );
+    llm.task.abort();
 }

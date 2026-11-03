@@ -94,44 +94,56 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
     chunks
 }
 
-/// Flattens prose runs to single lines while fenced code blocks keep their
-/// line breaks, indentation and backticks: a code answer is unreadable once
-/// every line is glued together. Prose loses em dashes and gains repository
-/// blob links; code is left verbatim.
+/// Normalizes reply prose and code fences: preserves intentional line breaks
+/// (collapsing runs of blank lines to a single blank line), keeps fenced code
+/// blocks verbatim, replaces em/en dashes in prose, and expands bare repository
+/// file paths into full GitHub blob URLs.
 pub(crate) fn flatten_reply_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut prose = String::new();
     let mut in_code = false;
     let mut fence_ticks = 0;
+    let mut pending_blank = false;
     for line in text.lines() {
         let line = line.trim_end_matches('\r');
         if in_code {
             push_line(&mut out, line.trim_end());
             in_code = !is_fence_close(line, fence_ticks);
         } else if let Some(ticks) = fence_open_ticks(line) {
-            flush_prose(&mut out, &mut prose);
+            if pending_blank && !out.is_empty() {
+                out.push('\n');
+                pending_blank = false;
+            }
             push_line(&mut out, line.trim_end());
             in_code = true;
             fence_ticks = ticks;
         } else {
             let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                if !prose.is_empty() {
-                    prose.push(' ');
+            if trimmed.is_empty() {
+                if !out.is_empty() {
+                    pending_blank = true;
                 }
-                prose.push_str(trimmed);
+            } else {
+                if pending_blank && !out.is_empty() {
+                    out.push('\n');
+                    pending_blank = false;
+                }
+                let prose = if trimmed.contains(['—', '–']) {
+                    std::borrow::Cow::Owned(trimmed.replace(['—', '–'], "-"))
+                } else {
+                    std::borrow::Cow::Borrowed(trimmed)
+                };
+                push_line(&mut out, &expand_repo_blob_links(&prose));
             }
         }
     }
-    flush_prose(&mut out, &mut prose);
     out
 }
 
 /// Renders a styled plain-text chunk into Telegram HTML (`ParseMode::Html`)
-/// when it contains a fenced code block or inline backtick span, or `None`
-/// when plain-text delivery suffices.
+/// when it contains a fenced code block, inline backtick span, or markdown
+/// link `[label](url)`, or `None` when plain-text delivery suffices.
 pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
-    if !text.contains('`') {
+    if !text.contains('`') && !text.contains("](") {
         return None;
     }
     let mut out = String::with_capacity(text.len() + 32);
@@ -205,7 +217,7 @@ fn render_inline_code_html(line: &str) -> (String, bool) {
     let mut rest = line;
     let mut formatted = false;
     while let Some(open) = rest.find('`') {
-        push_escaped_html(&mut out, rest.get(..open).unwrap_or(""));
+        formatted |= push_prose_with_links_html(&mut out, rest.get(..open).unwrap_or(""));
         let after_prefix = rest.get(open..).unwrap_or("");
         let ticks = after_prefix.len() - after_prefix.trim_start_matches('`').len();
         let after_open = after_prefix.get(ticks..).unwrap_or("");
@@ -231,8 +243,64 @@ fn render_inline_code_html(line: &str) -> (String, bool) {
             rest = after_open;
         }
     }
-    push_escaped_html(&mut out, rest);
+    formatted |= push_prose_with_links_html(&mut out, rest);
     (out, formatted)
+}
+
+fn push_prose_with_links_html(out: &mut String, text: &str) -> bool {
+    let mut rest = text;
+    let mut formatted = false;
+    while let Some(open) = rest.find('[') {
+        push_escaped_html(out, rest.get(..open).unwrap_or(""));
+        let after_open = rest.get(open + 1..).unwrap_or("");
+        let Some(mid) = after_open.find("](") else {
+            out.push('[');
+            push_escaped_html(out, after_open);
+            return formatted;
+        };
+        let label = after_open.get(..mid).unwrap_or("").trim();
+        let after_mid = after_open.get(mid + 2..).unwrap_or("");
+        if let Some(close) = after_mid.find(')') {
+            let raw_url = after_mid.get(..close).unwrap_or("").trim();
+            let resolved = match crate::chat_urls::resolve_repo_target(raw_url) {
+                Some(rel) => std::borrow::Cow::Owned(format!(
+                    "{}/{rel}",
+                    crate::code_inspect::GITHUB_BLOB_BASE
+                )),
+                None => std::borrow::Cow::Borrowed(raw_url),
+            };
+            if !label.is_empty()
+                && !label.contains('\n')
+                && (resolved.starts_with("https://") || resolved.starts_with("http://"))
+                && !resolved.chars().any(char::is_whitespace)
+            {
+                out.push_str("<a href=\"");
+                push_escaped_html_attr(out, &resolved);
+                out.push_str("\">");
+                push_escaped_html(out, label);
+                out.push_str("</a>");
+                formatted = true;
+                rest = after_mid.get(close + 1..).unwrap_or("");
+                continue;
+            }
+        }
+        out.push('[');
+        rest = after_open;
+    }
+    push_escaped_html(out, rest);
+    formatted
+}
+
+fn push_escaped_html_attr(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(ch),
+        }
+    }
 }
 
 fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
@@ -311,17 +379,7 @@ fn push_line(out: &mut String, line: &str) {
     out.push_str(line);
 }
 
-fn flush_prose(out: &mut String, prose: &mut String) {
-    if prose.is_empty() {
-        return;
-    }
-    if prose.contains(['—', '–']) {
-        *prose = prose.replace(['—', '–'], "-");
-    }
-    let expanded = expand_repo_blob_links(prose);
-    push_line(out, &expanded);
-    prose.clear();
-}
+pub(crate) use crate::chat_urls::expand_repo_blob_links;
 /// Cuts at the last whitespace before `max_chars` so a shortened reply never
 /// ends mid-word.
 pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {
@@ -431,64 +489,4 @@ pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
         _ => "сб",
     };
     format!("{year:04}-{month:02}-{day:02} ({weekday}) {hour:02}:{minute:02} МСК (UTC+3)")
-}
-
-/// Expands bare repository paths (`src/foo.rs#L10`, `/docs/adr/012-free-chat.md:8`)
-/// into full GitHub blob URLs while leaving existing `http(s)://` URLs untouched.
-pub(crate) fn expand_repo_blob_links(text: &str) -> String {
-    text.split_whitespace()
-        .map(expand_repo_token)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn expand_repo_token(word: &str) -> String {
-    if word.contains("://") {
-        return word.to_owned();
-    }
-    let start = word
-        .char_indices()
-        .find(|(_, ch)| !matches!(ch, '(' | '[' | '<' | '"' | '\'' | '«'))
-        .map_or(word.len(), |(idx, _)| idx);
-    let tail = word.get(start..).unwrap_or("");
-    let end = tail
-        .char_indices()
-        .rev()
-        .find(|(_, ch)| {
-            !matches!(
-                ch,
-                ')' | ']' | '>' | '"' | '\'' | '»' | ',' | '.' | ';' | ':' | '!' | '?'
-            )
-        })
-        .map_or(start, |(idx, ch)| start + idx + ch.len_utf8());
-    let core = word.get(start..end).unwrap_or("");
-    let trimmed = core.strip_prefix('/').unwrap_or(core);
-    let is_repo = trimmed.starts_with("src/")
-        || trimmed.starts_with("docs/")
-        || trimmed.starts_with("tools/")
-        || trimmed == "Cargo.toml"
-        || trimmed.starts_with("Cargo.toml#")
-        || trimmed.starts_with("Cargo.toml:");
-    if !is_repo {
-        return word.to_owned();
-    }
-    let normalized = if !trimmed.contains('#') {
-        if let Some((path, digits)) = trimmed.rsplit_once(':') {
-            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
-                format!("{path}#L{digits}")
-            } else {
-                trimmed.to_owned()
-            }
-        } else {
-            trimmed.to_owned()
-        }
-    } else {
-        trimmed.to_owned()
-    };
-    format!(
-        "{}{}/{normalized}{}",
-        word.get(..start).unwrap_or(""),
-        crate::code_inspect::GITHUB_BLOB_BASE,
-        word.get(end..).unwrap_or("")
-    )
 }
