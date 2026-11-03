@@ -2611,3 +2611,42 @@ fn telegraph_renders_markdown_and_keeps_the_teaser_plain() {
     assert!(!teaser.contains("**"), "{teaser}");
     assert!(teaser.contains("https://telegra.ph/x"), "{teaser}");
 }
+
+#[test]
+fn telegraph_skips_fenced_code_when_picking_title_and_teaser() {
+    let text = "```sh\nsystemctl list-timers\n```\n\n\
+        первый абзац текста\n\n\
+        ```ini\nOnCalendar=*-*-* 03:30:00\n```\n\n\
+        второй абзац\n";
+    assert_eq!(
+        crate::telegraph::article_title(text),
+        "первый абзац текста",
+        "a fenced line is never the page title"
+    );
+    let teaser = crate::telegraph::format_telegraph_chat_message(text, "u");
+    assert!(teaser.starts_with("второй абзац"), "{teaser}");
+}
+
+#[test]
+fn telegraph_keeps_unmatched_backtick_and_caps_heading_nodes() {
+    let nodes = crate::telegraph::markdown_to_telegraph_nodes("путь ` без закрытия\n");
+    let dumped = format!("{nodes:?}");
+    assert!(
+        dumped.contains("путь ` без закрытия"),
+        "an odd backtick stays literal text: {dumped}"
+    );
+    assert!(
+        !dumped.contains("String(\"code\")"),
+        "an odd backtick opens no code node: {dumped}"
+    );
+    let mut headings = String::new();
+    for index in 0..5000 {
+        headings.push_str(&format!("## раздел {index}\n\n"));
+    }
+    let capped = crate::telegraph::markdown_to_telegraph_nodes(&headings);
+    assert!(
+        capped.len() > 1000 && capped.len() <= 1500,
+        "heading nodes stay inside the byte budget: {}",
+        capped.len()
+    );
+}

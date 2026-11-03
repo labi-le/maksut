@@ -77,15 +77,35 @@ fn plain_line(line: &str) -> String {
     }
 }
 
+/// Lines that are prose, i.e. outside fenced code blocks, trimmed of `\r`.
+fn prose_lines(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut fence_ticks = 0usize;
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        if fence_ticks > 0 {
+            if is_fence_close(line, fence_ticks) {
+                fence_ticks = 0;
+            }
+            continue;
+        }
+        if let Some(ticks) = fence_open_ticks(line) {
+            fence_ticks = ticks;
+            continue;
+        }
+        out.push(line);
+    }
+    out
+}
+
 /// First prose line of the reply, which is the title the model writes for an
 /// article; `Maksut` when the reply has no usable line.
 pub(crate) fn article_title(text: &str) -> String {
-    let line = text
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with("```"))
+    let line = prose_lines(text)
+        .into_iter()
+        .find(|line| !line.trim().is_empty())
         .unwrap_or_default();
-    let title: String = plain_line(line).chars().take(80).collect();
+    let title: String = plain_line(line.trim()).chars().take(80).collect();
     let title = title.trim().to_owned();
     if title.is_empty() {
         "Maksut".to_owned()
@@ -115,12 +135,21 @@ pub(crate) fn body_after_title(text: &str, title: &str) -> String {
     body
 }
 
-/// Paragraph children: inline `code` spans become `code` nodes, everything else
-/// is prose with emphasis markers and Backslash escapes removed.
+/// Paragraph children: paired inline `code` spans become `code` nodes,
+/// everything else is prose with emphasis markers and Backslash escapes
+/// removed. An odd backtick opens nothing, so it stays literal text.
 fn inline_nodes(text: &str) -> Vec<Value> {
     let mut nodes = Vec::new();
     let mut buf = String::new();
-    for (index, part) in text.split('`').enumerate() {
+    let parts: Vec<&str> = text.split('`').collect();
+    let paired = parts.len() % 2 == 1;
+    let last = parts.len().saturating_sub(1);
+    for (index, part) in parts.iter().enumerate() {
+        if !paired && index == last {
+            buf.push('`');
+            buf.push_str(&strip_marks(part));
+            continue;
+        }
         if index % 2 == 1 {
             if !buf.is_empty() {
                 nodes.push(Value::String(std::mem::take(&mut buf)));
@@ -168,6 +197,12 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
         }
         code.clear();
     };
+    let push_heading = |nodes: &mut Vec<Value>, tag: &str, text: String, used: &mut usize| {
+        if *used < TELEGRAPH_MAX_NODES_BYTES {
+            *used += text.len() + 32;
+            nodes.push(json!({"tag": tag, "children": [text]}));
+        }
+    };
 
     for raw_line in text.lines() {
         let line = raw_line.trim_end_matches('\r');
@@ -196,14 +231,13 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
         }
         if let Some((level, text)) = heading_line(line) {
             flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
-            used_bytes += text.len() + 32;
-            nodes.push(json!({"tag": if level <= 2 { "h3" } else { "h4" }, "children": [text]}));
+            let tag = if level <= 2 { "h3" } else { "h4" };
+            push_heading(&mut nodes, tag, text, &mut used_bytes);
             continue;
         }
         if let Some(text) = bold_heading(line) {
             flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
-            used_bytes += text.len() + 32;
-            nodes.push(json!({"tag": "h3", "children": [text]}));
+            push_heading(&mut nodes, "h3", text, &mut used_bytes);
             continue;
         }
         if !para_buf.is_empty() {
@@ -229,11 +263,9 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
 /// markers, plus the article URL.
 pub(crate) fn format_telegraph_chat_message(text: &str, page_url: &str) -> String {
     let title = article_title(text);
-    let preview = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("```"))
-        .map(plain_line)
+    let preview = prose_lines(text)
+        .into_iter()
+        .map(|line| plain_line(line.trim()))
         .find(|line| !line.is_empty() && *line != title)
         .unwrap_or_else(|| title.clone());
     let preview = shorten(&preview, TELEGRAPH_PREVIEW_CHARS);
