@@ -2567,3 +2567,49 @@ fn telegraph_sees_keys_through_punctuation_and_quotes() {
         "an assigned api key name still blocks publication"
     );
 }
+
+#[test]
+fn telegraph_renders_markdown_and_keeps_the_teaser_plain() {
+    let text = "**systemd таймеры: когда**\n\n\
+        таймер - это юнит `.timer`, а `AccuracySec` по умолчанию **1 минута**.\n\n\
+        **OnCalendar**\n\n\
+        ### формат\n\n\
+        что используется:\n\\- списки и диапазоны\n\\- шаг\n\n\
+        ```ini\nOnCalendar=*-*-* 03:30:00\n```\n";
+    let title = crate::telegraph::article_title(text);
+    assert_eq!(title, "systemd таймеры: когда");
+    let body = crate::telegraph::body_after_title(text, &title);
+    assert!(
+        !body.contains("systemd таймеры"),
+        "title leaves the body: {body}"
+    );
+    let nodes = crate::telegraph::markdown_to_telegraph_nodes(&body);
+    let dumped = format!("{nodes:?}");
+    assert!(!dumped.contains("**"), "emphasis markers leak: {dumped}");
+    assert!(
+        !dumped.contains("\\\\-"),
+        "escaped bullets stay escaped: {dumped}"
+    );
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["tag"] == "h3" && node["children"][0] == "OnCalendar"),
+        "a standalone bold line becomes a heading: {dumped}"
+    );
+    assert!(
+        nodes.iter().any(|node| node["tag"] == "h4"),
+        "a ### heading becomes h4: {dumped}"
+    );
+    assert!(
+        dumped.contains("String(\"code\")"),
+        "inline backticks become code nodes: {dumped}"
+    );
+    assert!(
+        nodes.iter().any(|node| node["tag"] == "pre"),
+        "fenced code keeps its pre node: {dumped}"
+    );
+    let teaser = crate::telegraph::format_telegraph_chat_message(text, "https://telegra.ph/x");
+    assert!(teaser.starts_with("таймер - это юнит"), "{teaser}");
+    assert!(!teaser.contains("**"), "{teaser}");
+    assert!(teaser.contains("https://telegra.ph/x"), "{teaser}");
+}

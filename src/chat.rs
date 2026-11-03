@@ -157,7 +157,7 @@ async fn deliver_chat_reply(
     let mut chunks = if followup && is_pass_reply(&reply.text) {
         Vec::new()
     } else {
-        let out = crate::telegraph::maybe_publish_reply("Maksut", p, &reply.text).await;
+        let out = crate::telegraph::maybe_publish_reply(p, &reply.text).await;
         split_message(out.as_deref().unwrap_or(&reply.text))
     };
     if chunks.is_empty() && markup.is_some() {
