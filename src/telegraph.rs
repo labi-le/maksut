@@ -178,12 +178,20 @@ async fn ensure_telegraph_token(client: &reqwest::Client, base: &Url) -> Option<
     Some(token)
 }
 
+/// Article text leaves the process only when it carries no high-confidence
+/// credential; `credential_like` is deliberately narrower than
+/// `detect_flags`, whose "long alphanumeric run with a digit" rule flags every
+/// technical answer.
+pub(crate) fn article_is_publishable(text: &str) -> bool {
+    !crate::memory_guard::credential_like(text)
+}
+
 pub(crate) async fn publish_telegraph_with_base(
     base: &Url,
     title: &str,
     text: &str,
 ) -> Option<String> {
-    if crate::memory_guard::detect_flags(text) & crate::memory::FLAG_SECRET != 0 {
+    if !article_is_publishable(text) {
         return None;
     }
     let client = telegraph_client(base).await?;

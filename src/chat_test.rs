@@ -2523,3 +2523,22 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
     ));
     llm.task.abort();
 }
+
+#[test]
+fn telegraph_publishes_technical_articles_and_withholds_credentials() {
+    let article = "**Что нужно на стороне кода.** WiFi.softAP() + DNSServer::start(53, \"*\", ip) \
+         + WebServer на 80 порту, обработчики /generate_204 и /ncsi.txt, статья 272 УК.";
+    assert!(
+        crate::telegraph::article_is_publishable(article),
+        "technical prose with digits is not a credential"
+    );
+    assert!(!crate::telegraph::article_is_publishable(
+        "вот ключ доступа: access_token=f7b170bc988ee23af20cc811ed3f76f1"
+    ));
+    assert!(
+        !crate::telegraph::article_is_publishable(
+            "держи dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LTEyMzQ1Ng и не пересылай"
+        ),
+        "one unbroken key-shaped token with digits blocks publication"
+    );
+}
