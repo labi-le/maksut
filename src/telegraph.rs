@@ -20,8 +20,171 @@ const TELEGRAPH_PREVIEW_CHARS: usize = 500;
 
 static TELEGRAPH_TOKEN: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
-/// Converts markdown-like reply text (paragraphs, fenced code blocks, and
-/// `источники:` lines) into Telegraph Node JSON (`[{"tag": "p"|"pre", ...}]`).
+/// Drops the backslash escapes Telegram's MarkdownV2 dialect puts before
+/// punctuation (`\-`, `\.`), which the model emits for chat rendering.
+fn unescape_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next.is_ascii_punctuation() {
+                    out.push(next);
+                    chars.next();
+                    continue;
+                }
+            }
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Removes emphasis markers and escapes from a line of prose.
+fn strip_marks(text: &str) -> String {
+    unescape_markdown(text).replace("**", "").replace("__", "")
+}
+
+/// `Some((hashes, text))` for a `#`-prefixed heading line.
+fn heading_line(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim();
+    let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = trimmed.trim_start_matches('#').trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    Some((hashes, strip_marks(rest)))
+}
+
+/// `Some(text)` when the whole line is one `**bold**` run; the model uses that
+/// shape for section titles.
+fn bold_heading(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix("**")?.strip_suffix("**")?;
+    if inner.contains("**") || inner.trim().is_empty() {
+        return None;
+    }
+    Some(unescape_markdown(inner.trim()))
+}
+
+fn plain_line(line: &str) -> String {
+    match bold_heading(line) {
+        Some(inner) => inner,
+        None => strip_marks(line.trim_start_matches('#').trim_start()),
+    }
+}
+
+/// Lines that are prose, i.e. outside fenced code blocks, trimmed of `\r`.
+fn prose_lines(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut fence_ticks = 0usize;
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        if fence_ticks > 0 {
+            if is_fence_close(line, fence_ticks) {
+                fence_ticks = 0;
+            }
+            continue;
+        }
+        if let Some(ticks) = fence_open_ticks(line) {
+            fence_ticks = ticks;
+            continue;
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// First prose line of the reply, which is the title the model writes for an
+/// article; `Maksut` when the reply has no usable line.
+pub(crate) fn article_title(text: &str) -> String {
+    let line = prose_lines(text)
+        .into_iter()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default();
+    let title: String = plain_line(line.trim()).chars().take(80).collect();
+    let title = title.trim().to_owned();
+    if title.is_empty() {
+        "Maksut".to_owned()
+    } else {
+        title
+    }
+}
+
+/// Drops the title line so the published page does not repeat it above the body.
+/// Only a prose line can be the title, so a reply that opens with fenced code
+/// still loses the first text line rather than a code line.
+pub(crate) fn body_after_title(text: &str, title: &str) -> String {
+    let mut body = String::with_capacity(text.len());
+    let mut fence_ticks = 0usize;
+    let mut first = true;
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        let prose = fence_ticks == 0 && fence_open_ticks(line).is_none();
+        if fence_ticks > 0 {
+            if is_fence_close(line, fence_ticks) {
+                fence_ticks = 0;
+            }
+        } else if let Some(ticks) = fence_open_ticks(line) {
+            fence_ticks = ticks;
+        }
+        if first && prose {
+            if line.trim().is_empty() {
+                continue;
+            }
+            first = false;
+            let candidate: String = plain_line(line).chars().take(80).collect();
+            if candidate.trim() == title {
+                continue;
+            }
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    body
+}
+
+/// Paragraph children: paired inline `code` spans become `code` nodes,
+/// everything else is prose with emphasis markers and Backslash escapes
+/// removed. An odd backtick opens nothing, so it stays literal text.
+fn inline_nodes(text: &str) -> Vec<Value> {
+    let mut nodes = Vec::new();
+    let mut buf = String::new();
+    let parts: Vec<&str> = text.split('`').collect();
+    let paired = parts.len() % 2 == 1;
+    let last = parts.len().saturating_sub(1);
+    for (index, part) in parts.iter().enumerate() {
+        if !paired && index == last {
+            buf.push('`');
+            buf.push_str(&strip_marks(part));
+            continue;
+        }
+        if index % 2 == 1 {
+            if !buf.is_empty() {
+                nodes.push(Value::String(std::mem::take(&mut buf)));
+            }
+            if !part.is_empty() {
+                nodes.push(json!({"tag": "code", "children": [part]}));
+            }
+            continue;
+        }
+        buf.push_str(&strip_marks(part));
+    }
+    if !buf.is_empty() {
+        nodes.push(Value::String(buf));
+    }
+    if nodes.is_empty() {
+        nodes.push(Value::String(String::new()));
+    }
+    nodes
+}
+
+/// Converts markdown-like reply text (paragraphs, headings, fenced code blocks,
+/// and `источники:` lines) into Telegraph Node JSON (`p`, `h3`/`h4`, `pre`,
+/// inline `code`).
 pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
     let mut nodes = Vec::new();
     let mut in_code = false;
@@ -34,7 +197,7 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
         let trimmed = para.trim();
         if !trimmed.is_empty() && *used < TELEGRAPH_MAX_NODES_BYTES {
             *used += trimmed.len() + 32;
-            nodes.push(json!({"tag": "p", "children": [trimmed]}));
+            nodes.push(json!({"tag": "p", "children": inline_nodes(trimmed)}));
         }
         para.clear();
     };
@@ -45,6 +208,12 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
             nodes.push(json!({"tag": "pre", "children": [trimmed]}));
         }
         code.clear();
+    };
+    let push_heading = |nodes: &mut Vec<Value>, tag: &str, text: String, used: &mut usize| {
+        if *used < TELEGRAPH_MAX_NODES_BYTES {
+            *used += text.len() + 32;
+            nodes.push(json!({"tag": tag, "children": [text]}));
+        }
     };
 
     for raw_line in text.lines() {
@@ -72,6 +241,17 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
             flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
             continue;
         }
+        if let Some((level, text)) = heading_line(line) {
+            flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
+            let tag = if level <= 2 { "h3" } else { "h4" };
+            push_heading(&mut nodes, tag, text, &mut used_bytes);
+            continue;
+        }
+        if let Some(text) = bold_heading(line) {
+            flush_para(&mut nodes, &mut para_buf, &mut used_bytes);
+            push_heading(&mut nodes, "h3", text, &mut used_bytes);
+            continue;
+        }
         if !para_buf.is_empty() {
             para_buf.push('\n');
         }
@@ -91,14 +271,17 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
 }
 
 /// Formats the short chat summary message pointing to the published Telegraph
-/// page, keeping the opening summary sentence/paragraph and the article URL.
+/// page: the first prose line after the article title, freed of markdown
+/// markers, plus the article URL.
 pub(crate) fn format_telegraph_chat_message(text: &str, page_url: &str) -> String {
-    let first_prose = text
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with("```"))
-        .unwrap_or("ответ");
-    let preview = shorten(first_prose, TELEGRAPH_PREVIEW_CHARS).trim_end_matches(['.', '…']);
+    let title = article_title(text);
+    let preview = prose_lines(text)
+        .into_iter()
+        .map(|line| plain_line(line.trim()))
+        .find(|line| !line.is_empty() && *line != title)
+        .unwrap_or_else(|| title.clone());
+    let preview = shorten(&preview, TELEGRAPH_PREVIEW_CHARS);
+    let preview = preview.trim_end_matches(['.', '…']);
     format!("{preview}\n\nполный текст и код: {page_url}")
 }
 
@@ -185,18 +368,22 @@ pub(crate) fn article_is_publishable(text: &str) -> bool {
     !crate::memory_guard::credential_like(text)
 }
 
-pub(crate) async fn publish_telegraph_with_base(
-    base: &Url,
-    title: &str,
-    text: &str,
-) -> Option<String> {
+/// Page title and body nodes for one reply, the single composition point for
+/// the published article: the title is the reply's first line and leaves the body.
+pub(crate) fn telegraph_document(text: &str) -> (String, Vec<Value>) {
+    let title = article_title(text);
+    let body = body_after_title(text, &title);
+    (title, markdown_to_telegraph_nodes(&body))
+}
+
+pub(crate) async fn publish_telegraph_with_base(base: &Url, text: &str) -> Option<String> {
     if !article_is_publishable(text) {
         return None;
     }
     let client = telegraph_client(base).await?;
     let token = ensure_telegraph_token(&client, base).await?;
-    let nodes = markdown_to_telegraph_nodes(text);
-    let clean_title: String = title
+    let (clean_title, nodes) = telegraph_document(text);
+    let clean_title: String = clean_title
         .lines()
         .next()
         .unwrap_or("Maksut")
@@ -227,12 +414,12 @@ pub(crate) async fn publish_telegraph_with_base(
 /// request, `>= 500` chars when `prompt` asks for an article/detailed breakdown,
 /// or `>= 1800` chars across multiple paragraphs/code blocks), returning the
 /// formatted short chat message with the `telegra.ph` link.
-pub(crate) async fn maybe_publish_reply(title: &str, prompt: &str, text: &str) -> Option<String> {
+pub(crate) async fn maybe_publish_reply(prompt: &str, text: &str) -> Option<String> {
     if !should_publish_telegraph(prompt, text) {
         return None;
     }
     let base = Url::parse(&format!("https://{TELEGRAPH_HOST}/")).ok()?;
-    let page_url = publish_telegraph_with_base(&base, title, text).await?;
+    let page_url = publish_telegraph_with_base(&base, text).await?;
     Some(format_telegraph_chat_message(text, &page_url))
 }
 
