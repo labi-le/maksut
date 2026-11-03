@@ -2625,6 +2625,16 @@ fn telegraph_skips_fenced_code_when_picking_title_and_teaser() {
     );
     let teaser = crate::telegraph::format_telegraph_chat_message(text, "u");
     assert!(teaser.starts_with("второй абзац"), "{teaser}");
+    let (_, nodes) = crate::telegraph::telegraph_document(text);
+    let dumped = format!("{nodes:?}");
+    assert!(
+        !dumped.contains("первый абзац текста"),
+        "the title line leaves the body even after a leading fence: {dumped}"
+    );
+    assert!(
+        dumped.contains("systemctl list-timers") && dumped.contains("второй абзац"),
+        "code and later prose survive: {dumped}"
+    );
 }
 
 #[test]

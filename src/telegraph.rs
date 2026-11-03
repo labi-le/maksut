@@ -115,11 +115,23 @@ pub(crate) fn article_title(text: &str) -> String {
 }
 
 /// Drops the title line so the published page does not repeat it above the body.
+/// Only a prose line can be the title, so a reply that opens with fenced code
+/// still loses the first text line rather than a code line.
 pub(crate) fn body_after_title(text: &str, title: &str) -> String {
     let mut body = String::with_capacity(text.len());
+    let mut fence_ticks = 0usize;
     let mut first = true;
-    for line in text.lines() {
-        if first {
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        let prose = fence_ticks == 0 && fence_open_ticks(line).is_none();
+        if fence_ticks > 0 {
+            if is_fence_close(line, fence_ticks) {
+                fence_ticks = 0;
+            }
+        } else if let Some(ticks) = fence_open_ticks(line) {
+            fence_ticks = ticks;
+        }
+        if first && prose {
             if line.trim().is_empty() {
                 continue;
             }
