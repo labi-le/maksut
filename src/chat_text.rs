@@ -303,7 +303,7 @@ fn push_escaped_html_attr(out: &mut String, text: &str) {
     }
 }
 
-fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
+pub(crate) fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {

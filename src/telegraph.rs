@@ -5,7 +5,7 @@
 //! article link; falls back to `split_message` when Telegraph is unreachable or
 //! the text carries a credential (`credential_like`).
 
-use crate::chat_text::{fence_open_ticks, is_fence_close, shorten};
+use crate::chat_text::{fence_open_ticks, find_closing_ticks, is_fence_close, shorten};
 use crate::config::config;
 use crate::permitted_ipv4;
 use crate::prelude::*;
@@ -84,19 +84,34 @@ fn plain_line(line: &str) -> String {
     bold_heading(line).unwrap_or_else(|| strip_marks(line))
 }
 
-/// Index and text of the reply's first line that carries prose rather than a
-/// fence; the model writes that line as the article title.
-fn prose_line(text: &str) -> Option<(usize, &str)> {
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| (index, line.trim()))
-        .find(|(_, line)| !line.is_empty() && !line.starts_with("```"))
+/// `(index, text)` of the first line at or after `from` that carries prose,
+/// skipping fenced code blocks the same way `markdown_to_telegraph_nodes` does;
+/// the model writes that line as the article title.
+fn prose_line(text: &str, from: usize) -> Option<(usize, &str)> {
+    let mut fence_ticks = 0;
+    for (index, line) in text.lines().enumerate() {
+        if fence_ticks > 0 {
+            if is_fence_close(line, fence_ticks) {
+                fence_ticks = 0;
+            }
+            continue;
+        }
+        if let Some(ticks) = fence_open_ticks(line) {
+            fence_ticks = ticks;
+            continue;
+        }
+        let trimmed = line.trim();
+        if index >= from && !trimmed.is_empty() {
+            return Some((index, trimmed));
+        }
+    }
+    None
 }
 
 /// Page title for a reply: its first prose line without markers, `Maksut` when
 /// the reply has no usable line.
 pub(crate) fn article_title(text: &str) -> String {
-    let title = prose_line(text)
+    let title = prose_line(text, 0)
         .map(|(_, line)| plain_line(line))
         .unwrap_or_default();
     let title: String = title.trim().chars().take(TELEGRAPH_TITLE_CHARS).collect();
@@ -108,24 +123,40 @@ pub(crate) fn article_title(text: &str) -> String {
 }
 
 /// Paragraph children: inline `code` spans become `code` nodes, everything else
-/// is prose with the markers stripped.
+/// is prose with the markers stripped. Backtick runs pair by equal length as in
+/// markdown, so ```` ``code`` ```` is one span; an unmatched run is a typo and
+/// its text stays prose instead of swallowing the rest of the paragraph.
 fn inline_nodes(text: &str) -> Vec<Value> {
     let mut nodes = Vec::new();
-    let mut buf = String::new();
-    for (index, part) in text.split('`').enumerate() {
-        if index % 2 == 1 {
-            if !buf.is_empty() {
-                nodes.push(Value::String(std::mem::take(&mut buf)));
-            }
-            if !part.is_empty() {
-                nodes.push(json!({"tag": "code", "children": [part]}));
-            }
-            continue;
+    let mut prose = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        prose.push_str(&strip_marks(rest.get(..open).unwrap_or_default()));
+        let after_prefix = rest.get(open..).unwrap_or_default();
+        let ticks = after_prefix.len() - after_prefix.trim_start_matches('`').len();
+        let after_open = after_prefix.get(ticks..).unwrap_or_default();
+        let Some(close) = find_closing_ticks(after_open, ticks) else {
+            prose.push_str(&strip_marks(after_open));
+            rest = "";
+            break;
+        };
+        if !prose.is_empty() {
+            nodes.push(Value::String(std::mem::take(&mut prose)));
         }
-        buf.push_str(&strip_marks(part));
+        let span = after_open.get(..close).unwrap_or_default();
+        let inner = if ticks > 1 && span.len() > 2 && span.starts_with(' ') && span.ends_with(' ') {
+            span.get(1..span.len() - 1).unwrap_or(span)
+        } else {
+            span
+        };
+        if !inner.is_empty() {
+            nodes.push(json!({"tag": "code", "children": [inner]}));
+        }
+        rest = after_open.get(close + ticks..).unwrap_or_default();
     }
-    if !buf.is_empty() {
-        nodes.push(Value::String(buf));
+    prose.push_str(&strip_marks(rest));
+    if !prose.is_empty() {
+        nodes.push(Value::String(prose));
     }
     if nodes.is_empty() {
         nodes.push(Value::String(String::new()));
@@ -137,7 +168,7 @@ fn inline_nodes(text: &str) -> Vec<Value> {
 /// prose line and that line leaves the body, so the page does not repeat it.
 pub(crate) fn telegraph_document(text: &str) -> (String, Vec<Value>) {
     let title = article_title(text);
-    let title_line = prose_line(text).map(|(index, _)| index);
+    let title_line = prose_line(text, 0).map(|(index, _)| index);
     let mut body = String::with_capacity(text.len());
     for (index, line) in text.lines().enumerate() {
         if Some(index) == title_line {
@@ -242,15 +273,9 @@ pub(crate) fn markdown_to_telegraph_nodes(text: &str) -> Vec<Value> {
 /// removed, plus the article URL.
 pub(crate) fn format_telegraph_chat_message(text: &str, page_url: &str) -> String {
     let title = article_title(text);
-    let title_line = prose_line(text).map(|(index, _)| index);
-    let preview = text
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| Some(*index) != title_line)
-        .map(|(_, line)| line.trim())
-        .filter(|line| !line.is_empty() && !line.starts_with("```"))
-        .map(plain_line)
-        .find(|line| !line.is_empty())
+    let after_title = prose_line(text, 0).map_or(0, |(index, _)| index + 1);
+    let preview = prose_line(text, after_title)
+        .map(|(_, line)| plain_line(line))
         .unwrap_or_else(|| title.clone());
     let preview = shorten(&preview, TELEGRAPH_PREVIEW_CHARS);
     let preview = preview.trim_end_matches(['.', '…']);

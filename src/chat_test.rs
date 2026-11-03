@@ -2622,3 +2622,49 @@ fn telegraph_page_title_comes_from_the_reply_and_markdown_becomes_nodes() {
     assert!(!teaser.contains("**") && !teaser.contains('`'), "{teaser}");
     assert!(teaser.contains("https://telegra.ph/x"), "{teaser}");
 }
+
+#[test]
+fn telegraph_title_and_teaser_skip_fenced_code_blocks() {
+    let text = "```ini\nOnCalendar=*-*-* 03:30:00\n```\n\n# systemd таймеры\n\n\
+        ```bash\nsystemctl list-timers\n```\n\nтекст после кода.\n";
+    let (title, nodes) = crate::telegraph::telegraph_document(text);
+    assert_eq!(title, "systemd таймеры");
+    let dumped = serde_json::to_string(&nodes).unwrap();
+    assert!(
+        dumped.contains("OnCalendar=*-*-* 03:30:00"),
+        "the opening code block stays whole: {dumped}"
+    );
+    assert!(
+        !dumped.contains("systemd таймеры"),
+        "the title line leaves the body: {dumped}"
+    );
+    let teaser = crate::telegraph::format_telegraph_chat_message(text, "https://telegra.ph/x");
+    assert!(
+        teaser.starts_with("текст после кода"),
+        "teaser skips the second fence: {teaser}"
+    );
+}
+
+#[test]
+fn telegraph_inline_code_pairs_backtick_runs_and_keeps_unmatched_prose() {
+    let nodes = crate::telegraph::markdown_to_telegraph_nodes("``AccuracySec **1 минута**``");
+    let dumped = serde_json::to_string(&nodes).unwrap();
+    assert_eq!(
+        nodes[0]["children"][0]["tag"], "code",
+        "a double-backtick span is one code node: {dumped}"
+    );
+    assert_eq!(
+        nodes[0]["children"][0]["children"][0], "AccuracySec **1 минута**",
+        "the code span keeps its content verbatim: {dumped}"
+    );
+    let nodes = crate::telegraph::markdown_to_telegraph_nodes("хвост `без закрытия **не код**");
+    let dumped = serde_json::to_string(&nodes).unwrap();
+    assert!(
+        !dumped.contains("\"code\""),
+        "an unmatched backtick does not open a code span: {dumped}"
+    );
+    assert!(
+        dumped.contains("без закрытия не код"),
+        "the text after an unmatched backtick stays prose: {dumped}"
+    );
+}
