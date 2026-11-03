@@ -346,6 +346,7 @@ pub(crate) async fn handle_message(
         let report = deliver_items(&bot, message.chat.id, items, cfg.max_media_bytes, false).await;
         match report.error {
             None => {
+                record_media_delivery(&cfg.database, message.chat.id, &url, &report).await;
                 delete_source(&bot, &message).await;
                 return Ok(());
             }
@@ -458,6 +459,9 @@ pub(crate) async fn handle_message(
         deadline,
     )
     .await;
+    if report.delivered > 0 {
+        record_media_delivery(&cfg.database, message.chat.id, &url, &report).await;
+    }
     let found = result.selection.files.len();
     let skipped = result.selection.skipped;
     let complete = result.process_ok

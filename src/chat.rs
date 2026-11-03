@@ -1,6 +1,5 @@
 use crate::*;
 use serde_json::json;
-use teloxide::types::ChatAction;
 
 /// One inbound chat message plus who sent it.
 pub(crate) struct ChatTurn<'a> {
@@ -21,12 +20,6 @@ pub(crate) struct ChatReply {
     pub(crate) text: String,
     pub(crate) sticker: Option<FileId>,
     pub(crate) decision: Option<crate::self_improve::PendingDecision>,
-}
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 async fn record_assistant_reply(pool: &SqlitePool, chat_id: ChatId, text: &str, message_id: i32) {
     let _ = crate::memory::record_message(
@@ -59,6 +52,9 @@ pub(crate) async fn reply_with_chat(
             .await
             .is_ok_and(|e| e)
     {
+        return;
+    }
+    if cfg.router.gate(chat, message, &input).await != Decision::Reply {
         return;
     }
     chat.pace(sender.id).await;
@@ -114,12 +110,15 @@ pub(crate) async fn reply_with_chat(
         Err(reason) => {
             tracing::error!("Chat reply failed: {reason}");
             if message.chat.is_private() || !turn.followup {
-                let msg = if message.chat.is_private() {
-                    "Не получилось ответить, попробуй ещё раз."
-                } else {
-                    "лпмка отвалилась по таймауту, повтори ещё раз"
+                let msg = match (message.chat.is_private(), reason.strip_prefix("http_")) {
+                    (true, _) => "Не получилось ответить, попробуй ещё раз.".to_owned(),
+                    (false, Some(code)) => format!("лпмка вернула ошибку {code}, повтори ещё раз"),
+                    (false, None) if reason == "timeout" => {
+                        "лпмка отвалилась по таймауту, повтори ещё раз".to_owned()
+                    }
+                    (false, None) => "лпмка временно отвалилась, повтори ещё раз".to_owned(),
                 };
-                let _ = send_chat_chunk(bot, message.chat.id, message.id, msg, true, None).await;
+                let _ = send_chat_chunk(bot, message.chat.id, message.id, &msg, true, None).await;
             }
         }
     }
@@ -187,19 +186,6 @@ async fn deliver_chat_reply(
     }
 }
 
-fn spawn_typing_keepalive(bot: Bot, chat_id: ChatId) -> AbortOnDrop {
-    AbortOnDrop(tokio::spawn(async move {
-        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
-        let d = Duration::from_secs(config().chat.typing_keepalive_secs);
-        while {
-            time::sleep(d).await;
-            bot.send_chat_action(chat_id, ChatAction::Typing)
-                .await
-                .is_ok()
-        } {}
-    }))
-}
-
 async fn send_chat_chunk(
     bot: &Bot,
     chat_id: ChatId,
@@ -241,9 +227,13 @@ pub(crate) async fn chat_reply_with_proposal(
     turn: &ChatTurn<'_>,
     proposal: Option<&FeatureProposal>,
 ) -> Result<ChatReply, String> {
-    if turn.followup && is_stop_followup(turn.prompt) {
+    if is_stop_followup(turn.prompt)
+        && (turn.followup || turn.prompt.split_whitespace().count() <= 4)
+    {
         chat.clear_followup(turn.chat_id).await;
-        return Ok(ChatReply::default());
+        if turn.followup {
+            return Ok(ChatReply::default());
+        }
     }
     let prompt = match (turn.prompt.trim().is_empty(), turn.followup) {
         (true, true) => "собеседник прислал вложение или стикер без текста в текущем разговоре. если это просто реакция на твой прошлый ответ, чужой скриншот без вопроса к тебе или шутка уже закрыта, ответь ровно одним словом PASS; иначе отреагируй коротко по смыслу текущей картинки, не приплетая прошлые темы чата и не описывая картинку",
@@ -356,7 +346,7 @@ pub(crate) async fn chat_reply_with_proposal(
             turn.reply_context,
         );
         if !d.is_empty() {
-            user_text.push_str(&format!("обязательная установка владельца для этого ответа (соблюдай все общие запреты и правила тона; прозвища или обращения используй естественно и к месту, не вставляй одно и то же обращение в каждое предложение):\n{d}\n"));
+            user_text.push_str(&format!("обязательная установка владельца для этого ответа (обращайся строго к автору текущей реплики `говорит ...`, не путай его с людьми, упомянутыми в тексте; соблюдай все общие запреты и правила тона; прозвища или обращения используй естественно и к месту, не вставляй одно и то же обращение в каждое предложение):\n{d}\n"));
         }
     }
     let sp = crate::memory::format_line_with_owner(
@@ -367,7 +357,7 @@ pub(crate) async fn chat_reply_with_proposal(
     );
     user_text.push_str(&format!(
         "{}актуальная реплика, отвечай только на неё — говорит {sp}",
-        sticker_turn_hint(prompt)
+        crate::chat_urls::sticker_turn_hint(prompt)
     ));
     let user_msg_idx = messages.len();
     messages.push(json!({"role": "user", "content": turn.image.map_or_else(|| json!(user_text), |img| json!([{"type": "text", "text": user_text}, {"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", img.mime, base64_encode(&img.bytes))}}]))}));
@@ -405,10 +395,7 @@ pub(crate) async fn chat_reply_with_proposal(
         if turn.image.is_some() || snap_msg_idx.is_some() {
             request = request.without_reasoning();
         }
-        let mut reply = chat
-            .complete(&request)
-            .await
-            .map_err(|_| "model".to_string())?;
+        let mut reply = chat.complete(&request).await.map_err(|e| e.reason())?;
         if request.reasoning && reply_is_empty(&reply) {
             if let Ok(r) = chat.complete_with(&request, true, false).await {
                 if !reply_is_empty(&r) {
@@ -480,11 +467,7 @@ pub(crate) async fn chat_reply_with_proposal(
         let ac = reply.get("content").cloned().unwrap_or(Value::Null);
         messages.push(json!({"role": "assistant", "content": ac, "tool_calls": calls}));
         for call in &calls {
-            let id = call
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
+            let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
             messages.push(json!({"role": "tool", "tool_call_id": id, "content": run_tool_call(call, &ctx, &mut state).await}));
         }
         if state.inspect_calls > 0 && !state.inspect_announced {

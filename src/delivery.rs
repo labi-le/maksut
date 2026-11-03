@@ -181,6 +181,8 @@ pub(crate) struct DeliveryItem<'a> {
 
 pub(crate) struct DeliveryReport {
     pub(crate) delivered: usize,
+    pub(crate) first_kind: Option<MediaKind>,
+    pub(crate) first_message_id: Option<i32>,
     pub(crate) cached_items: Option<Vec<CachedMedia>>,
     pub(crate) error: Option<DeliveryError>,
 }
@@ -189,6 +191,8 @@ impl DeliveryReport {
     pub(crate) fn new() -> Self {
         Self {
             delivered: 0,
+            first_kind: None,
+            first_message_id: None,
             cached_items: Some(Vec::new()),
             error: None,
         }
@@ -196,6 +200,8 @@ impl DeliveryReport {
 
     pub(crate) fn push(&mut self, kind: MediaKind, message: Message, description: Option<&str>) {
         self.delivered += 1;
+        self.first_kind.get_or_insert(kind);
+        self.first_message_id.get_or_insert(message.id.0);
         let file_id = match kind {
             MediaKind::Photo => message
                 .photo()
@@ -230,6 +236,38 @@ impl DeliveryReport {
             }),
         });
     }
+}
+
+pub(crate) async fn record_media_delivery(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+    url: &Url,
+    report: &DeliveryReport,
+) {
+    let Some(kind) = report.first_kind else {
+        return;
+    };
+    let label = match kind {
+        MediaKind::Video => "видео",
+        MediaKind::Photo => "фото",
+        MediaKind::Audio => "аудио",
+        MediaKind::Document => "файл",
+    };
+    let mut clean = url.clone();
+    clean.set_query(None);
+    clean.set_fragment(None);
+    let n = report.delivered;
+    let summary = if n > 1 {
+        format!("[отправил {label} ({n} шт.) по ссылке {clean}]")
+    } else {
+        format!("[отправил {label} по ссылке {clean}]")
+    };
+    let _ = crate::memory::record_message(
+        pool,
+        RecordMessage::new(chat_id, 0, "максут", "assistant", &summary)
+            .with_message_id(report.first_message_id),
+    )
+    .await;
 }
 
 pub(crate) fn album_compatible(first: MediaKind, next: MediaKind) -> bool {
