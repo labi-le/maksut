@@ -349,7 +349,7 @@ pub(crate) async fn run_tool_call(
                 ack_lookup(ctx);
                 match ctx
                     .chat
-                    .research(ctx.user_id, question, &queries, budget)
+                    .research(ctx.owner, ctx.user_id, question, &queries, budget)
                     .await
                 {
                     Ok(outcome) => {

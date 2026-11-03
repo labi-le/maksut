@@ -70,7 +70,7 @@ fn status_details_answer(tasks: &[Value], overview: Option<&Value>) -> String {
         let Some(status) = task.get("status").and_then(Value::as_str) else {
             continue;
         };
-        if !matches!(status, "queued" | "proposed") {
+        if !matches!(status, "queued" | "proposed" | "issue_created") {
             continue;
         }
         let id = task.get("id").and_then(Value::as_str).unwrap_or("без id");

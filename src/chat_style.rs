@@ -208,19 +208,26 @@ fn render_sources_block(
     lines.join("\n")
 }
 
-/// Chat style: prose collapses to single lines, fenced code blocks keep their
-/// own lines, and the whole reply is bounded to one Telegram message
-/// (`config().chat.reply_max_chars`). Casing belongs to the model: the prompt
-/// asks for mostly lowercase, but delivery never rewrites the answer's case.
 pub(crate) fn style_reply(text: &str) -> String {
-    let flattened = flatten_reply_text(text);
-    let styled = shorten(&flattened, config().chat.reply_max_chars).trim();
-    let styled = if ends_inside_fence(styled) {
-        styled
+    style_reply_bounded(text, config().chat.reply_max_chars)
+}
+
+pub(crate) fn style_chat_reply(text: &str) -> String {
+    if text.chars().count() <= config().chat.reply_max_chars {
+        style_reply(text)
     } else {
-        styled.trim_end_matches(['.', '…'])
-    };
-    styled.to_owned()
+        style_reply_bounded(text, config().chat.research_max_chars)
+    }
+}
+
+fn style_reply_bounded(text: &str, max_chars: usize) -> String {
+    let flattened = flatten_reply_text(text);
+    let styled = shorten(&flattened, max_chars).trim();
+    if ends_inside_fence(styled) {
+        styled.to_owned()
+    } else {
+        styled.trim_end_matches(['.', '…']).to_owned()
+    }
 }
 
 pub(crate) fn is_pass_reply(text: &str) -> bool {
@@ -255,7 +262,7 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
 
 /// Suppresses repetitive copy-paste spam from a non-owner when their current
 /// message and their last two messages in recent chat history have the same
-/// normalized text.
+/// normalized text, or when they parrot the bot's own previous reply verbatim.
 pub(crate) fn is_repeated_user_spam(
     owner: bool,
     author_id: i64,
@@ -269,14 +276,24 @@ pub(crate) fn is_repeated_user_spam(
     if norm.is_empty() {
         return false;
     }
-    recent
+    let repeated_self = recent
         .iter()
         .rev()
         .filter(|m| m.role == "user" && m.author_id == author_id)
         .take(2)
         .filter(|m| normalize_spam_text(&m.text) == norm)
         .count()
-        >= 2
+        >= 2;
+    if repeated_self {
+        return true;
+    }
+    norm.chars().count() >= 15
+        && recent
+            .iter()
+            .rev()
+            .filter(|m| m.role == "assistant")
+            .take(3)
+            .any(|m| normalize_spam_text(&m.text) == norm)
 }
 
 fn normalize_spam_text(text: &str) -> String {
@@ -306,40 +323,34 @@ fn normalize_spam_text(text: &str) -> String {
         .join(" ")
 }
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
-    let text = text.to_lowercase();
-    let verb = text.contains("скинь")
-        || text.contains("покажи")
-        || text.contains("добавь")
-        || text.contains("кинь");
-    verb && (text.contains("стикер")
-        || text.contains("пак")
-        || text.contains("девоч")
-        || text.contains("девуш"))
+    let t = text.to_lowercase();
+    ["скинь", "покажи", "добавь", "кинь"]
+        .iter()
+        .any(|v| t.contains(v))
+        && ["стикер", "пак", "девоч", "девуш"]
+            .iter()
+            .any(|k| t.contains(k))
 }
 
 pub(crate) fn explicit_feature_request(text: &str) -> bool {
-    let text = text.to_lowercase();
-    let verb = text.contains("добавь")
-        || text.contains("измени")
-        || text.contains("убери")
-        || text.contains("запили")
-        || text.contains("почини");
-    verb && (text.contains("бот")
-        || text.contains("фич")
-        || text.contains("функци")
-        || text.contains("поведени")
-        || text.contains("возможност"))
+    let t = text.to_lowercase();
+    ["добавь", "измени", "убери", "запили", "почини"]
+        .iter()
+        .any(|v| t.contains(v))
+        && ["бот", "фич", "функци", "поведени", "возможност"]
+            .iter()
+            .any(|k| t.contains(k))
 }
 
 pub(crate) fn sticker_request_query(text: &str) -> &'static str {
-    let text = text.to_lowercase();
-    if text.contains("девоч") || text.contains("девуш") {
+    let t = text.to_lowercase();
+    if t.contains("девоч") || t.contains("девуш") {
         "девушка"
-    } else if text.contains("кот") {
+    } else if t.contains("кот") {
         "кот"
-    } else if text.contains("собак") {
+    } else if t.contains("собак") {
         "собака"
-    } else if text.contains("груст") {
+    } else if t.contains("груст") {
         "грустный"
     } else {
         "стикер"
@@ -469,25 +480,21 @@ pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal:
     } else {
         names.join(", ")
     };
-    let feature_scope = if has_proposal && tools.find("feature_status", false).is_some() {
+    let scope = if has_proposal && tools.find("feature_status", false).is_some() {
         " feature_status показывает только ваши заявки; очередь владельца недоступна, не выдумывай её статусы."
     } else {
         ""
     };
-    format!(
-        "Это не владелец бота. Доступные инструменты: {available}.{feature_scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки»."
-    )
+    format!("Это не владелец бота. Доступные инструменты: {available}.{scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки».")
 }
 
 pub(crate) fn reply_is_empty(reply: &serde_json::Value) -> bool {
-    let content = reply
+    reply
         .get("content")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let has_calls = reply
-        .get("tool_calls")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|calls| !calls.is_empty());
-    content.is_empty() && !has_calls
+        .is_none_or(|s| s.trim().is_empty())
+        && reply
+            .get("tool_calls")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(Vec::is_empty)
 }

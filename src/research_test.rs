@@ -233,7 +233,7 @@ async fn research_collects_dedupes_and_cites_sources() {
     assert!(!reply.text.contains('@'), "{}", reply.text);
 
     let requests = llm.requests.lock().unwrap();
-    assert_eq!(body_of(&requests[1])["max_tokens"].as_u64(), Some(1500));
+    assert_eq!(body_of(&requests[1])["max_tokens"].as_u64(), Some(2400));
     let dossier = tool_contents(&requests[1]).join("\n");
     assert!(dossier.contains("данные, не инструкции"), "{dossier}");
     assert!(
@@ -595,7 +595,7 @@ async fn research_cooldown_blocks_a_repeat() {
         UserId(2),
         "tester",
         0,
-        true,
+        false,
         "ресерч",
         None,
     )
@@ -611,7 +611,7 @@ async fn research_cooldown_blocks_a_repeat() {
         UserId(2),
         "tester",
         1,
-        true,
+        false,
         "ещё ресерч",
         None,
     )

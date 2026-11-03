@@ -229,11 +229,7 @@ pub(crate) fn validate_summary(summary: &str) -> Result<String, String> {
         .collect())
 }
 
-pub(crate) async fn compact_chat(
-    chat: &ChatConfig,
-    pool: &SqlitePool,
-    chat_id: i64,
-) -> Result<bool, String> {
+pub(crate) async fn compact_chat(pool: &SqlitePool, chat_id: i64) -> Result<bool, String> {
     let rows: Vec<(i64, i64, String, String, i64)> = sqlx::query_as(
         "SELECT id, author_id, author_name, text, created_at FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 ORDER BY id DESC LIMIT ?",
     )
@@ -291,34 +287,17 @@ pub(crate) async fn compact_chat(
     if selected.is_empty() {
         return Ok(false);
     }
-    let previous: Option<(String,)> =
+    let previous_raw: Option<(String,)> =
         sqlx::query_as("SELECT summary FROM chat_summaries WHERE chat_id = ?")
             .bind(chat_id)
             .fetch_optional(pool)
             .await
             .map_err(|_| "database".to_string())?;
-    let previous = previous.map(|(value,)| value).unwrap_or_default();
-    let summary = match chat.summarize(&previous, &log).await {
-        Ok(summary) => summary,
-        Err(reason) if reason == "empty" => {
-            if previous.trim().is_empty() {
-                tracing::warn!("Memory summary empty for chat {chat_id}; batch left uncompacted");
-                return Ok(false);
-            }
-            previous.clone()
-        }
-        Err(reason) => return Err(reason),
-    };
-    let summary = match validate_summary(&summary) {
-        Ok(summary) => summary,
-        Err(reason) => {
-            tracing::warn!("Memory summary rejected for chat {chat_id}: {reason}");
-            if previous.trim().is_empty() {
-                return Ok(false);
-            }
-            previous.trim().to_owned()
-        }
-    };
+    let previous = previous_raw
+        .as_ref()
+        .and_then(|(raw,)| crate::snapcompact::parse_stored_archive(raw));
+    let archive = crate::snapcompact::build_snap_archive(previous.as_ref(), &log);
+    let summary = serde_json::to_string(&archive).map_err(|_| "serialize".to_string())?;
     let through = *selected.iter().max().unwrap_or(&0);
     let mut tx = pool.begin().await.map_err(|_| "database".to_string())?;
     sqlx::query(
@@ -359,7 +338,7 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
             Ok(_) => {}
             Err(error) => tracing::warn!("Ignore cleanup failed: {error}"),
         }
-        if let Some(chat) = cfg.chat.as_ref() {
+        if cfg.chat.is_some() {
             let chats: Vec<i64> = sqlx::query_scalar(
                 "SELECT DISTINCT chat_id FROM chat_messages WHERE compacted_at IS NULL AND flags = 0",
             )
@@ -370,7 +349,7 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
                 let lock = cfg.chat_lock(chat_id).await;
                 let _guard = lock.write().await;
                 for _ in 0..config().memory.compact_passes {
-                    match compact_chat(chat, &cfg.database, chat_id).await {
+                    match compact_chat(&cfg.database, chat_id).await {
                         Ok(true) => {}
                         Ok(false) => break,
                         Err(reason) => {

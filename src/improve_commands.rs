@@ -144,6 +144,7 @@ pub(crate) fn display_id(id: &str) -> String {
     format!("#{}", short_task_id(id))
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TaskIdMatch {
     Found(String),
     Ambiguous(Vec<String>),
@@ -197,7 +198,20 @@ pub(crate) fn lookup_in_tasks(
         .collect();
     if candidates.is_empty() {
         let suffix = format!("-{token}");
-        candidates = ids.into_iter().filter(|id| id.ends_with(&suffix)).collect();
+        let issue_suffix = format!("/issues/{token}");
+        candidates = tasks
+            .iter()
+            .filter(|(_, _, value, _)| allowed(value))
+            .filter(|(_, id, value, _)| {
+                id.ends_with(&suffix)
+                    || (numeric
+                        && value
+                            .get("issue_url")
+                            .and_then(Value::as_str)
+                            .is_some_and(|u| u.ends_with(&issue_suffix)))
+            })
+            .map(|(_, id, _, _)| id.clone())
+            .collect();
     }
     candidates.sort();
     candidates.dedup();

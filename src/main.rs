@@ -50,6 +50,8 @@ mod chat_tools;
 pub(crate) use chat_tools::*;
 mod chat_urls;
 mod reaction;
+mod snapcompact;
+mod telegraph;
 pub(crate) use reaction::*;
 mod research;
 pub(crate) use research::*;

@@ -76,6 +76,29 @@ pub(crate) fn source_user_diagnostic(
         .copied()
         .unwrap_or(diagnostic)
 }
+pub(crate) fn format_failure_context(url: &Url, events: &[FailureDiagnostic]) -> String {
+    let host = url
+        .host_str()
+        .unwrap_or("")
+        .trim_start_matches("www.")
+        .trim_start_matches("m.");
+    let mut steps: Vec<String> = Vec::new();
+    for ev in events {
+        let label = match ev.exit_code {
+            Some(code) => format!("{}:{}({})", ev.stage, ev.detail, code),
+            None => format!("{}:{}", ev.stage, ev.detail),
+        };
+        if steps.last() != Some(&label) {
+            steps.push(label);
+        }
+    }
+    match (host.is_empty(), steps.len() > 1) {
+        (false, true) => format!(" [источник: {host}; цепочка: {}]", steps.join(" -> ")),
+        (false, false) => format!(" [источник: {host}]"),
+        (true, true) => format!(" [цепочка: {}]", steps.join(" -> ")),
+        (true, false) => String::new(),
+    }
+}
 
 pub(crate) async fn record_failure(pool: &SqlitePool, url: &Url, failure: FailureDiagnostic) {
     record_failure_with_events(pool, url, failure, &[]).await;
@@ -152,17 +175,26 @@ pub(crate) async fn report_incomplete_delivery(
         trace_event(&mut events, diagnostic);
     }
     record_failure_with_events(&cfg.database, url, diagnostic, &events).await;
-    let mut warning = String::from("Не все медиа доставлены; исходная ссылка сохранена.");
+    let mut warning = format!(
+        "Не все медиа доставлены (отправлено {} из {}); исходная ссылка сохранена.",
+        report.delivered,
+        result.selection.files.len() + skipped
+    );
     if result.limited {
-        warning.push_str(" Достигнут лимит места.");
+        warning.push_str(" Достигнут лимит места во временной папке.");
     } else if !result.process_ok {
         warning.push_str(" Загрузка завершилась с ошибкой.");
     }
     if result.twitter_photos_failed {
         warning.push_str(" Фото X не удалось извлечь.");
     }
-    if skipped != 0 {
-        warning.push_str(" Некоторые файлы пропущены.");
+    if result.selection.size_skipped != 0 {
+        warning.push_str(&format!(
+            " Пропущено из-за лимита размера: {}.",
+            result.selection.size_skipped
+        ));
+    } else if skipped != 0 {
+        warning.push_str(&format!(" Некоторые файлы пропущены ({skipped} шт.)."));
     }
     warning.push(' ');
     if let Some(error) = report.error {
@@ -173,6 +205,7 @@ pub(crate) async fn report_incomplete_delivery(
             cfg.max_media_bytes,
         ));
     }
+    warning.push_str(&format_failure_context(url, &events));
     let _ = bot
         .send_message(chat_id, warning)
         .disable_notification(true)

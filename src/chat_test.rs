@@ -2301,3 +2301,61 @@ async fn vision_tool_round_drops_base64_image_on_second_round_and_retries_server
     );
     server.abort();
 }
+
+#[test]
+fn split_message_preserves_multiline_code_fences_and_telegraph_extracts_body() {
+    let mut long = String::from("Вступление про алгоритм:\n```rust\n");
+    for i in 0..180 {
+        long.push_str(&format!("let line_{i} = {i} + 1;\n"));
+    }
+    long.push_str("```\nЗаключение после кода");
+    let styled = style_chat_reply(&long);
+    assert!(
+        styled.contains('\n'),
+        "multi-line reply must preserve line breaks"
+    );
+    assert!(
+        styled.chars().count() > 4096,
+        "full reply up to research_max_chars survives for splitting/Telegraph"
+    );
+    let chunks = split_message(&styled);
+    assert!(chunks.len() >= 2);
+    for chunk in &chunks {
+        assert!(chunk.chars().count() <= 4096);
+        let fences = chunk
+            .lines()
+            .filter(|l| l.trim_start().starts_with("```"))
+            .count();
+        assert_eq!(
+            fences % 2,
+            0,
+            "every split chunk must close and reopen fenced code blocks: {chunk}"
+        );
+    }
+    let nodes = crate::telegraph::markdown_to_telegraph_nodes(&styled);
+    assert!(nodes
+        .iter()
+        .any(|n| n.get("tag").and_then(|t| t.as_str()) == Some("pre")));
+}
+
+#[test]
+fn repeated_user_spam_suppresses_parroted_assistant_reply() {
+    let recent = vec![crate::memory::ChatMessage {
+        author_id: 0,
+        author_name: "максут".into(),
+        role: "assistant".into(),
+        text: "знаменатель не обнуляется при таком сдвиге вообще никогда".into(),
+    }];
+    assert!(is_repeated_user_spam(
+        false,
+        77,
+        "максут знаменатель не обнуляется при таком сдвиге вообще никогда",
+        &recent,
+    ));
+    assert!(!is_repeated_user_spam(
+        true,
+        1,
+        "максут знаменатель не обнуляется при таком сдвиге вообще никогда",
+        &recent,
+    ));
+}

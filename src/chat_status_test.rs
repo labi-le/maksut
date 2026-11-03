@@ -1881,3 +1881,45 @@ async fn unknown_tool_cannot_approve() {
     }
     llm.task.abort();
 }
+
+#[tokio::test]
+async fn lookup_in_tasks_matches_github_issue_number_and_strips_duplicate_self_fact_topic() {
+    let tasks = vec![(
+        1_i64,
+        "20261103T120000Z-aaaa1111".to_string(),
+        json!({
+            "id": "20261103T120000Z-aaaa1111",
+            "status": "issue_created",
+            "goal": "telegraph long replies",
+            "issue_url": "https://github.com/labi-le/maxwell/issues/70",
+        }),
+        true,
+    )];
+    assert_eq!(
+        crate::improve_commands::lookup_in_tasks(&tasks, "#70", &|_| true),
+        crate::improve_commands::TaskIdMatch::Found("20261103T120000Z-aaaa1111".into())
+    );
+    assert_eq!(
+        crate::improve_commands::lookup_in_tasks(&tasks, "70", &|_| true),
+        crate::improve_commands::TaskIdMatch::Found("20261103T120000Z-aaaa1111".into())
+    );
+    let (_dir, pool) = crate::test_support::test_pool().await;
+    let code_dir = tempfile::tempdir().unwrap();
+    crate::code_inspect::record_self_fact(
+        &pool,
+        code_dir.path(),
+        "вадик (@cptidea)",
+        "вадик (@cptidea): называть хозяином при обращении",
+        "",
+    )
+    .await
+    .unwrap();
+    let mem = crate::code_inspect::load_self_memory(&pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        mem.contains("- [owner] вадик (@cptidea): называть хозяином при обращении"),
+        "duplicate topic prefix must be stripped: {mem}"
+    );
+}

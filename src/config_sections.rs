@@ -41,7 +41,6 @@ pub(crate) struct ChatSettings {
     pub(crate) max_tokens: u32,
     pub(crate) status_max_tokens: u32,
     pub(crate) research_max_tokens: u32,
-    pub(crate) summary_max_tokens: u32,
     pub(crate) feature_title_max_tokens: u32,
     pub(crate) typing_keepalive_secs: u64,
     pub(crate) cooldown_ms: u64,
@@ -272,10 +271,9 @@ defaults!(TelegramSettings {
 
 defaults!(ChatSettings {
     tool_rounds: 8,
-    max_tokens: 900,
-    status_max_tokens: 1200,
-    research_max_tokens: 1500,
-    summary_max_tokens: 600,
+    max_tokens: 2400,
+    status_max_tokens: 1500,
+    research_max_tokens: 2400,
     feature_title_max_tokens: 100,
     typing_keepalive_secs: 4,
     cooldown_ms: 3000,

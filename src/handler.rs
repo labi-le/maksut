@@ -401,7 +401,7 @@ pub(crate) async fn handle_message(
         Err(failure) => {
             record_failure_with_events(&cfg.database, &url, failure.diagnostic, &failure.events)
                 .await;
-            let reply = if failure.diagnostic.detail == "Download failed"
+            let mut reply = if failure.diagnostic.detail == "Download failed"
                 && failure.diagnostic.stage != "metadata"
             {
                 failure.reason
@@ -411,6 +411,7 @@ pub(crate) async fn handle_message(
                     cfg.max_media_bytes,
                 )
             };
+            reply.push_str(&format_failure_context(&url, &failure.events));
             let _ = bot
                 .send_message(message.chat.id, reply)
                 .disable_notification(true)
@@ -436,10 +437,11 @@ pub(crate) async fn handle_message(
             trace_event(&mut events, diagnostic);
         }
         record_failure_with_events(&cfg.database, &url, diagnostic, &events).await;
-        let reply = user_errors::diagnostic_message(
+        let mut reply = user_errors::diagnostic_message(
             source_user_diagnostic(diagnostic, &events),
             cfg.max_media_bytes,
         );
+        reply.push_str(&format_failure_context(&url, &events));
         let _ = bot
             .send_message(message.chat.id, reply)
             .disable_notification(true)

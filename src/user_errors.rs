@@ -17,6 +17,15 @@ pub(crate) fn http_detail(status: u16) -> &'static str {
     }
 }
 
+pub(crate) fn format_mib(bytes: u64) -> String {
+    let mib = bytes as f64 / (1024.0 * 1024.0);
+    if (mib - mib.round()).abs() < 0.05 {
+        format!("{} МБ", mib.round() as u64)
+    } else {
+        format!("{mib:.1} МБ")
+    }
+}
+
 pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) -> String {
     if diagnostic.stage == "delivery" {
         return match diagnostic.detail {
@@ -24,13 +33,27 @@ pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) 
                 "Telegram временно ограничил отправку медиа (429). Попробуйте позже."
             }
             "File too large" | "Size limit" => {
-                "Telegram отклонил медиа: размер файла превышает его лимит."
+                return format!(
+                    "Telegram отклонил медиа: размер файла превышает лимит Bot API ({}, {max_bytes} байт).",
+                    format_mib(max_bytes)
+                );
             }
             "Insufficient rights" => "У бота недостаточно прав для отправки медиа в этот чат.",
             "Bot blocked" => "Бот заблокирован пользователем и не может отправить медиа.",
             "Bot kicked" => "Бот удалён из чата и не может отправить медиа.",
             "Invalid file ID" => "Telegram отклонил идентификатор сохранённого файла (file_id).",
-            "Media format rejected" => "Telegram не смог обработать формат медиа.",
+            "Media format rejected" => {
+                "Telegram не смог обработать формат или параметры медиафайла (IMAGE_PROCESS_FAILED / повреждённый контейнер)."
+            }
+            "Caption formatting error" => {
+                "Telegram отклонил разметку подписи к медиа (ошибка HTML-тегов или длины подписи)."
+            }
+            "Reply message not found" => {
+                "Telegram отклонил отправку медиа: исходное сообщение или ветка были удалены."
+            }
+            "Voice messages forbidden" => {
+                "Telegram отклонил отправку аудио/голоса: у получателя запрещены голосовые сообщения."
+            }
             "Timeout" => "Истекло время ожидания ответа Telegram; доставка медиа не подтверждена.",
             "Network error" => {
                 "Сетевая ошибка при связи с Telegram; доставка медиа не подтверждена."
@@ -42,17 +65,18 @@ pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) 
             "Chat migrated" => "Чат перенесён в супергруппу; отправка в прежний чат невозможна.",
             "Chat unavailable" => "Чат недоступен для отправки медиа.",
             "Bot authorization failed" => "Telegram отклонил авторизацию бота.",
-            _ => "Telegram отклонил отправку медиа; причина неизвестна.",
+            _ => "Telegram отклонил отправку медиа (неизвестный код ответа Bot API; подробности в логе).",
         }
         .to_owned();
     }
 
+    let stage = diagnostic.stage;
     let message = match diagnostic.detail {
-        "HTTP 403" => "Сайт отказал в доступе к публикации или медиа (HTTP 403).",
-        "HTTP 404" => "Публикация или медиа не найдены на сайте (HTTP 404).",
-        "HTTP 429" => "Сайт временно ограничил частоту запросов (HTTP 429). Попробуйте позже.",
+        "HTTP 403" => "Сайт отказал в доступе к публикации или медиа (HTTP 403: антибот-защита или закрытый доступ).",
+        "HTTP 404" => "Публикация или медиа не найдены на сайте (HTTP 404: пост удалён или ссылка неверна).",
+        "HTTP 429" => "Сайт временно ограничил частоту запросов (HTTP 429: rate limit). Попробуйте позже.",
         "HTTP 500" => "На стороне сайта произошла ошибка сервера (HTTP 500). Попробуйте позже.",
-        "HTTP 502" => "Сайт временно недоступен из-за ошибки сервера (HTTP 502). Попробуйте позже.",
+        "HTTP 502" => "Сайт временно недоступен из-за ошибки шлюза (HTTP 502). Попробуйте позже.",
         "HTTP 503" => "Сайт временно недоступен (HTTP 503). Попробуйте позже.",
         "HTTP 504" => "Сервер сайта не дождался ответа (HTTP 504). Попробуйте позже.",
         "HTTP 5xx" => {
@@ -60,57 +84,71 @@ pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) 
         }
         "HTTP error" => "Сайт вернул ошибку HTTP; точная причина неизвестна.",
         "Private video" => "Публикация закрытая или приватная; сайт не предоставил доступ к медиа.",
-        "Video unavailable" => "Публикация или её медиа недоступны на сайте.",
-        "Region blocked" => "Публикация недоступна в текущем регионе.",
-        "Members only" => "Публикация доступна только участникам канала.",
-        "Video filtered" => "Видео слишком длинное или это стрим; такие ролики не скачиваются.",
-        "Format unavailable" => "Сайт не выдал выбранный формат видео; попробуйте ещё раз.",
+        "Video unavailable" => "Публикация или её медиа недоступны на сайте (удалено автором или скрыто).",
+        "Region blocked" => "Публикация недоступна в регионе сервера бота (геоблок).",
+        "Members only" => "Публикация доступна только платным подписчикам канала (Members only).",
+        "Video filtered" => {
+            let mins = crate::config::config().media.max_video_duration_secs / 60;
+            return format!(
+                "Видео слишком длинное (лимит {mins} мин) или это активный/предстоящий стрим; такие ролики не скачиваются."
+            );
+        }
+        "Format unavailable" => "Сайт не выдал подходящий видеопоток со звуком (Requested format is not available); попробуйте ещё раз.",
         "Download interrupted" => {
-            "Соединение с сайтом прервалось во время загрузки; попробуйте ещё раз."
+            "Соединение с сайтом прервалось во время скачивания потока; попробуйте ещё раз."
         }
-        "Processing failed" => "Не удалось обработать скачанный файл (ffmpeg).",
+        "Processing failed" => "Не удалось перекодировать или собрать медиафайл через ffmpeg.",
         "Site access restricted" => {
-            "Сайт ограничил доступ к этой публикации и не предоставил медиа."
+            "Сайт ограничил доступ с IP сервера к этой публикации и не отдал медиа."
         }
-        "Audience restricted" => "Сайт ограничил аудиторию этой публикации и не предоставил медиа.",
-        "Authentication required" => "Сайт требует авторизацию для доступа к публикации.",
-        "Age verification required" => "Сайт требует подтверждения возраста для доступа к медиа.",
-        "Cookies expired" => "Авторизация на сайте истекла: требуется обновить cookies.",
+        "Audience restricted" => "Сайт ограничил аудиторию этой публикации (18+ / ограничение аккаунта) и не отдал медиа.",
+        "Authentication required" => "Сайт требует авторизацию (вход в аккаунт / капчу) для доступа к публикации.",
+        "Age verification required" => "Сайт требует подтверждения возраста (18+) в аккаунте для доступа к медиа.",
+        "Cookies expired" => "Сессия авторизации на сайте истекла: требуется обновить cookies.",
         "Cookies unavailable" => "Не удалось подготовить cookies для авторизации на сайте.",
-        "Timeout" => "Превышено время ожидания загрузки медиа с сайта.",
-        "Network error" => "Сетевая ошибка при загрузке медиа с сайта.",
+        "Timeout" => {
+            return format!("Превышено время ожидания загрузки медиа с сайта (этап: {stage}).");
+        }
+        "Network error" => {
+            return format!("Сетевая ошибка при загрузке медиа с сайта (этап: {stage}).");
+        }
         "File I/O error" => {
             "Не удалось прочитать или сохранить файлы загрузки во временном хранилище."
         }
-        "Empty photo" => "Сайт вернул пустой файл фото.",
+        "Empty photo" => "CDN сайта вернул пустой файл фото (0 байт).",
         "Temporary storage limit" => {
-            "Достигнут общий лимит временного хранилища для загрузки медиа."
+            "Превышен лимит временного хранилища для одной загрузки медиа."
         }
         "Size limit" | "File too large" => {
-            return format!("Размер медиа превышает допустимый лимит ({max_bytes} байт).");
+            return format!(
+                "Размер медиа превышает допустимый лимит Telegram Bot API: {} ({max_bytes} байт).",
+                format_mib(max_bytes)
+            );
         }
-        "Unsupported URL" => "Этот адрес публикации не поддерживается загрузчиком.",
-        "Unsupported format" => "Формат медиа не поддерживается.",
+        "Unsupported URL" => "Этот формат ссылки или раздел сайта не поддерживается загрузчиком.",
+        "Unsupported format" => "Формат медиафайла в публикации не поддерживается для отправки.",
         "Extractor failed" => {
-            "Загрузчик не смог извлечь медиа публикации; точная причина неизвестна."
+            "Загрузчик (yt-dlp) не смог разобрать страницу публикации (изменилась вёрстка или API сайта); точная причина неизвестна."
         }
         "Webpage unavailable" => {
-            "Загрузчик не смог получить страницу публикации; точная причина неизвестна."
+            "Загрузчик не смог загрузить HTML-страницу публикации; точная причина неизвестна."
         }
         "API unavailable" => {
-            "Загрузчик не смог получить данные от сайта; точная причина неизвестна."
+            "Загрузчик не смог получить ответ от внутреннего API сайта; точная причина неизвестна."
         }
-        "No sendable media" | "Media not found" => "В публикации не найдено медиа для отправки.",
+        "No sendable media" | "Media not found" => {
+            "В публикации не найдено медиа для отправки (пост содержит только текст или неподдерживаемые вложения)."
+        }
         "Metadata failed" => {
-            "Не удалось получить метаданные публикации; точная причина неизвестна."
+            "Не удалось получить JSON-метаданные публикации через yt-dlp; точная причина неизвестна."
         }
         "Photo metadata failed" => {
-            "Не удалось получить сведения о фото публикации; точная причина неизвестна."
+            "Не удалось извлечь список фото со страницы публикации; точная причина неизвестна."
         }
-        "Photo download failed" => "Не удалось загрузить фото с сайта; точная причина неизвестна.",
-        "Launch failed" => "Не удалось запустить загрузчик медиа.",
+        "Photo download failed" => "Не удалось скачать файл фото с CDN сайта; точная причина неизвестна.",
+        "Launch failed" => "Не удалось запустить процесс загрузчика медиа (yt-dlp).",
         "Attempt failed" => {
-            "Процесс загрузчика медиа завершился с ошибкой; точная причина неизвестна."
+            "Процесс загрузчика медиа завершился с ошибкой при повторной попытке; точная причина неизвестна."
         }
         "Download failed" => {
             let code = diagnostic
@@ -118,12 +156,12 @@ pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) 
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "неизвестен".into());
             return format!(
-                "Загрузчик не смог скачать медиа (код {code}); точная причина не распознана."
+                "Загрузчик ({stage}) не смог скачать медиа (код выхода {code}); причина не распознана."
             );
         }
-        "Preparation failed" => "Не удалось подготовить повторную загрузку медиа.",
-        "Resolution failed" => "Не удалось разрешить короткую ссылку; точная причина неизвестна.",
-        "Media skipped" => "Некоторые медиа пропущены; точная причина неизвестна.",
+        "Preparation failed" => "Не удалось подготовить рабочий каталог для повторной загрузки медиа.",
+        "Resolution failed" => "Не удалось раскрыть короткую ссылку (редирект не привёл на поддерживаемый пост); точная причина неизвестна.",
+        "Media skipped" => return format!("Некоторые медиафайлы в публикации пропущены (неподдерживаемый формат или превышен лимит в {} файлов).", crate::config::config().media.max_files),
         _ => "Не удалось загрузить медиа; причина неизвестна.",
     };
     message.to_owned()
@@ -181,6 +219,10 @@ fn format_rejection(description: &str) -> bool {
         "Bad Request: invalid media content type",
         "Bad Request: IMAGE_PROCESS_FAILED",
         "Bad Request: PHOTO_INVALID_DIMENSIONS",
+        "Bad Request: PHOTO_SAVE_FILE_INVALID",
+        "Bad Request: PHOTO_EXT_INVALID",
+        "Bad Request: VIDEO_FILE_INVALID",
+        "Bad Request: AUDIO_FILE_INVALID",
     ]
     .iter()
     .any(|known| description.eq_ignore_ascii_case(known))
@@ -276,6 +318,17 @@ fn unknown_api_detail(description: &str) -> &'static str {
         ("file is too big", "File too large"),
         ("file is too large", "File too large"),
         ("Request Entity Too Large", "File too large"),
+        ("MEDIA_CAPTION_TOO_LONG", "Caption formatting error"),
+        ("caption is too long", "Caption formatting error"),
+        ("can't parse entities", "Caption formatting error"),
+        ("message to be replied not found", "Reply message not found"),
+        ("replied message not found", "Reply message not found"),
+        ("TOPIC_CLOSED", "Insufficient rights"),
+        ("TOPIC_DELETED", "Reply message not found"),
+        ("VOICE_MESSAGES_FORBIDDEN", "Voice messages forbidden"),
+        ("WEBPAGE_CURL_FAILED", "Media format rejected"),
+        ("WEBPAGE_MEDIA_EMPTY", "Media format rejected"),
+        ("failed to get HTTP URL content", "Media format rejected"),
     ] {
         if description
             .get(..phrase.len())
@@ -288,5 +341,6 @@ fn unknown_api_detail(description: &str) -> &'static str {
             return detail;
         }
     }
+    tracing::warn!("Unmapped Telegram API media error: {description}");
     "Unknown Telegram rejection"
 }

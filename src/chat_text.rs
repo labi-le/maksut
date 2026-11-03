@@ -291,7 +291,7 @@ pub(crate) fn ends_inside_fence(text: &str) -> bool {
 /// Backtick count of an opening fence line (at least three), or `None` for
 /// prose. Four-backtick fences wrap examples that contain three-backtick ones,
 /// so the closing line must match this length.
-fn fence_open_ticks(line: &str) -> Option<usize> {
+pub(crate) fn fence_open_ticks(line: &str) -> Option<usize> {
     let trimmed = line.trim_start();
     let ticks = trimmed.len() - trimmed.trim_start_matches('`').len();
     (3..=8).contains(&ticks).then_some(ticks)
@@ -299,7 +299,7 @@ fn fence_open_ticks(line: &str) -> Option<usize> {
 
 /// `true` for a line that closes a fence opened with `open_ticks` backticks:
 /// a run of at least that many backticks and nothing else.
-fn is_fence_close(line: &str, open_ticks: usize) -> bool {
+pub(crate) fn is_fence_close(line: &str, open_ticks: usize) -> bool {
     let trimmed = line.trim();
     trimmed.len() >= open_ticks && trimmed.bytes().all(|byte| byte == b'`')
 }

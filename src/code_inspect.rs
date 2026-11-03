@@ -260,10 +260,20 @@ pub(crate) async fn record_self_fact(
         .chars()
         .take(config().code.topic_max_chars)
         .collect();
-    let fact: String = fact
+    let raw_fact = fact
         .trim()
         .replace("[owner]", "[ owner ]")
-        .replace('\n', " ")
+        .replace('\n', " ");
+    let prefix = format!("{}:", topic.to_lowercase());
+    let stripped_fact = if raw_fact.to_lowercase().starts_with(&prefix) {
+        raw_fact
+            .get(prefix.len()..)
+            .unwrap_or(&raw_fact)
+            .trim_start()
+    } else {
+        raw_fact.as_str()
+    };
+    let fact: String = stripped_fact
         .chars()
         .take(config().code.fact_max_chars)
         .collect();

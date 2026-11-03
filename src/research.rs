@@ -45,6 +45,7 @@ impl ChatConfig {
     /// ranking and dossier truncation.
     pub(crate) async fn research(
         &self,
+        owner: bool,
         user_id: UserId,
         question: &str,
         raw_queries: &[String],
@@ -61,7 +62,9 @@ impl ChatConfig {
         }
         let execute = queries.len().min(budget);
         let truncated_queries = dropped_queries + (queries.len() - execute);
-        self.begin_research(user_id).await?;
+        if !owner {
+            self.begin_research(user_id).await?;
+        }
         let (result, sources) = collect_research(
             Arc::clone(&self.search),
             &question,

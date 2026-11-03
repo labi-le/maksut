@@ -138,12 +138,6 @@ impl ChatSettings {
             32_768,
         )?;
         count(
-            "chat.summary_max_tokens",
-            u64::from(self.summary_max_tokens),
-            1,
-            32_768,
-        )?;
-        count(
             "chat.typing_keepalive_secs",
             self.typing_keepalive_secs,
             1,

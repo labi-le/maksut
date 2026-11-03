@@ -10,7 +10,10 @@ fn user_error_messages_explain_safe_categories() {
         },
         100,
     );
-    assert!(format.contains("формат"), "{format}");
+    assert!(
+        format.contains("видеопоток со звуком") && format.contains("Requested format"),
+        "{format}"
+    );
     let fallback = crate::user_errors::diagnostic_message(
         FailureDiagnostic {
             stage: "yt-dlp",
