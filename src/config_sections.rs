@@ -64,6 +64,7 @@ pub(crate) struct ChatSettings {
     pub(crate) remember_self_calls_per_reply: usize,
     pub(crate) search_calls_per_reply: usize,
     pub(crate) research_calls_per_reply: usize,
+    pub(crate) chat_search_calls_per_reply: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -213,6 +214,19 @@ pub(crate) struct MemorySettings {
     pub(crate) compact_passes: usize,
     pub(crate) compact_interval_secs: u64,
     pub(crate) load_limit: i64,
+    pub(crate) embedding_model: String,
+    pub(crate) embedding_dim: usize,
+    pub(crate) embedding_batch: usize,
+    pub(crate) embedding_max_chars: usize,
+    pub(crate) embedding_max_response_bytes: usize,
+    pub(crate) embedding_passes: usize,
+    pub(crate) embedding_interval_secs: u64,
+    pub(crate) search_scan_rows: i64,
+    pub(crate) search_limit: usize,
+    pub(crate) search_min_score: f32,
+    pub(crate) search_chunk_chars: usize,
+    pub(crate) search_max_chars: usize,
+    pub(crate) search_recent_messages: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -348,6 +362,7 @@ defaults!(ChatSettings {
     remember_self_calls_per_reply: 3,
     search_calls_per_reply: 6,
     research_calls_per_reply: 1,
+    chat_search_calls_per_reply: 3,
 });
 
 defaults!(LlmSettings {
@@ -443,6 +458,19 @@ defaults!(MemorySettings {
     compact_passes: 3,
     compact_interval_secs: 10 * 60,
     load_limit: 2000,
+    embedding_model: "text-embedding-3-small".into(),
+    embedding_dim: 1536,
+    embedding_batch: 32,
+    embedding_max_chars: 500,
+    embedding_max_response_bytes: 4 * 1024 * 1024,
+    embedding_passes: 3,
+    embedding_interval_secs: 120,
+    search_scan_rows: 1000,
+    search_limit: 5,
+    search_min_score: 0.25,
+    search_chunk_chars: 400,
+    search_max_chars: 4000,
+    search_recent_messages: 5,
 });
 
 defaults!(MediaCacheSettings {

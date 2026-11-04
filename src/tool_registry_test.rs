@@ -36,6 +36,7 @@ fn builtin_visibility_matches_current_roles() {
         "inspect_code",
         "find_stickers",
         "send_sticker",
+        "chat_search",
     ] {
         assert!(
             registry.find(name, false).is_some(),
@@ -46,7 +47,7 @@ fn builtin_visibility_matches_current_roles() {
             "{name} must be visible to the owner"
         );
     }
-    for name in ["feature_confirmation", "remember_self"] {
+    for name in ["feature_confirmation", "remember_self", "chat_index"] {
         assert!(
             registry.find(name, false).is_none(),
             "{name} must be hidden from non-owners"
@@ -70,6 +71,7 @@ fn builtin_visibility_matches_current_roles() {
             "inspect_code".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
+            "chat_search".to_string(),
         ],
     );
     assert_eq!(
@@ -85,6 +87,8 @@ fn builtin_visibility_matches_current_roles() {
             "remember_self".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
+            "chat_search".to_string(),
+            "chat_index".to_string(),
         ],
     );
     assert_eq!(
@@ -97,6 +101,7 @@ fn builtin_visibility_matches_current_roles() {
             "inspect_code".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
+            "chat_search".to_string(),
         ],
     );
     assert_eq!(
@@ -110,6 +115,8 @@ fn builtin_visibility_matches_current_roles() {
             "remember_self".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
+            "chat_search".to_string(),
+            "chat_index".to_string(),
         ],
     );
 }
@@ -129,6 +136,7 @@ fn research_mode_hides_side_effect_tools() {
             "research".to_string(),
             "read_url".to_string(),
             "inspect_code".to_string(),
+            "chat_search".to_string(),
         ],
     );
     assert_eq!(
@@ -146,6 +154,7 @@ fn research_mode_hides_side_effect_tools() {
             "inspect_code".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
+            "chat_search".to_string(),
         ],
     );
     assert_eq!(
@@ -162,6 +171,7 @@ fn research_mode_hides_side_effect_tools() {
             "read_url".to_string(),
             "propose_feature".to_string(),
             "inspect_code".to_string(),
+            "chat_search".to_string(),
         ],
     );
 }
@@ -196,6 +206,8 @@ fn builtin_names_match_their_kinds_and_visibility() {
         ),
         (ToolKind::FindStickers, "find_stickers", ToolVisibility::All),
         (ToolKind::SendSticker, "send_sticker", ToolVisibility::All),
+        (ToolKind::ChatSearch, "chat_search", ToolVisibility::All),
+        (ToolKind::ChatIndex, "chat_index", ToolVisibility::Owner),
     ];
     let specs: Vec<_> = registry.visible(true).collect();
     assert_eq!(specs.len(), expected.len());

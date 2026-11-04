@@ -65,13 +65,13 @@ pub(crate) struct FeatureProposal {
 
 #[derive(Clone)]
 pub(crate) struct ChatConfig {
-    base_url: Url,
+    pub(crate) base_url: Url,
     pub(crate) system_prompt: Arc<str>,
     pub(crate) api_key: String,
     pub(crate) model: String,
     pub(crate) search: Arc<SearchClient>,
     pub(crate) tools: ToolRegistry,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     requests: Arc<Semaphore>,
     last_reply: Arc<Mutex<HashMap<UserId, time::Instant>>>,
     pub(crate) last_research: Arc<Mutex<HashMap<UserId, time::Instant>>>,

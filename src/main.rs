@@ -69,6 +69,8 @@ mod tool_registry;
 pub(crate) use tool_registry::*;
 mod memory;
 pub(crate) use memory::*;
+mod chat_embeddings;
+mod chat_search;
 mod code_inspect;
 mod improve_commands;
 mod improve_store;
@@ -194,6 +196,7 @@ async fn main() {
         *catalog_cfg.sticker_catalog.write().await = catalog;
     });
     tokio::spawn(memory_compactor(Arc::clone(&cfg)));
+    tokio::spawn(crate::chat_embeddings::chat_indexer(Arc::clone(&cfg)));
     tokio::spawn(crate::self_improve::improvement_notifier(
         bot.clone(),
         Arc::clone(&cfg),
@@ -230,6 +233,8 @@ mod addressing_test;
 mod browser_test;
 #[cfg(test)]
 mod caption_test;
+#[cfg(test)]
+mod chat_embeddings_test;
 #[cfg(test)]
 mod chat_status_test;
 #[cfg(test)]

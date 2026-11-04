@@ -216,6 +216,10 @@ impl ChatSettings {
                 "chat.research_calls_per_reply",
                 self.research_calls_per_reply,
             ),
+            (
+                "chat.chat_search_calls_per_reply",
+                self.chat_search_calls_per_reply,
+            ),
         ] {
             usize_count(key, value, 1, 64)?;
         }

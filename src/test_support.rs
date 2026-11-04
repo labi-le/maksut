@@ -624,6 +624,12 @@ pub(crate) struct MockServer {
 
 /// Minimal OpenAI-compatible endpoint: one queued response per request.
 pub(crate) async fn mock_server(responses: Vec<String>) -> MockServer {
+    let responses = responses.into_iter().map(|body| (200, body)).collect();
+    mock_server_with_statuses(responses).await
+}
+
+/// Same endpoint with explicit status codes, for retry paths.
+pub(crate) async fn mock_server_with_statuses(responses: Vec<(u16, String)>) -> MockServer {
     use tokio::net::TcpListener;
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -665,11 +671,14 @@ pub(crate) async fn mock_server(responses: Vec<String>) -> MockServer {
                     .lock()
                     .unwrap()
                     .push(String::from_utf8_lossy(&buffer).into_owned());
-                let body = queue.lock().unwrap().drain(..1).next().unwrap_or_else(|| {
-                    r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#.into()
+                let (status, body) = queue.lock().unwrap().drain(..1).next().unwrap_or_else(|| {
+                    (
+                        200,
+                        r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#.into(),
+                    )
                 });
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {status} Status\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(), body);
                 let _ = stream.write_all(response.as_bytes()).await;
             });

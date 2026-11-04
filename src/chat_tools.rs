@@ -27,6 +27,7 @@ pub(crate) struct ToolState {
     pub(crate) research_calls: usize,
     pub(crate) search_calls: usize,
     pub(crate) read_url_calls: usize,
+    pub(crate) chat_search_calls: usize,
     pub(crate) inspect_calls: usize,
     pub(crate) inspect_announced: bool,
     pub(crate) remember_calls: usize,
@@ -48,6 +49,7 @@ impl ToolState {
             research_calls: 0,
             search_calls: 0,
             read_url_calls: 0,
+            chat_search_calls: 0,
             inspect_calls: 0,
             inspect_announced: false,
             remember_calls: 0,
@@ -377,6 +379,45 @@ pub(crate) async fn run_tool_call(
                     }
                     Err(reason) => reason,
                 }
+            }
+        }
+        Some(ToolKind::ChatSearch) => {
+            if state.chat_search_calls >= config().chat.chat_search_calls_per_reply {
+                "лимит поиска по истории на ответ".to_string()
+            } else {
+                match crate::chat_search::parse_search_request(&args) {
+                    Err(reason) => reason,
+                    Ok(request) => {
+                        state.chat_search_calls += 1;
+                        ack_lookup(ctx);
+                        match crate::chat_search::search(
+                            ctx.chat,
+                            ctx.pool,
+                            ctx.chat_id,
+                            ctx.message_id,
+                            &request,
+                        )
+                        .await
+                        {
+                            Ok(text) => text,
+                            Err(reason) => format!("chat_search: {reason}"),
+                        }
+                    }
+                }
+            }
+        }
+        Some(ToolKind::ChatIndex) => {
+            if !ctx.owner {
+                "chat_index доступен только владельцу бота".to_string()
+            } else {
+                let passes = args
+                    .get("passes")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize)
+                    .unwrap_or(3)
+                    .clamp(1, 20);
+                ack_lookup(ctx);
+                crate::chat_embeddings::reindex(ctx.chat, ctx.pool, passes).await
             }
         }
         Some(ToolKind::FindStickers) => {
