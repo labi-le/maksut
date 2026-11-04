@@ -1,6 +1,7 @@
 use crate::improve_commands::{ambiguous_reply, lookup_task_id, TaskIdMatch};
 use crate::memory::unix_now;
 use crate::prelude::*;
+use crate::queue_write_failed;
 use crate::settings::Settings;
 use serde_json::json;
 use std::collections::HashSet;
@@ -26,19 +27,19 @@ pub(crate) fn queue_dir(cfg: &Settings) -> PathBuf {
 
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).inspect_err(|error| queue_write_failed(path, error))?;
     }
     let seq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     // Never ends in `.json`: the orchestrator globs `inbox/*.json` and would read
     // a half-written file.
     let tmp = path.with_extension(format!("tmp-{}-{seq}", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
+    std::fs::write(&tmp, bytes).inspect_err(|error| queue_write_failed(path, error))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
     }
-    std::fs::rename(tmp, path)
+    std::fs::rename(tmp, path).inspect_err(|error| queue_write_failed(path, error))
 }
 
 pub(crate) fn write_off_marker(dir: &Path) -> bool {

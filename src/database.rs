@@ -1,11 +1,23 @@
 use crate::*;
 
 pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let options = SqliteConnectOptions::from_str(url)?.create_if_missing(true);
+    let started = time::Instant::now();
+    let options = SqliteConnectOptions::from_str(url)
+        .inspect_err(|_| {
+            tracing::error!(stage = "options", "database open failed");
+        })?
+        .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
-        .await?;
+        .await
+        .inspect_err(|_| {
+            tracing::error!(
+                stage = "connect",
+                elapsed_ms = elapsed_ms(started),
+                "database open failed"
+            );
+        })?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS group_settings (chat_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)))",
     )
@@ -88,6 +100,10 @@ pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> 
         .await?;
     migrate_chat_turns(&pool).await?;
     init_cache(&pool).await?;
+    tracing::info!(
+        elapsed_ms = elapsed_ms(started),
+        "database pool and schema ready"
+    );
     Ok(pool)
 }
 

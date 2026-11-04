@@ -178,6 +178,12 @@ pub(crate) fn style_chat_reply(text: &str) -> String {
 fn style_reply_bounded(text: &str, max_chars: usize) -> String {
     let flattened = flatten_reply_text(text);
     let styled = shorten(&flattened, max_chars).trim();
+    tracing::debug!(
+        input_chars = text.chars().count(),
+        styled_chars = styled.chars().count(),
+        limit = max_chars,
+        "reply styled"
+    );
     if ends_inside_fence(styled) {
         styled.to_owned()
     } else {
@@ -225,10 +231,12 @@ pub(crate) fn is_repeated_user_spam(
     recent: &[crate::memory::ChatMessage],
 ) -> bool {
     if owner {
+        tracing::debug!(author_id, reason = "owner", "repeat spam decision");
         return false;
     }
     let norm = normalize_spam_text(prompt);
     if norm.is_empty() {
+        tracing::debug!(author_id, reason = "empty", "repeat spam decision");
         return false;
     }
     let repeated_self = recent
@@ -240,15 +248,22 @@ pub(crate) fn is_repeated_user_spam(
         .count()
         >= 2;
     if repeated_self {
+        tracing::debug!(author_id, reason = "repeated_self", "repeat spam decision");
         return true;
     }
-    norm.chars().count() >= 15
+    let parroted = norm.chars().count() >= 15
         && recent
             .iter()
             .rev()
             .filter(|m| m.role == "assistant")
             .take(3)
-            .any(|m| normalize_spam_text(&m.text) == norm)
+            .any(|m| normalize_spam_text(&m.text) == norm);
+    tracing::debug!(
+        author_id,
+        reason = if parroted { "bot_parrot" } else { "none" },
+        "repeat spam decision"
+    );
+    parroted
 }
 
 fn normalize_spam_text(text: &str) -> String {

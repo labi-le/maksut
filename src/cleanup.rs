@@ -5,20 +5,23 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
         Ok(entries) => entries,
         Err(error) => {
             tracing::error!(
-                "Unable to scan {} for startup cleanup: {error}",
-                download_dir.display()
+                dir = %download_dir.display(),
+                error = %error,
+                "unable to scan directory for startup cleanup"
             );
             return;
         }
     };
     let now = SystemTime::now();
+    let mut removed = 0usize;
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
                 tracing::error!(
-                    "Unable to read an entry in {} for startup cleanup: {error}",
-                    download_dir.display()
+                    dir = %download_dir.display(),
+                    error = %error,
+                    "unable to read directory entry for startup cleanup"
                 );
                 continue;
             }
@@ -30,8 +33,9 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
             Ok(metadata) => metadata,
             Err(error) => {
                 tracing::error!(
-                    "Unable to inspect {} for startup cleanup: {error}",
-                    entry.path().display()
+                    path = %entry.path().display(),
+                    error = %error,
+                    "unable to inspect entry for startup cleanup"
                 );
                 continue;
             }
@@ -43,8 +47,9 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
             Ok(modified) => modified,
             Err(error) => {
                 tracing::error!(
-                    "Unable to read modification time of {} for startup cleanup: {error}",
-                    entry.path().display()
+                    path = %entry.path().display(),
+                    error = %error,
+                    "unable to read modification time for startup cleanup"
                 );
                 continue;
             }
@@ -55,10 +60,14 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
         {
             if let Err(error) = fs::remove_dir_all(entry.path()) {
                 tracing::error!(
-                    "Unable to remove {} during startup cleanup: {error}",
-                    entry.path().display()
+                    path = %entry.path().display(),
+                    error = %error,
+                    "unable to remove directory during startup cleanup"
                 );
+            } else {
+                removed += 1;
             }
         }
     }
+    tracing::info!(removed, "startup cleanup finished");
 }

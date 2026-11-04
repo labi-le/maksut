@@ -28,6 +28,7 @@ pub(crate) fn tiktok_page_cookies(
         .map_err(|_| error())?
         .as_secs();
     let mut header = String::new();
+    let mut cookie_count = 0usize;
     let mut found = false;
     let mut auth_found = false;
     for line in lines {
@@ -121,16 +122,31 @@ pub(crate) fn tiktok_page_cookies(
         header.push_str(name);
         header.push('=');
         header.push_str(value);
+        cookie_count += 1;
     }
     if !found || !auth_found {
         return Err(error());
     }
+    tracing::debug!(cookies = cookie_count, "tiktok cookies prepared");
     Ok((!header.is_empty()).then_some(header))
 }
 
 // Validate the source without creating a temporary copy. The preflight uses this
 // to distinguish an unusable jar from a storage failure in the work directory.
 pub(crate) fn validate_cookie_jar(source: &Path) -> Result<(), String> {
+    match count_valid_cookie_rows(source) {
+        Ok(cookies) => {
+            tracing::debug!(cookies, "cookie jar validated");
+            Ok(())
+        }
+        Err(reason) => {
+            tracing::warn!(%reason, "cookie jar validation failed");
+            Err(reason)
+        }
+    }
+}
+
+fn count_valid_cookie_rows(source: &Path) -> Result<usize, String> {
     let error = || "Не удалось подготовить cookies".to_string();
     let file = fs::File::open(source).map_err(|_| error())?;
     let mut reader = BufReader::new(file);
@@ -139,7 +155,7 @@ pub(crate) fn validate_cookie_jar(source: &Path) -> Result<(), String> {
     if line.trim_end_matches(['\r', '\n']) != "# Netscape HTTP Cookie File" {
         return Err(error());
     }
-    let mut found = false;
+    let mut cookies = 0usize;
     loop {
         line.clear();
         if reader.read_line(&mut line).map_err(|_| error())? == 0 {
@@ -180,12 +196,12 @@ pub(crate) fn validate_cookie_jar(source: &Path) -> Result<(), String> {
         {
             return Err(error());
         }
-        found = true;
+        cookies += 1;
     }
-    if !found {
+    if cookies == 0 {
         return Err(error());
     }
-    Ok(())
+    Ok(cookies)
 }
 
 // Jar parsing touches a bind mount synchronously, so callers inside async
@@ -218,7 +234,11 @@ pub(crate) async fn tiktok_page_cookies_async(
 ) -> Result<Option<String>, String> {
     let source = source.map(Path::to_path_buf);
     let page = page.clone();
-    blocking_cookies(move || tiktok_page_cookies(source.as_deref(), &page)).await
+    let result = blocking_cookies(move || tiktok_page_cookies(source.as_deref(), &page)).await;
+    if let Err(reason) = &result {
+        tracing::warn!(reason = %reason, "cookies preparation failed");
+    }
+    result
 }
 
 // Each subprocess owns a writable jar inside the request's private directory.

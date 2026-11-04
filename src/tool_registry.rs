@@ -294,9 +294,12 @@ impl ToolRegistry {
 
     /// Visible tool by name; hidden and unknown tools both return `None`.
     pub(crate) fn find(&self, name: &str, owner: bool) -> Option<&ToolSpec> {
-        self.specs
+        let found = self
+            .specs
             .iter()
-            .find(|spec| spec.name == name && spec.visibility.allows(owner))
+            .find(|spec| spec.name == name && spec.visibility.allows(owner));
+        tracing::debug!(tool = name, owner, allowed = found.is_some(), "tool lookup");
+        found
     }
 
     /// Names of visible tools in declaration order.

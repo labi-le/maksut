@@ -91,6 +91,11 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
     if !current.trim().is_empty() {
         chunks.push(current);
     }
+    tracing::debug!(
+        chunks = chunks.len(),
+        chars = text.chars().count(),
+        "message split"
+    );
     chunks
 }
 

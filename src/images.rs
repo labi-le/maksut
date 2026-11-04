@@ -18,7 +18,8 @@ pub(crate) fn tiktok_photo_id(url: &Url) -> Option<&str> {
 }
 
 pub(crate) fn image_source(url: &Url) -> Option<&'static str> {
-    match url.host_str()? {
+    let host = url.host_str()?;
+    let source = match host {
         "pin.it"
         | "pinterest.com"
         | "www.pinterest.com"
@@ -34,7 +35,9 @@ pub(crate) fn image_source(url: &Url) -> Option<&'static str> {
             Some("tiktok")
         }
         _ => None,
-    }
+    };
+    tracing::debug!(host, source = ?source, "image source classified");
+    source
 }
 
 pub(crate) fn image_cdn_url(raw: &str, source: &str) -> Option<Url> {
@@ -47,14 +50,15 @@ pub(crate) fn image_cdn_url(raw: &str, source: &str) -> Option<Url> {
         return None;
     }
     let url = Url::parse(raw).ok()?;
+    let host = url.host_str()?;
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()
         || url.port().is_some()
     {
+        tracing::warn!(host, source, "image cdn url rejected");
         return None;
     }
-    let host = url.host_str()?;
     let trusted = match source {
         "pinterest" => host == "pinimg.com" || host.ends_with(".pinimg.com"),
         "instagram" => ["cdninstagram.com", "fbcdn.net"].iter().any(|domain| {
@@ -75,6 +79,9 @@ pub(crate) fn image_cdn_url(raw: &str, source: &str) -> Option<Url> {
             }),
         _ => false,
     };
+    if !trusted {
+        tracing::warn!(host, source, "image cdn url rejected");
+    }
     trusted.then_some(url)
 }
 
@@ -149,6 +156,12 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
                 .len()
                 .saturating_sub(config().media.max_tiktok_photos);
         }
+        tracing::debug!(
+            source,
+            images = result.images.len(),
+            skipped = result.skipped,
+            "images collected"
+        );
         return result;
     }
     let items: &[Value] = info
@@ -207,6 +220,12 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
             result.skipped += 1;
         }
     }
+    tracing::debug!(
+        source,
+        images = result.images.len(),
+        skipped = result.skipped,
+        "images collected"
+    );
     result
 }
 
@@ -318,8 +337,9 @@ pub(crate) async fn extract_tiktok_images(
         }
         let html = std::str::from_utf8(&bytes)
             .map_err(|_| failure("Некорректная страница TikTok", "Photo metadata failed"))?;
-        tiktok_rehydration(html)
-            .ok_or_else(|| failure("Нет метаданных фото TikTok", "Photo metadata failed"))
+        let rehydrated = tiktok_rehydration(html);
+        tracing::debug!(hit = rehydrated.is_some(), "tiktok rehydration");
+        rehydrated.ok_or_else(|| failure("Нет метаданных фото TikTok", "Photo metadata failed"))
     })
     .await
     .map_err(|_| failure("Время извлечения фото TikTok истекло", "Timeout"))??;

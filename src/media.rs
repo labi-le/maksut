@@ -10,7 +10,7 @@ pub(crate) enum MediaKind {
 
 pub(crate) fn media_kind(path: &Path) -> Option<MediaKind> {
     let ext = path.extension()?.to_str()?;
-    if ["jpg", "jpeg", "png"]
+    let kind = if ["jpg", "jpeg", "png"]
         .iter()
         .any(|item| ext.eq_ignore_ascii_case(item))
     {
@@ -32,7 +32,13 @@ pub(crate) fn media_kind(path: &Path) -> Option<MediaKind> {
         Some(MediaKind::Document)
     } else {
         None
-    }
+    };
+    tracing::trace!(
+        kind = ?kind,
+        extension_len = ext.chars().count(),
+        "media kind classified"
+    );
+    kind
 }
 
 pub(crate) struct MediaFile {

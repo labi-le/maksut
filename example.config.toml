@@ -14,7 +14,9 @@
 # larger than its hard bound fails startup with the offending key.
 
 [log]
-# trace, debug, info, warn, error, off
+# trace, debug, info, warn, error, off.
+# info and debug log metadata and counters only; trace adds payload previews with
+# fixed-width secret masking and hard character caps.
 level = "info"
 # In-process ring behind the owner-only read_logs tool: newest formatted lines
 # and their byte cap. Overflow drops the oldest records (50..=5000 lines,

@@ -137,7 +137,14 @@ pub(crate) fn parse_owner_command(text: &str) -> Option<OwnerCommand> {
         | OwnerAction::PriorityTop
         | OwnerAction::PriorityBottom => action,
     };
-    Some(OwnerCommand { action, targets })
+    let command = OwnerCommand { action, targets };
+    tracing::debug!(
+        command = ?command.action,
+        targets = command.targets.len(),
+        batch = command.targets.len() > 1,
+        "owner command parsed"
+    );
+    Some(command)
 }
 
 pub(crate) fn display_id(id: &str) -> String {
@@ -160,6 +167,30 @@ pub(crate) fn id_token(token: &str) -> &str {
 /// accepted only when it selects one task; several matches stay ambiguous so
 /// the reply can ask which one instead of claiming the task is absent.
 pub(crate) fn lookup_in_tasks(
+    tasks: &[(i64, String, Value, bool)],
+    token: &str,
+    allowed: &dyn Fn(&Value) -> bool,
+) -> TaskIdMatch {
+    let outcome = resolve_in_tasks(tasks, token, allowed);
+    match &outcome {
+        TaskIdMatch::Found(id) => {
+            tracing::debug!(result = "found", task_id = %id, "task id resolved");
+        }
+        TaskIdMatch::Ambiguous(ids) => {
+            tracing::debug!(
+                result = "ambiguous",
+                matches = ids.len(),
+                "task id resolved"
+            );
+        }
+        TaskIdMatch::Missing => {
+            tracing::debug!(result = "missing", "task id resolved");
+        }
+    }
+    outcome
+}
+
+fn resolve_in_tasks(
     tasks: &[(i64, String, Value, bool)],
     token: &str,
     allowed: &dyn Fn(&Value) -> bool,

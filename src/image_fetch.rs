@@ -70,6 +70,7 @@ pub(crate) async fn save_image_response(
     total_remaining: u64,
     expected_ext: Option<&str>,
 ) -> Result<(), FailureDiagnostic> {
+    let started = time::Instant::now();
     if !response.status().is_success() {
         return Err(FailureDiagnostic::new(
             "photo-cdn",
@@ -99,16 +100,19 @@ pub(crate) async fn save_image_response(
             return Err(FailureDiagnostic::new("photo-cdn", "Unsupported format"));
         }
     }
-    if response
-        .content_length()
-        .is_some_and(|size| size > max_bytes)
-    {
+    if let Some(size) = response.content_length().filter(|size| *size > max_bytes) {
+        tracing::warn!(bytes = size, cap = max_bytes, "image size limit rejected");
         return Err(FailureDiagnostic::new("photo-cdn", "Size limit"));
     }
-    if response
+    if let Some(size) = response
         .content_length()
-        .is_some_and(|size| size > total_remaining)
+        .filter(|size| *size > total_remaining)
     {
+        tracing::warn!(
+            bytes = size,
+            remaining = total_remaining,
+            "image storage limit rejected"
+        );
         return Err(FailureDiagnostic::new(
             "photo-cdn",
             "Temporary storage limit",
@@ -128,9 +132,15 @@ pub(crate) async fn save_image_response(
     })? {
         size = size.saturating_add(chunk.len() as u64);
         if size > max_bytes {
+            tracing::warn!(bytes = size, cap = max_bytes, "image size limit rejected");
             return Err(FailureDiagnostic::new("photo-cdn", "Size limit"));
         }
         if size > total_remaining {
+            tracing::warn!(
+                bytes = size,
+                remaining = total_remaining,
+                "image storage limit rejected"
+            );
             return Err(FailureDiagnostic::new(
                 "photo-cdn",
                 "Temporary storage limit",
@@ -141,6 +151,11 @@ pub(crate) async fn save_image_response(
     if size == 0 {
         return Err(FailureDiagnostic::new("photo-cdn", "Empty photo"));
     }
+    tracing::debug!(
+        bytes = size,
+        elapsed_ms = elapsed_ms(started),
+        "image fetch finished"
+    );
     let target = dir.join(name);
     let dir = dir.to_owned();
     tokio::task::spawn_blocking(move || persist_photo(&dir, &target, &body))
@@ -153,11 +168,18 @@ fn persist_photo(dir: &Path, target: &Path, body: &[u8]) -> Result<(), FailureDi
         .prefix("photo-")
         .suffix(".part")
         .tempfile_in(dir)
-        .map_err(|_| FailureDiagnostic::new("photo-cdn", "File I/O error"))?;
-    temp.write_all(body)
-        .map_err(|_| FailureDiagnostic::new("photo-cdn", "File I/O error"))?;
-    temp.persist_noclobber(target)
-        .map_err(|_| FailureDiagnostic::new("photo-cdn", "File I/O error"))?;
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "image part create failed");
+            FailureDiagnostic::new("photo-cdn", "File I/O error")
+        })?;
+    temp.write_all(body).map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "image part write failed");
+        FailureDiagnostic::new("photo-cdn", "File I/O error")
+    })?;
+    temp.persist_noclobber(target).map_err(|error| {
+        tracing::error!(kind = ?error.error.kind(), "image part persist failed");
+        FailureDiagnostic::new("photo-cdn", "File I/O error")
+    })?;
     Ok(())
 }
 
@@ -258,11 +280,27 @@ pub(crate) async fn add_images(
                     )
                 })?;
                 if !response.status().is_success() {
+                    tracing::warn!(
+                        host = url.host_str(),
+                        status = response.status().as_u16(),
+                        "image fetch rejected"
+                    );
                     return Err(FailureDiagnostic::new(
                         "photo-cdn",
                         user_errors::http_detail(response.status().as_u16()),
                     ));
                 }
+                let mime = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|header| header.to_str().ok())
+                    .unwrap_or("");
+                tracing::debug!(
+                    host = url.host_str(),
+                    mime = content_kind(mime),
+                    cap = cfg.max_media_bytes,
+                    "image fetch start"
+                );
                 let (expected_ext, ext) = match ext_hint {
                     ExtensionHint::FromContentType => (
                         None,

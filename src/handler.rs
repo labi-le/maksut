@@ -1,64 +1,5 @@
 use crate::*;
 
-pub(crate) async fn handle_command(bot: &Bot, message: &Message, cfg: &Settings, command: &str) {
-    if !message.chat.is_group() && !message.chat.is_supergroup() {
-        if message.chat.is_private()
-            && message
-                .from
-                .as_ref()
-                .is_some_and(|user| user.id == cfg.owner_id)
-        {
-            let _ = bot.send_message(message.chat.id, "Команды /maksut status|on|off работают только в группе; в личном чате ссылки доступны только владельцу бота.").disable_notification(true).await;
-        }
-        return;
-    }
-    if !message
-        .from
-        .as_ref()
-        .is_some_and(|user| user.id == cfg.owner_id)
-    {
-        return;
-    }
-    let result = match command {
-        "status" => group_enabled(&cfg.database, message.chat.id).await,
-        "on" => set_group_enabled(&cfg.database, message.chat.id, true)
-            .await
-            .map(|()| true),
-        "off" => set_group_enabled(&cfg.database, message.chat.id, false)
-            .await
-            .map(|()| false),
-        _ => {
-            let _ = bot
-                .send_message(
-                    message.chat.id,
-                    "Используйте /maksut status, /maksut on или /maksut off.",
-                )
-                .disable_notification(true)
-                .await;
-            return;
-        }
-    };
-    let reply = match result {
-        Ok(true) => "Максут включён в этой группе.",
-        Ok(false) => "Максут выключен в этой группе.",
-        Err(_) => "Не удалось прочитать или сохранить настройки группы.",
-    };
-    let _ = bot
-        .send_message(message.chat.id, reply)
-        .disable_notification(true)
-        .await;
-}
-
-pub(crate) fn maksut_command<'a>(text: &'a str, username: &str) -> Option<&'a str> {
-    let mut parts = text.split_whitespace();
-    let name = parts.next()?;
-    let addressed = name == "/maksut"
-        || name
-            .strip_prefix("/maksut@")
-            .is_some_and(|target| !target.is_empty() && target.eq_ignore_ascii_case(username));
-    addressed.then(|| parts.next().unwrap_or(""))
-}
-
 /// Replies with the sticker for the first standalone «да»/«нет» in the message.
 /// Only the owner can trigger actions; other participants are read-only.
 async fn reply_with_sticker(bot: &Bot, message: &Message, cfg: &Settings, text: &str) -> bool {
@@ -110,6 +51,7 @@ async fn reply_with_sticker(bot: &Bot, message: &Message, cfg: &Settings, text: 
     true
 }
 
+#[tracing::instrument(skip_all, fields(chat_id = message.chat.id.0, message_id = message.id.0, user_id = message.from.as_ref().map(|user| user.id.0), owner = message.from.as_ref().is_some_and(|user| user.id == cfg.owner_id)))]
 pub(crate) async fn handle_message(
     bot: Bot,
     message: Message,
@@ -126,9 +68,11 @@ pub(crate) async fn handle_message(
         && !has_sticker
         && !has_voice
     {
+        tracing::debug!("skip: no text, media, sticker or voice");
         return Ok(());
     }
     let Some(sender) = message.from.as_ref().filter(|user| !user.is_bot) else {
+        tracing::debug!("skip: sender is a bot");
         return Ok(());
     };
     let owner = sender.id == cfg.owner_id;
@@ -154,6 +98,15 @@ pub(crate) async fn handle_message(
     )
     .await;
     let text = voice.text.as_deref().unwrap_or(typed);
+    tracing::debug!(
+        voice = voice.text.is_some(),
+        quoted = voice.quoted,
+        has_media = current_media.is_some() || reply_media.is_some(),
+        has_sticker,
+        text_len = text.chars().count(),
+        forwarded,
+        "message received"
+    );
     // A quoted transcript belongs to its author, so its markers must not get
     // the person quoting it ignored; typed text still counts on its own.
     let injection_text = if voice.quoted { typed } else { text };
@@ -174,6 +127,7 @@ pub(crate) async fn handle_message(
         raw_log_text
     };
     if sender_ignored {
+        tracing::info!(reason = "ignored", "message skipped");
         let flags = flags | crate::memory::FLAG_IGNORED;
         let _ = crate::memory::record_message(
             &cfg.database,
@@ -201,6 +155,7 @@ pub(crate) async fn handle_message(
             {
                 tracing::error!("Ignore write failed: {error}");
             }
+            tracing::info!(reason = "injection", "user ignored");
             let flags = flags | crate::memory::FLAG_INJECTION | crate::memory::FLAG_IGNORED;
             let _ = crate::memory::record_message(
                 &cfg.database,
@@ -212,9 +167,11 @@ pub(crate) async fn handle_message(
     }
     let media = current_media.or_else(|| (!reply_ignored).then_some(reply_media).flatten());
     if text.is_empty() && media.is_none() && !has_sticker {
+        tracing::debug!(reason = "empty after reply filter", "message skipped");
         return Ok(());
     }
     if typed.trim_start().starts_with('/') {
+        tracing::debug!("routing: command");
         flags |= crate::memory::FLAG_JUNK;
         let _ = crate::memory::record_message(
             &cfg.database,
@@ -230,6 +187,7 @@ pub(crate) async fn handle_message(
         return Ok(());
     }
     if message.chat.is_private() && sender.id != cfg.owner_id {
+        tracing::info!(reason = "private non-owner", "message skipped");
         let _ = crate::memory::record_message(
             &cfg.database,
             user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
@@ -238,6 +196,7 @@ pub(crate) async fn handle_message(
         return Ok(());
     }
     if !message.chat.is_private() && !message.chat.is_group() && !message.chat.is_supergroup() {
+        tracing::debug!(reason = "unsupported chat kind", "message skipped");
         return Ok(());
     }
     let _ = crate::memory::record_message(
@@ -253,8 +212,10 @@ pub(crate) async fn handle_message(
     }
     let Some(url) = first_link(typed) else {
         if reply_with_sticker(&bot, &message, &cfg, typed).await {
+            tracing::debug!(reason = "owner sticker", "message handled");
             return Ok(());
         }
+        tracing::debug!(followup = reply_ignored, "routing: chat turn");
         reply_with_chat(
             &bot,
             &message,
@@ -269,6 +230,7 @@ pub(crate) async fn handle_message(
     };
     let user_semaphore = cfg.user_rate_limit(sender.id).await;
     let Ok(_user_permit) = user_semaphore.try_acquire_owned() else {
+        tracing::warn!(reason = "rate limit", "download rejected");
         record_failure(
             &cfg.database,
             &url,
@@ -280,7 +242,10 @@ pub(crate) async fn handle_message(
     if !message.chat.is_private() {
         match group_enabled(&cfg.database, message.chat.id).await {
             Ok(true) => {}
-            Ok(false) => return Ok(()),
+            Ok(false) => {
+                tracing::debug!(reason = "group disabled", "download skipped");
+                return Ok(());
+            }
             Err(_) => {
                 record_failure(
                     &cfg.database,
@@ -293,6 +258,7 @@ pub(crate) async fn handle_message(
         }
     }
     let Ok(_permit) = cfg.downloads.acquire().await else {
+        tracing::warn!(reason = "download slot closed", "download rejected");
         record_failure(
             &cfg.database,
             &url,
@@ -305,7 +271,10 @@ pub(crate) async fn handle_message(
     if !message.chat.is_private() {
         match group_enabled(&cfg.database, message.chat.id).await {
             Ok(true) => {}
-            Ok(false) => return Ok(()),
+            Ok(false) => {
+                tracing::debug!(reason = "group disabled", "download skipped");
+                return Ok(());
+            }
             Err(_) => {
                 record_failure(
                     &cfg.database,
@@ -319,6 +288,7 @@ pub(crate) async fn handle_message(
     }
     let key = cache_key(bot.token(), &url);
     if let Ok(Some(cached)) = lookup_cache(&cfg.database, message.chat.id.0, &key).await {
+        tracing::debug!(items = cached.len(), "media cache hit");
         let mut items = Vec::with_capacity(cached.len());
         for item in &cached {
             let caption = match media_caption(sender, &url, item.description.as_deref()) {
@@ -391,6 +361,7 @@ pub(crate) async fn handle_message(
         }
     };
     let deadline = time::Instant::now() + Duration::from_secs(config().media.download_timeout_secs);
+    let download_started = time::Instant::now();
     let result = download_with_timeout(
         &url,
         &cfg,
@@ -401,6 +372,11 @@ pub(crate) async fn handle_message(
     let result = match result {
         Ok(result) => result,
         Err(failure) => {
+            download_failed(
+                failure.diagnostic.stage,
+                failure.diagnostic.detail,
+                download_started,
+            );
             record_failure_with_events(&cfg.database, &url, failure.diagnostic, &failure.events)
                 .await;
             let mut reply = if failure.diagnostic.detail == "Download failed"
@@ -435,6 +411,7 @@ pub(crate) async fn handle_message(
             )
         });
         let mut events = result.events;
+        media_not_selected(diagnostic.stage, diagnostic.detail);
         if events.is_empty() {
             trace_event(&mut events, diagnostic);
         }
@@ -465,6 +442,7 @@ pub(crate) async fn handle_message(
     }
     let found = result.selection.files.len();
     let skipped = result.selection.skipped;
+    media_finished(found, skipped, report.delivered, download_started);
     let complete = result.process_ok
         && !result.limited
         && !result.twitter_photos_failed
@@ -483,6 +461,7 @@ pub(crate) async fn handle_message(
     Ok(())
 }
 
+#[tracing::instrument(skip_all, fields(chat_id = query.message.as_ref().map(|message| message.chat().id.0), user_id = query.from.id.0, callback_id = ?query.id))]
 pub(crate) async fn handle_callback_query(
     bot: Bot,
     query: teloxide::types::CallbackQuery,
@@ -493,8 +472,10 @@ pub(crate) async fn handle_callback_query(
             .await
             .is_ok_and(|active| active)
     {
+        tracing::info!(reason = "ignored", "callback skipped");
         return Ok(());
     }
+    tracing::debug!("routing: callback");
     crate::self_improve::handle_callback(&bot, &query, &cfg).await;
     Ok(())
 }

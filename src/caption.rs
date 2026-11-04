@@ -92,6 +92,7 @@ pub(crate) fn media_caption(
         .and_then(|budget| budget.checked_sub(1))
         .ok_or("Подпись слишком длинная для Telegram")?;
     let mut caption = String::new();
+    let mut truncated = false;
     // The caption carries only the publication's own text; the sender's message
     // stays untouched in the chat.
     for text in [body].into_iter().flatten().filter(|text| !text.is_empty()) {
@@ -109,6 +110,7 @@ pub(crate) fn media_caption(
             };
             let size = entity.map_or(ch.len_utf16(), |text| text.len());
             if size > budget.saturating_sub(used + separator) {
+                truncated = true;
                 break;
             }
             used += size;
@@ -131,5 +133,6 @@ pub(crate) fn media_caption(
         caption.push('\n');
     }
     caption.push_str(&footer);
+    tracing::trace!(caption_len = caption.len(), truncated, "caption built");
     Ok(caption)
 }

@@ -135,8 +135,19 @@ pub(crate) async fn record_failure_with_events(
             .execute(&mut *transaction).await?;
         transaction.commit().await
     }.await;
-    if result.is_err() {
-        tracing::error!("Не удалось сохранить диагностику загрузки");
+    match result {
+        Ok(()) => tracing::info!(
+            stage = failure.stage,
+            detail = failure.detail,
+            host = url.host_str(),
+            events = events.len(),
+            "download failure recorded"
+        ),
+        Err(_) => tracing::error!(
+            stage = failure.stage,
+            detail = failure.detail,
+            "unable to record download failure"
+        ),
     }
 }
 

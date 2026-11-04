@@ -19,6 +19,7 @@ pub(crate) async fn deliver_chat_reply(
 ) {
     if followup && is_pass_reply(&reply.text) && reply.sticker.is_none() && reply.decision.is_none()
     {
+        tracing::debug!("followup PASS, nothing delivered");
         return;
     }
     let mut delivered = false;
@@ -49,6 +50,7 @@ pub(crate) async fn deliver_chat_reply(
         &reply,
     )
     .await;
+    let delivered_text_present = delivered_text.is_some();
     delivered |= delivered_text.is_some();
     if let Some((id, out)) = delivered_text {
         let rec = match out.as_deref() {
@@ -63,4 +65,5 @@ pub(crate) async fn deliver_chat_reply(
     } else if delivered {
         chat.note_reply(message.chat.id).await;
     }
+    chat_reply_delivered(&reply, delivered, delivered_text_present);
 }

@@ -36,6 +36,18 @@ pub(crate) async fn request_cookie_refresh(
     deadline: time::Instant,
     events: &mut Vec<FailureDiagnostic>,
 ) -> bool {
+    tracing::info!(source, "cookie refresh requested");
+    let refreshed = request_cookie_refresh_inner(cfg, source, deadline, events).await;
+    tracing::info!(source, refreshed, "cookie refresh finished");
+    refreshed
+}
+
+async fn request_cookie_refresh_inner(
+    cfg: &Settings,
+    source: &str,
+    deadline: time::Instant,
+    events: &mut Vec<FailureDiagnostic>,
+) -> bool {
     let Some(base) = &cfg.cookie_refresh_url else {
         return false;
     };

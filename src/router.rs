@@ -148,14 +148,23 @@ impl Router {
         // A router answer without text cannot be delivered as a chat reply.
         // `off` never lands here with empty text: media and sticker turns are
         // explicit and return above, and ambient candidates require text.
-        if self.mode != RouterMode::Off
+        let decision = if self.mode != RouterMode::Off
             && decision == Decision::Reply
             && input.text.trim().is_empty()
         {
             Decision::Silent
         } else {
             decision
-        }
+        };
+        tracing::debug!(
+            mode = ?self.mode,
+            decision = ?decision,
+            followup = input.followup,
+            address = ?input.address,
+            text_len = input.text.chars().count(),
+            "router decision"
+        );
+        decision
     }
 }
 

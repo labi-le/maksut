@@ -1,3 +1,4 @@
+use crate::elapsed_ms;
 use crate::prelude::*;
 
 use crate::chat_client::ChatConfig;
@@ -65,6 +66,7 @@ impl ChatConfig {
         }
         let execute = queries.len().min(budget);
         let truncated_queries = dropped_queries + (queries.len() - execute);
+        tracing::info!(queries = execute, "research plan");
         if !owner {
             self.begin_research(user_id).await?;
         }
@@ -78,6 +80,7 @@ impl ChatConfig {
             queries = execute,
             "research started"
         );
+        let research_started = time::Instant::now();
         let (result, sources) = collect_research(
             Arc::clone(&self.search),
             &question,
@@ -87,6 +90,11 @@ impl ChatConfig {
             Some(job),
         )
         .await;
+        tracing::info!(
+            sources = sources.len(),
+            elapsed_ms = elapsed_ms(research_started),
+            "research done"
+        );
         Ok(ResearchOutcome {
             result,
             sources,
@@ -183,6 +191,7 @@ pub(crate) async fn collect_research(
     for (index, result) in results {
         match result {
             Ok(hits) => {
+                tracing::debug!(query = index + 1, hits = hits.len(), "research query hits");
                 for (position, hit) in hits.into_iter().enumerate() {
                     let Some((key, source)) = research_source(hit, index + 1, position) else {
                         continue;
@@ -207,7 +216,10 @@ pub(crate) async fn collect_research(
                     }
                 }
             }
-            Err(failure) => failures.push((index + 1, failure)),
+            Err(failure) => {
+                tracing::debug!(query = index + 1, failure = ?failure, "research query failed");
+                failures.push((index + 1, failure));
+            }
         }
     }
     if by_key.is_empty() {

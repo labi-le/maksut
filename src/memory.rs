@@ -93,8 +93,9 @@ pub(crate) async fn ignore_user(
     message_id: i32,
 ) -> Result<bool, sqlx::Error> {
     if now <= 0 {
-        tracing::warn!("Ignore timestamp is invalid: {now}");
+        tracing::warn!(now, "ignore timestamp is invalid");
     }
+    let started = time::Instant::now();
     let row: Option<i64> = sqlx::query_scalar(
         "INSERT INTO ignored_users (user_id, until, reason, created_at, source_chat_id, source_message_id) \
          VALUES (?, ?, ?, ?, ?, ?) \
@@ -115,15 +116,37 @@ pub(crate) async fn ignore_user(
     .bind(i64::from(message_id))
     .fetch_optional(pool)
     .await?;
+    if row.is_some() {
+        tracing::info!(
+            chat_id = chat_id.0,
+            elapsed_ms = elapsed_ms(started),
+            "ignore applied"
+        );
+    }
     Ok(row.is_some())
 }
 
 pub(crate) async fn prune_expired_ignores(pool: &SqlitePool, now: i64) -> Result<u64, sqlx::Error> {
+    let started = time::Instant::now();
     let result = sqlx::query("DELETE FROM ignored_users WHERE until <= ?")
         .bind(now)
         .execute(pool)
         .await?;
-    Ok(result.rows_affected())
+    let users = result.rows_affected();
+    if users > 0 {
+        tracing::info!(
+            users,
+            elapsed_ms = elapsed_ms(started),
+            "expired ignores pruned"
+        );
+    } else {
+        tracing::debug!(
+            users,
+            elapsed_ms = elapsed_ms(started),
+            "no expired ignores"
+        );
+    }
+    Ok(users)
 }
 
 pub(crate) struct RecordMessage<'a> {
@@ -183,6 +206,17 @@ pub(crate) async fn record_message(
     .bind(unix_now())
     .execute(pool)
     .await?;
+    tracing::debug!(
+        chat_id = message.chat_id.0,
+        role = message.role,
+        chars = message.text.chars().count(),
+        has_message_id = message.message_id.is_some(),
+        injection = message.flags & FLAG_INJECTION != 0,
+        secret = message.flags & FLAG_SECRET != 0,
+        junk = message.flags & FLAG_JUNK != 0,
+        ignored = message.flags & FLAG_IGNORED != 0,
+        "message recorded"
+    );
     Ok(())
 }
 
@@ -205,6 +239,7 @@ pub(crate) async fn load_memory(
     .await?;
     let mut selected = Vec::new();
     let mut chars = 0;
+    let history = rows.len();
     for (author_id, author_name, role, text) in rows {
         let line = format_line(&author_name, author_id, &text);
         chars += line.chars().count();
@@ -225,6 +260,14 @@ pub(crate) async fn load_memory(
     let summary = summary
         .map(|(value,)| value)
         .filter(|value| !value.trim().is_empty());
+    tracing::debug!(
+        chat_id = chat_id.0,
+        history,
+        selected = selected.len(),
+        chars,
+        has_summary = summary.is_some(),
+        "memory loaded"
+    );
     Ok((summary, selected))
 }
 
@@ -385,7 +428,7 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
     loop {
         match prune_expired_ignores(&cfg.database, unix_now()).await {
             Ok(_) => {}
-            Err(error) => tracing::warn!("Ignore cleanup failed: {error}"),
+            Err(error) => tracing::warn!(error = %error, "ignore cleanup failed"),
         }
         match crate::usage::prune(&cfg.database, unix_now()).await {
             Ok(_) => {}
@@ -406,7 +449,11 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
                         Ok(true) => {}
                         Ok(false) => break,
                         Err(reason) => {
-                            tracing::warn!("Memory compact failed for chat {chat_id}: {reason}");
+                            tracing::warn!(
+                                chat_id,
+                                reason = %reason,
+                                "memory compact failed"
+                            );
                             break;
                         }
                     }

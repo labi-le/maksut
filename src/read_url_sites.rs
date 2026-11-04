@@ -246,6 +246,7 @@ fn str_field<'a>(value: &'a Value, key: &str, default: &'a str) -> &'a str {
 }
 
 pub(crate) fn format_special_json(method: &str, value: &Value) -> Option<(Option<String>, String)> {
+    tracing::debug!(method, "special json extraction");
     match method {
         "github-issue" => {
             let title = value.get("title")?.as_str()?.to_owned();

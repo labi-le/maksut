@@ -131,6 +131,7 @@ pub(crate) async fn send_single_media(
         Ok(message) => Ok(DeliveryReceipt { kind, message }),
         Err(error) => {
             if user_errors::rejected_media_upload(&error) {
+                tracing::warn!(kind = ?kind, fallback = fallback_input.is_some(), "rejected");
                 if let Some(input) = fallback_input {
                     return bot
                         .send_document(chat_id, input)
@@ -145,6 +146,7 @@ pub(crate) async fn send_single_media(
                         .map_err(|error| DeliveryError::request(error, max_bytes));
                 }
             }
+            tracing::error!(kind = ?kind, "media send failed");
             Err(DeliveryError::request(error, max_bytes))
         }
     }
@@ -160,7 +162,7 @@ pub(crate) async fn send_media(
 ) -> Result<DeliveryReceipt, DeliveryError> {
     let prepared = prepare_media(file, max_bytes, deadline).await?;
     // The converted TempPath remains owned here until the upload has completed.
-    send_single_media(
+    let receipt = send_single_media(
         bot,
         chat_id,
         prepared.input,
@@ -169,7 +171,8 @@ pub(crate) async fn send_media(
         max_bytes,
         true,
     )
-    .await
+    .await?;
+    Ok(receipt)
 }
 
 pub(crate) struct DeliveryItem<'a> {
@@ -278,6 +281,7 @@ pub(crate) fn album_compatible(first: MediaKind, next: MediaKind) -> bool {
         )
 }
 
+#[tracing::instrument(skip_all, fields(chat_id = chat_id.0, items = items.len()))]
 pub(crate) async fn deliver_items(
     bot: &Bot,
     chat_id: ChatId,
@@ -331,6 +335,7 @@ pub(crate) async fn deliver_items(
                         false
                     }
                     Err(error) => {
+                        tracing::warn!(reason = %error.reason, "media skipped");
                         report.error = Some(error);
                         true
                     }
@@ -397,6 +402,7 @@ pub(crate) async fn deliver_items(
                         false
                     }
                     Ok(_) => {
+                        tracing::warn!(kind = ?kind, items = expected, "album response invalid");
                         // A successful but unexpected response may already have delivered the album.
                         report.error = Some(DeliveryError {
                             reason: "Telegram вернул некорректный ответ на отправку альбома."
@@ -418,9 +424,11 @@ pub(crate) async fn deliver_items(
         }
         start = end;
     }
+    delivery_batch(report.delivered, report.error.is_some());
     report
 }
 
+#[tracing::instrument(skip_all, fields(chat_id = chat_id.0, items = result.selection.files.len()))]
 pub(crate) async fn deliver_fresh(
     bot: &Bot,
     chat_id: ChatId,
@@ -431,10 +439,11 @@ pub(crate) async fn deliver_fresh(
     deadline: time::Instant,
 ) -> DeliveryReport {
     let description = |file: &MediaFile| {
-        result
+        let found = result
             .file_descriptions
             .iter()
-            .find(|(path, _)| path == &file.path)
+            .find(|(path, _)| path == &file.path);
+        found
             .map(|(_, text)| text.as_str())
             .or(result.description.as_deref())
     };
@@ -487,7 +496,10 @@ pub(crate) async fn deliver_fresh(
                     converted.push(output);
                 }
             }
-            Err(error) => preparation_error = Some(error),
+            Err(error) => {
+                tracing::warn!(reason = %error.reason, "media preparation failed");
+                preparation_error = Some(error);
+            }
         }
     }
     // All conversion guards remain live while contiguous compatibility batches are uploaded.

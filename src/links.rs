@@ -55,8 +55,10 @@ pub(crate) fn allowed_url(raw: &str) -> Option<Url> {
         _ => false,
     };
     if !post_path {
+        tracing::debug!(host, "url allowlist miss");
         return None;
     }
+    tracing::debug!(host, "url allowlist match");
     url.set_fragment(None);
     Some(url)
 }
@@ -169,6 +171,7 @@ pub(crate) async fn resolve_short_link(url: &Url, deadline: time::Instant) -> Op
             }
             // A redirect may already point to a post; don't follow its tracking links.
             if let Some(target) = canonical_short_target(&current, family) {
+                tracing::debug!(host = current.host_str(), redirects, "short link resolved");
                 return Some(target);
             }
             if !short_link_contact_allowed(current.host_str()?, family) {

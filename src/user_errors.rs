@@ -1,4 +1,4 @@
-use crate::FailureDiagnostic;
+use crate::{sanitize_text, FailureDiagnostic};
 use teloxide::{ApiError, RequestError};
 
 pub(crate) fn http_detail(status: u16) -> &'static str {
@@ -27,6 +27,11 @@ pub(crate) fn format_mib(bytes: u64) -> String {
 }
 
 pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) -> String {
+    tracing::trace!(
+        stage = diagnostic.stage,
+        detail = diagnostic.detail,
+        "diagnostic category selected"
+    );
     if diagnostic.stage == "delivery" {
         return match diagnostic.detail {
             "Rate limit" | "HTTP 429" => {
@@ -341,6 +346,13 @@ fn unknown_api_detail(description: &str) -> &'static str {
             return detail;
         }
     }
-    tracing::warn!("Unmapped Telegram API media error: {description}");
+    tracing::warn!(
+        chars = description.chars().count(),
+        "unmapped Telegram API media error"
+    );
+    tracing::trace!(
+        detail = %sanitize_text(description),
+        "unmapped Telegram API media error"
+    );
     "Unknown Telegram rejection"
 }
