@@ -196,6 +196,18 @@ impl ChatSettings {
             1,
             1024,
         )?;
+        count(
+            "chat.profile_cache_ttl_secs",
+            self.profile_cache_ttl_secs,
+            1,
+            86_400,
+        )?;
+        usize_count(
+            "chat.profile_cache_max_entries",
+            self.profile_cache_max_entries,
+            1,
+            65_536,
+        )?;
         count("chat.image_max_bytes", self.image_max_bytes, 1, 50_000_000)?;
         usize_count("chat.image_concurrency", self.image_concurrency, 1, 64)?;
         count("chat.image_timeout_secs", self.image_timeout_secs, 1, 600)?;
@@ -207,6 +219,10 @@ impl ChatSettings {
             (
                 "chat.inspect_code_calls_per_reply",
                 self.inspect_code_calls_per_reply,
+            ),
+            (
+                "chat.chat_profile_calls_per_reply",
+                self.chat_profile_calls_per_reply,
             ),
             (
                 "chat.remember_self_calls_per_reply",

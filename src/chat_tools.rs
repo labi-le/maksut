@@ -13,6 +13,7 @@ pub(crate) struct ToolContext<'a> {
     pub(crate) sender_name: &'a str,
     pub(crate) username: Option<&'a str>,
     pub(crate) message_id: i32,
+    pub(crate) reply_user_id: Option<UserId>,
     pub(crate) bot: Option<&'a Bot>,
     pub(crate) read_url_targets: &'a [Url],
 }
@@ -29,6 +30,7 @@ pub(crate) struct ToolState {
     pub(crate) read_url_calls: usize,
     pub(crate) chat_search_calls: usize,
     pub(crate) inspect_calls: usize,
+    pub(crate) chat_profile_calls: usize,
     pub(crate) inspect_announced: bool,
     pub(crate) remember_calls: usize,
     pub(crate) proposed_feature: bool,
@@ -51,6 +53,7 @@ impl ToolState {
             read_url_calls: 0,
             chat_search_calls: 0,
             inspect_calls: 0,
+            chat_profile_calls: 0,
             inspect_announced: false,
             remember_calls: 0,
             proposed_feature: false,
@@ -237,6 +240,14 @@ pub(crate) async fn run_tool_call(
                 })
                 .await
                 .unwrap_or_else(|_| "Снимок кода недоступен.".to_owned())
+            }
+        }
+        Some(ToolKind::ChatProfile) => {
+            if state.chat_profile_calls >= config().chat.chat_profile_calls_per_reply {
+                "лимит профилей участников на ответ".to_string()
+            } else {
+                state.chat_profile_calls += 1;
+                crate::chat_profile::run(&args, ctx).await
             }
         }
         Some(ToolKind::RememberSelf) => {

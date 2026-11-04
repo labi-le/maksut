@@ -8,6 +8,7 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) sender_name: &'a str,
     pub(crate) username: Option<&'a str>,
     pub(crate) message_id: i32,
+    pub(crate) reply_user_id: Option<UserId>,
     pub(crate) owner: bool,
     pub(crate) prompt: &'a str,
     pub(crate) image: Option<&'a ChatImage>,
@@ -84,6 +85,7 @@ pub(crate) async fn reply_with_chat(
         sender_name,
         username: sender.username.as_deref(),
         message_id: message.id.0,
+        reply_user_id: crate::chat_profile::reply_author_id(message, reply_ignored),
         owner,
         prompt: effective_prompt,
         image: downloaded_image.as_ref(),
@@ -355,6 +357,7 @@ pub(crate) async fn chat_reply_with_proposal(
         sender_name: turn.sender_name,
         username: turn.username,
         message_id: turn.message_id,
+        reply_user_id: turn.reply_user_id,
         bot: turn.bot,
         read_url_targets: read_url_targets.as_slice(),
     };
