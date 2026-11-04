@@ -58,9 +58,9 @@ impl JevClient {
                     "type": "choice",
                     "instructions": "What should the Telegram bot do with this chat message?",
                     "criteria": {
-                        "reply": "The message asks the bot something, addresses it by name, or clearly expects an answer.",
-                        "wait": "The message addresses the bot but looks like the start of a longer thought; the next message will probably complete it.",
-                        "silent": "No answer is needed: other people are talking, or this is a reaction, a joke, spam, or an empty message."
+                        "reply": "The message addresses the bot or continues an active followup window ('окно продолжения: да') with a question or request to the bot.",
+                        "wait": "The message addresses the bot or continues an active followup window but looks like the start of a longer thought; the next message will probably complete it.",
+                        "silent": "No answer is needed: when 'обращение: нет' and 'окно продолжения: нет', participants are talking to each other (such as short room questions 'кто это', 'а это' or replies to another human); or this is a reaction, joke, spam, or empty message."
                     }
                 }
             }

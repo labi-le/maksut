@@ -385,7 +385,7 @@ pub(crate) fn format_reply_context(
     if reply_ignored {
         return None;
     }
-    let sticker_fallback;
+    let fallback;
     let raw = match reply.text().or_else(|| reply.caption()).map(str::trim) {
         Some(s) if !s.is_empty() => s,
         _ if reply.sticker().is_some() => {
@@ -393,10 +393,21 @@ pub(crate) fn format_reply_context(
                 .sticker()
                 .and_then(|s| s.emoji.as_deref())
                 .unwrap_or("");
-            sticker_fallback = format!("[стикер {emoji}]");
-            sticker_fallback.trim()
+            fallback = format!("[стикер {emoji}]");
+            fallback.trim()
         }
         _ if crate::chat_media::message_has_attachment(reply) => "[вложение]",
+        _ if let Some(user) = reply.left_chat_member() => {
+            fallback = format!("[покинул чат: {}]", display_author_name(user));
+            &fallback
+        }
+        _ if let Some(users) = reply.new_chat_members()
+            && !users.is_empty() =>
+        {
+            let names: Vec<_> = users.iter().map(display_author_name).collect();
+            fallback = format!("[вошёл в чат: {}]", names.join(", "));
+            &fallback
+        }
         _ => return None,
     };
     if crate::memory_guard::detect_flags(raw)
