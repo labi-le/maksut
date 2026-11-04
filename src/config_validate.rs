@@ -61,7 +61,8 @@ impl LogSettings {
                 LOG_LEVELS.join(", ")
             ));
         }
-        Ok(())
+        usize_count("log.ring_lines", self.ring_lines, 50, 5_000)?;
+        usize_count("log.ring_max_bytes", self.ring_max_bytes, 16_384, 4_194_304)
     }
 }
 
@@ -224,6 +225,10 @@ impl ChatSettings {
             (
                 "chat.chat_profile_calls_per_reply",
                 self.chat_profile_calls_per_reply,
+            ),
+            (
+                "chat.read_logs_calls_per_reply",
+                self.read_logs_calls_per_reply,
             ),
             (
                 "chat.remember_self_calls_per_reply",

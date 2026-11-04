@@ -6,6 +6,16 @@ fn defaults_validate() {
 }
 
 #[test]
+fn log_ring_bounds_are_enforced() {
+    let mut cfg = Config::default();
+    cfg.log.ring_lines = 10;
+    assert!(cfg.validate().unwrap_err().contains("log.ring_lines"));
+    cfg.log.ring_lines = Config::default().log.ring_lines;
+    cfg.log.ring_max_bytes = 4096;
+    assert!(cfg.validate().unwrap_err().contains("log.ring_max_bytes"));
+}
+
+#[test]
 fn example_config_matches_defaults_and_validates() {
     let parsed = Config::parse(include_str!("../example.config.toml")).unwrap();
     parsed.validate().unwrap();

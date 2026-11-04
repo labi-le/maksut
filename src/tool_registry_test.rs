@@ -49,7 +49,12 @@ fn builtin_visibility_matches_current_roles() {
             "{name} must be visible to the owner"
         );
     }
-    for name in ["feature_confirmation", "remember_self", "chat_index"] {
+    for name in [
+        "feature_confirmation",
+        "read_logs",
+        "remember_self",
+        "chat_index",
+    ] {
         assert!(
             registry.find(name, false).is_none(),
             "{name} must be hidden from non-owners"
@@ -92,8 +97,9 @@ fn builtin_visibility_matches_current_roles() {
             "feature_status".to_string(),
             "feature_confirmation".to_string(),
             "inspect_code".to_string(),
-            "chat_profile".to_string(),
+            "read_logs".to_string(),
             "remember_self".to_string(),
+            "chat_profile".to_string(),
             "usage_stats".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
@@ -128,8 +134,9 @@ fn builtin_visibility_matches_current_roles() {
             "read_url".to_string(),
             "propose_feature".to_string(),
             "inspect_code".to_string(),
-            "chat_profile".to_string(),
+            "read_logs".to_string(),
             "remember_self".to_string(),
+            "chat_profile".to_string(),
             "usage_stats".to_string(),
             "find_stickers".to_string(),
             "send_sticker".to_string(),
@@ -236,12 +243,13 @@ fn builtin_names_match_their_kinds_and_visibility() {
             ToolVisibility::Owner,
         ),
         (ToolKind::InspectCode, "inspect_code", ToolVisibility::All),
-        (ToolKind::ChatProfile, "chat_profile", ToolVisibility::All),
+        (ToolKind::ReadLogs, "read_logs", ToolVisibility::Owner),
         (
             ToolKind::RememberSelf,
             "remember_self",
             ToolVisibility::Owner,
         ),
+        (ToolKind::ChatProfile, "chat_profile", ToolVisibility::All),
         (ToolKind::UsageStats, "usage_stats", ToolVisibility::All),
         (ToolKind::FindStickers, "find_stickers", ToolVisibility::All),
         (ToolKind::SendSticker, "send_sticker", ToolVisibility::All),
