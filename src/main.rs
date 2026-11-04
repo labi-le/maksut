@@ -153,11 +153,11 @@ const TIKTOK_USER_AGENT: &str =
 const TELEGRAM_API_HOST: &str = "api.telegram.org";
 const TELEGRAM_FALLBACK_ADDRS: &[std::net::SocketAddr] = &[
     std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::new(149, 154, 166, 110),
+        std::net::Ipv4Addr::new(149, 154, 167, 220),
         443,
     )),
     std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::new(149, 154, 167, 220),
+        std::net::Ipv4Addr::new(149, 154, 166, 110),
         443,
     )),
 ];
