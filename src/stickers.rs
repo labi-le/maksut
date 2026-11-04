@@ -220,6 +220,7 @@ pub(crate) fn sticker_rule(text: &str) -> Option<&'static str> {
         .iter()
         .find(|(phrase, _)| contains_phrase(text, phrase))
     {
+        tracing::debug!(file_unique_id = *unique_id, "sticker rule matched");
         return Some(*unique_id);
     }
     let words = word_count(text);
@@ -247,6 +248,7 @@ pub(crate) fn sticker_rule(text: &str) -> Option<&'static str> {
                             .iter()
                             .any(|trigger| trigger_matches(trigger, &word))
                 })
+                .inspect(|r| tracing::debug!(file_unique_id = r.unique_id, "matched"))
                 .map(|rule| rule.unique_id)
         })
 }
@@ -262,7 +264,7 @@ impl StickerReplies {
 
 pub(crate) async fn load_sticker_replies(bot: &Bot) -> StickerReplies {
     let Ok(set) = bot.get_sticker_set(STICKER_SET).await else {
-        tracing::warn!("Sticker replies are unavailable: the sticker set could not be read");
+        tracing::warn!(set = STICKER_SET, "sticker set unreadable");
         return StickerReplies::default();
     };
     let mut replies = StickerReplies::default();
@@ -413,7 +415,10 @@ impl StickerEntry {
 pub(crate) async fn load_sticker_catalog(bot: &Bot) -> StickerCatalog {
     let path = PathBuf::from(config().paths.sticker_sets_file.as_str());
     let mut names: Vec<String> = fs::read_to_string(path)
-        .unwrap_or_default()
+        .unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "sticker sets unreadable");
+            String::new()
+        })
         .lines()
         .map(str::trim)
         .filter(|name| !name.is_empty())
@@ -448,24 +453,21 @@ pub(crate) async fn load_sticker_catalog(bot: &Bot) -> StickerCatalog {
         }
         time::sleep(Duration::from_millis(50)).await;
     }
-    let described = catalog
-        .entries
-        .iter()
-        .filter(|entry| !entry.description.is_empty())
-        .count();
-    tracing::warn!(
-        "Sticker catalog: {} stickers from {} sets ({} described, {} packs unavailable)",
-        catalog.entries.len(),
-        catalog.sets,
-        described,
-        unavailable
+    tracing::debug!(
+        stickers = catalog.entries.len(),
+        sets = catalog.sets,
+        unavailable,
+        "loaded"
     );
     catalog
 }
 
 fn load_descriptions() -> std::collections::HashMap<String, String> {
     let path = PathBuf::from(config().paths.sticker_descriptions_file.as_str());
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = fs::read_to_string(path).unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "sticker descriptions unreadable");
+        String::new()
+    });
     let records: Vec<Value> = serde_json::from_str(&text).unwrap_or_default();
     records
         .into_iter()

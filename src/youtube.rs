@@ -168,6 +168,10 @@ pub(crate) async fn probe_youtube_mp4(
     deadline: time::Instant,
 ) -> Result<Option<String>, &'static str> {
     let Ok(cookie) = process_cookies_async(cfg.cookies_file.as_deref(), dir).await else {
+        tracing::debug!(
+            host = url.host_str(),
+            "youtube probe skipped: cookies unavailable"
+        );
         return Ok(None);
     };
     let mut cmd = Command::new(&cfg.ytdlp_bin);
@@ -189,12 +193,15 @@ pub(crate) async fn probe_youtube_mp4(
     #[cfg(unix)]
     cmd.as_std_mut().process_group(0);
     let Ok(child) = cmd.spawn() else {
+        tracing::warn!(host = url.host_str(), "youtube probe spawn failed");
         return Ok(None);
     };
     let Ok(mut process) = DownloadProcess::new(child) else {
+        tracing::warn!(host = url.host_str(), "youtube probe process init failed");
         return Ok(None);
     };
     let Ok(mut stdout) = process.take_stdout(config().media.max_metadata_bytes + 1) else {
+        tracing::error!(host = url.host_str(), "youtube probe stdout unavailable");
         return Ok(None);
     };
     let probe_deadline = deadline
@@ -210,16 +217,41 @@ pub(crate) async fn probe_youtube_mp4(
     .await
     .ok()
     .flatten() else {
+        tracing::warn!(
+            host = url.host_str(),
+            "youtube probe timed out or returned nothing"
+        );
         return Ok(None);
     };
     if !status.success() {
+        tracing::warn!(
+            host = url.host_str(),
+            exit_code = status.code(),
+            "youtube probe failed"
+        );
         return Ok(None);
     }
     let Ok(info) = serde_json::from_slice::<Value>(&bytes) else {
+        tracing::warn!(
+            host = url.host_str(),
+            bytes = bytes.len(),
+            "youtube probe returned invalid JSON"
+        );
         return Ok(None);
     };
     if youtube_reject_reason(&info).is_some() {
         return Err("Video filtered");
     }
-    Ok(choose_youtube_mp4(&info, cfg.max_media_bytes))
+    let candidates = info
+        .get("formats")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    tracing::debug!(host = url.host_str(), candidates, "youtube formats parsed");
+    let chosen = choose_youtube_mp4(&info, cfg.max_media_bytes);
+    tracing::debug!(
+        host = url.host_str(),
+        format = chosen.as_deref(),
+        "youtube format chosen"
+    );
+    Ok(chosen)
 }

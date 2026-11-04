@@ -12,6 +12,11 @@ pub(crate) fn decode_body(body: &[u8], content_type: &str) -> String {
         detector.feed(body, true);
         detector.guess(None, chardetng::Utf8Detection::Allow)
     });
+    tracing::debug!(
+        bytes = body.len(),
+        encoding = encoding.name(),
+        "body decoded"
+    );
     encoding.decode(body).0.into_owned()
 }
 

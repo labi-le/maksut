@@ -1,5 +1,6 @@
 use crate::prelude::*;
 pub(crate) use crate::search_parse::*;
+use crate::{search_failed, search_finished};
 
 pub(crate) const DEFAULT_SEARCH_URL: &str = "https://html.duckduckgo.com/html/";
 pub(crate) const DEFAULT_FIRECRAWL_URL: &str = "https://api.firecrawl.dev/v2/search";
@@ -110,7 +111,8 @@ impl SearchClient {
         limit: usize,
         recency: Option<&str>,
     ) -> Result<Vec<SearchHit>, SearchFailure> {
-        match self.provider {
+        let started = time::Instant::now();
+        let result = match self.provider {
             SearchProvider::Auto => self.auto_search(query, limit, recency).await,
             SearchProvider::Public => self.public_web_search(query, limit, recency).await,
             SearchProvider::Parallel
@@ -129,7 +131,13 @@ impl SearchClient {
                     Err(_) => Err(SearchFailure::Timeout),
                 }
             }
+        };
+        let elapsed = crate::elapsed_ms(started);
+        match &result {
+            Ok(hits) => search_finished(self.provider, recency, hits.len(), elapsed),
+            Err(error) => search_failed(self.provider, recency, error, elapsed),
         }
+        result
     }
 
     async fn dispatch_single(
@@ -219,8 +227,12 @@ impl SearchClient {
             .await
             {
                 Ok(Ok(hits)) if !hits.is_empty() => return Ok(hits),
-                Ok(Ok(_)) => saw_empty = true,
-                Ok(Err(err)) => last_error = err,
+                Ok(Ok(_)) => {
+                    saw_empty = true;
+                }
+                Ok(Err(err)) => {
+                    last_error = err;
+                }
                 Err(_) => {
                     last_error = SearchFailure::Timeout;
                     break;
@@ -410,6 +422,7 @@ impl SearchClient {
         let mut report = String::new();
         let result_chars = config().search.result_chars;
         for (index, hit) in hits.iter().enumerate() {
+            tracing::trace!(snippet = %crate::sanitize_text(&hit.snippet), "hit");
             report.push_str(&format!(
                 "{}. {}\n{}\n{}\n\n",
                 index + 1,

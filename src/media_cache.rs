@@ -112,6 +112,12 @@ pub(crate) async fn lookup_cache(
         }
     };
     transaction.commit().await?;
+    tracing::debug!(
+        chat_id,
+        hit = items.is_some(),
+        items = items.as_ref().map_or(0, |items| items.len()),
+        "media cache lookup"
+    );
     Ok(items)
 }
 
@@ -142,7 +148,9 @@ pub(crate) async fn store_cache(
     .execute(&mut *transaction)
     .await?;
     prune_cache(&mut transaction).await?;
-    transaction.commit().await
+    transaction.commit().await?;
+    tracing::debug!(chat_id, items = items.len(), "media cache stored");
+    Ok(())
 }
 
 pub(crate) async fn invalidate_cache(
@@ -155,6 +163,7 @@ pub(crate) async fn invalidate_cache(
         .bind(key)
         .execute(pool)
         .await?;
+    tracing::debug!(chat_id, "media cache invalidated");
     Ok(())
 }
 

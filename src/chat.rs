@@ -24,7 +24,7 @@ pub(crate) struct ChatReply {
     pub(crate) proposed_feature: bool,
 }
 
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip_all, fields(chat_id = message.chat.id.0, user_id = sender.id.0, owner = sender.id == cfg.owner_id))]
 pub(crate) async fn reply_with_chat(
     bot: &Bot,
     message: &Message,
@@ -41,11 +41,19 @@ pub(crate) async fn reply_with_chat(
         return;
     };
     let owner = sender.id == cfg.owner_id;
+    tracing::debug!(
+        followup = input.followup,
+        has_image = input.pending_media.is_some(),
+        text_len = text.chars().count(),
+        reply_ignored,
+        "chat input resolved"
+    );
     if !message.chat.is_private()
         && !group_enabled(&cfg.database, message.chat.id)
             .await
             .is_ok_and(|e| e)
     {
+        tracing::debug!(reason = "group disabled", "chat skipped");
         return;
     }
     if cfg.router.gate(chat, message, &input).await != Decision::Reply {
@@ -90,6 +98,7 @@ pub(crate) async fn reply_with_chat(
         dir: cfg.self_improve_dir.clone(),
         owner_id: cfg.owner_id,
     };
+    let turn_started = time::Instant::now();
     let result = chat_reply_with_proposal(
         chat,
         &cfg.database,
@@ -101,9 +110,20 @@ pub(crate) async fn reply_with_chat(
     .await;
     drop(typing);
     match result {
-        Ok(reply) => deliver_chat_reply(bot, message, cfg, chat, turn.followup, reply).await,
+        Ok(reply) => {
+            tracing::info!(
+                elapsed_ms = elapsed_ms(turn_started),
+                outcome = "ok",
+                "chat turn finished"
+            );
+            deliver_chat_reply(bot, message, cfg, chat, turn.followup, reply).await;
+        }
         Err(reason) => {
-            tracing::error!("Chat reply failed: {reason}");
+            tracing::error!(
+                reason = %reason,
+                elapsed_ms = elapsed_ms(turn_started),
+                "Chat reply failed"
+            );
             if message.chat.is_private() || !turn.followup {
                 let msg = match (message.chat.is_private(), reason.strip_prefix("http_")) {
                     (true, _) => "Не получилось ответить, попробуй ещё раз.".to_owned(),
@@ -127,6 +147,7 @@ pub(crate) async fn reply_with_chat(
     }
 }
 
+#[tracing::instrument(skip_all, fields(chat_id = turn.chat_id.0, user_id = turn.user_id.0, owner = turn.owner, followup = turn.followup))]
 pub(crate) async fn chat_reply_with_proposal(
     chat: &ChatConfig,
     pool: &SqlitePool,
@@ -151,6 +172,7 @@ pub(crate) async fn chat_reply_with_proposal(
     let (summary, recent) = crate::memory::load_memory(pool, turn.chat_id, turn.message_id)
         .await
         .map_err(|_| "context".to_string())?;
+    chat_context(recent.len(), summary.is_some(), prompt);
     if is_repeated_user_spam(turn.owner, turn.user_id.0 as i64, prompt, &recent) {
         return Ok(ChatReply::default());
     }
@@ -303,7 +325,7 @@ pub(crate) async fn chat_reply_with_proposal(
         author_name: turn.sender_name.to_owned(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);
-    for _ in 0..config().chat.tool_rounds {
+    for round in 0..config().chat.tool_rounds {
         let c = &config().chat;
         let max_tokens = match (state.research.used, state.status_fallback.is_some()) {
             (true, _) => c.research_max_tokens,
@@ -318,12 +340,14 @@ pub(crate) async fn chat_reply_with_proposal(
         if turn.image.is_some() || snap_msg_idx.is_some() {
             request = request.without_reasoning();
         }
+        llm_round(round, max_tokens, request.reasoning, state.research.used);
         let Completion {
             message: mut reply,
             usage,
         } = chat.complete(&request).await.map_err(|e| e.reason())?;
         usage_site.record(pool, &chat.model, KIND_CHAT, usage).await;
         if request.reasoning && reply_is_empty(&reply) {
+            tracing::warn!(round, "empty reply, retrying without reasoning");
             request = request.without_reasoning();
             if let Ok(Completion {
                 message: retry,
@@ -354,6 +378,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 .await;
             let bare_prompt = turn.prompt.trim().is_empty();
             if (turn.followup || bare_prompt) && is_pass_reply(&content) {
+                tracing::debug!(round, "model chose PASS");
                 return Ok(ChatReply {
                     sticker: state.sticker,
                     decision: state.decision,
@@ -415,5 +440,6 @@ pub(crate) async fn chat_reply_with_proposal(
             messages.push(json!({"role": "system", "content": "Сейчас режим research: лимит «одно-два коротких предложения» не действует. В живом диалоге пиши компактно: 1-2 плотных абзаца с прямым выводом, цифрами и цитатами [n] по досье, без канцелярских подзаголовков («короткий вывод:», «цены:», «качество:», «где расходятся:», «итог:»); развёрнуто на 3-4 абзаца пиши только если явно попросили подробный разбор. Не выдумывай URL и источники; блок ссылок добавит бот."}));
         }
     }
+    tracing::warn!(rounds = config().chat.tool_rounds, "tool rounds exhausted");
     Err("tools".into())
 }

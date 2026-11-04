@@ -110,11 +110,13 @@ pub(crate) fn task_view(dir: &Path, value: &Value, queued: bool) -> Option<Value
 }
 
 pub(crate) fn task_views(dir: &Path, owner: UserId) -> Vec<Value> {
-    read_queue_tasks(dir)
+    let views: Vec<Value> = read_queue_tasks(dir)
         .into_iter()
         .filter(|(_, _, value, _)| owned_by_owner(value, owner))
         .filter_map(|(_, _, value, queued)| task_view(dir, &value, queued))
-        .collect()
+        .collect();
+    tracing::debug!(items = views.len(), "task views built");
+    views
 }
 
 fn json_len(value: &Value) -> usize {
@@ -228,6 +230,7 @@ pub(crate) fn status_snapshot(dir: &Path, owner: UserId, id: Option<&str>) -> Va
         .into_iter()
         .take(config().improve.result_tasks)
         .collect();
+    tracing::debug!(items = tasks.len(), "status snapshot built");
     bound_result(json!({"data_note": DATA_NOTE, "tasks": tasks}))
 }
 
@@ -236,6 +239,7 @@ pub(crate) fn status_snapshot(dir: &Path, owner: UserId, id: Option<&str>) -> Va
 /// model remembering to call it.
 pub(crate) fn status_overview(dir: &Path, owner: UserId) -> Value {
     let tasks = task_views(dir, owner);
+    tracing::debug!(total = tasks.len(), "status overview built");
     let mut counts = serde_json::Map::new();
     for task in &tasks {
         if let Some(status) = task.get("status").and_then(Value::as_str) {
@@ -336,6 +340,7 @@ pub(crate) fn pending_confirmation(dir: &Path, owner: UserId) -> Value {
         })
         .take(config().improve.result_tasks)
         .collect();
+    tracing::debug!(items = tasks.len(), "pending confirmation built");
     bound_result(json!({"data_note": DATA_NOTE, "tasks": tasks}))
 }
 

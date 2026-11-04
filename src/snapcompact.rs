@@ -3,6 +3,7 @@
 
 use crate::chat_media::base64_encode;
 use crate::config::config;
+use crate::elapsed_ms;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -378,25 +379,33 @@ pub(crate) fn parse_stored_archive(raw: &str) -> Option<SnapArchive> {
     }
     if trimmed.starts_with('{') {
         if let Ok(archive) = serde_json::from_str::<SnapArchive>(trimmed) {
-            if !archive.text.is_empty()
-                || !archive.text_head.is_empty()
-                || !archive.frames.is_empty()
-            {
+            let has_text = !archive.text.is_empty() || !archive.text_head.is_empty();
+            if has_text || !archive.frames.is_empty() {
                 return Some(archive);
             }
         }
+        tracing::warn!(chars = trimmed.len(), "stored archive unusable, using text");
     }
     let normalized = normalize_snap_text(trimmed);
     if normalized.is_empty() {
         return None;
     }
-    Some(build_snap_archive(None, &normalized))
+    Some(build_snap_archive_inner(None, &normalized))
 }
 
 /// Builds or updates a snapcompact archive from an optional prior archive and
 /// newly compacted transcript lines (`new_log`), laying out `text_head`,
 /// middle PNG `frames`, and `text_tail`.
 pub(crate) fn build_snap_archive(previous: Option<&SnapArchive>, new_log: &str) -> SnapArchive {
+    let started = tokio::time::Instant::now();
+    tracing::info!(messages = new_log.lines().count(), "snapcompact start");
+    let archive = build_snap_archive_inner(previous, new_log);
+    let frames = archive.frames.len();
+    tracing::info!(frames, elapsed_ms = elapsed_ms(started), "snapcompact end");
+    archive
+}
+
+fn build_snap_archive_inner(previous: Option<&SnapArchive>, new_log: &str) -> SnapArchive {
     let fresh = normalize_snap_text(new_log);
     let mut combined = match previous {
         Some(prev) if !prev.text.is_empty() && !fresh.is_empty() => {
@@ -419,6 +428,7 @@ pub(crate) fn build_snap_archive(previous: Option<&SnapArchive>, new_log: &str) 
     }
     let chars: Vec<char> = combined.chars().collect();
     let total = chars.len();
+    tracing::debug!(chars = total, truncated_chars, "snapcompact archive sized");
     if total <= EDGE_CHARS * 2 {
         let text_head = combined.clone();
         return SnapArchive {
@@ -430,15 +440,10 @@ pub(crate) fn build_snap_archive(previous: Option<&SnapArchive>, new_log: &str) 
             ..Default::default()
         };
     }
+    let tail_start = total.saturating_sub(EDGE_CHARS);
     let text_head: String = chars.get(..EDGE_CHARS).unwrap_or(&[]).iter().collect();
-    let text_tail: String = chars
-        .get(total.saturating_sub(EDGE_CHARS)..)
-        .unwrap_or(&[])
-        .iter()
-        .collect();
-    let mid = chars
-        .get(EDGE_CHARS..total.saturating_sub(EDGE_CHARS))
-        .unwrap_or(&[]);
+    let text_tail: String = chars.get(tail_start..).unwrap_or(&[]).iter().collect();
+    let mid = chars.get(EDGE_CHARS..tail_start).unwrap_or(&[]);
     let frames = mid
         .chunks(FRAME_CAPACITY)
         .take(MAX_FRAMES)

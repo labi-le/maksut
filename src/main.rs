@@ -21,11 +21,13 @@ mod config_sections;
 mod config_validate;
 mod config_validate_extras;
 mod config_validate_media;
+mod log_fields;
 mod log_redact;
 mod logging;
 mod retry;
 pub(crate) use config::*;
 pub(crate) use config_sections::*;
+pub(crate) use log_fields::*;
 pub(crate) use retry::*;
 
 mod media_cache;
@@ -140,6 +142,8 @@ mod source_message;
 pub(crate) use source_message::*;
 mod handler;
 pub(crate) use handler::*;
+mod group_settings;
+pub(crate) use group_settings::*;
 mod cleanup;
 pub(crate) use cleanup::*;
 
@@ -169,10 +173,6 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    if let Err(reason) = crate::logging::init() {
-        eprintln!("{reason}");
-        std::process::exit(1);
-    }
     let token = match env::var("BOT_TOKEN") {
         Ok(token) if !token.trim().is_empty() => token,
         _ => {
@@ -192,19 +192,30 @@ async fn main() {
         match bot.get_me().await {
             Ok(me) => break me.user.username.unwrap_or_default(),
             Err(teloxide::RequestError::Network(err)) => {
-                tracing::warn!(%err, "unable to identify bot, retrying in 3s");
+                tracing::warn!(
+                    timeout = err.is_timeout(),
+                    connect = err.is_connect(),
+                    "unable to identify bot, retrying in 3s"
+                );
                 time::sleep(Duration::from_secs(3)).await;
             }
             Err(teloxide::RequestError::RetryAfter(wait)) => {
                 time::sleep(wait.duration()).await;
             }
-            Err(error) => {
-                tracing::error!(%error, "unable to identify bot");
+            Err(_) => {
+                tracing::error!(kind = "request", "unable to identify bot");
                 std::process::exit(1);
             }
         }
     };
     cfg.sticker_replies = load_sticker_replies(&bot).await;
+    tracing::info!(
+        username = %cfg.bot_username,
+        owner_id = cfg.owner_id.0,
+        chat_enabled = cfg.chat.is_some(),
+        router = ?cfg.router.mode(),
+        "bot identified"
+    );
     let cfg = Arc::new(cfg);
     let catalog_cfg = Arc::clone(&cfg);
     let catalog_bot = bot.clone();
@@ -218,6 +229,7 @@ async fn main() {
         bot.clone(),
         Arc::clone(&cfg),
     ));
+    tracing::info!("background tasks started");
     let handler = teloxide::dptree::entry()
         .branch(teloxide::types::Update::filter_message().endpoint(message_endpoint))
         .branch(teloxide::types::Update::filter_callback_query().endpoint(callback_endpoint));
@@ -292,6 +304,8 @@ mod image_fetch_test;
 mod images_test;
 #[cfg(test)]
 mod links_test;
+#[cfg(test)]
+mod log_fields_test;
 #[cfg(test)]
 mod log_redact_test;
 #[cfg(test)]

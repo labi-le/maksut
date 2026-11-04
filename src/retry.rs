@@ -27,9 +27,21 @@ impl RetryPolicy {
     pub(crate) async fn backoff(&self, attempt: u32, deadline: time::Instant) -> bool {
         let left = deadline.saturating_duration_since(time::Instant::now());
         if left.is_zero() {
+            tracing::debug!(
+                attempt = attempt + 1,
+                remaining_ms = 0,
+                "retry budget exhausted"
+            );
             return false;
         }
-        time::sleep(self.delay(attempt).min(left)).await;
+        let delay = self.delay(attempt).min(left);
+        tracing::debug!(
+            attempt = attempt + 1,
+            delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+            remaining_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX),
+            "retry backoff"
+        );
+        time::sleep(delay).await;
         true
     }
 

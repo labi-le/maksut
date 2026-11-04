@@ -2,6 +2,7 @@ use crate::browser::{navigation_headers, referer_site, HTML_ACCEPT, USER_AGENT};
 use crate::prelude::*;
 use crate::search::{SearchClient, SearchFailure, SearchHit};
 use crate::search_parse::*;
+use crate::{search_request, search_response};
 use serde_json::json;
 
 impl SearchClient {
@@ -75,10 +76,13 @@ impl SearchClient {
                     .header("referer", referer)
             })
             .await?;
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            tracing::warn!(status = status.as_u16(), "search response rejected");
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
+        search_response("html", status.as_u16(), bytes.len());
         let html = String::from_utf8_lossy(&bytes).into_owned();
         if blocked_markers.iter().any(|marker| html.contains(marker)) {
             return Err(SearchFailure::Unavailable);
@@ -106,6 +110,7 @@ impl SearchClient {
             }
         }
         let body = body.to_string();
+        search_request("tavily", url, query);
         let response = self
             .send_with_retry(|| {
                 self.http
@@ -114,10 +119,13 @@ impl SearchClient {
                     .body(body.clone())
             })
             .await?;
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            tracing::warn!(status = status.as_u16(), "search response rejected");
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
+        search_response("tavily", status.as_u16(), bytes.len());
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| SearchFailure::Malformed)?;
         if value
             .get("error")
@@ -172,6 +180,7 @@ impl SearchClient {
             }
         }
         let body = body.to_string();
+        search_request("firecrawl", url, query);
         let response = self
             .send_with_retry(|| {
                 self.http
@@ -180,10 +189,13 @@ impl SearchClient {
                     .body(body.clone())
             })
             .await?;
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            tracing::warn!(status = status.as_u16(), "search response rejected");
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
+        search_response("firecrawl", status.as_u16(), bytes.len());
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| SearchFailure::Malformed)?;
         if value.get("success").and_then(Value::as_bool) == Some(false) {
             return Err(SearchFailure::Unavailable);
@@ -251,6 +263,7 @@ impl SearchClient {
             }
         });
         let body = body.to_string();
+        search_request("parallel", url, query);
         let response = self
             .send_with_retry(|| {
                 self.http
@@ -261,10 +274,13 @@ impl SearchClient {
                     .body(body.clone())
             })
             .await?;
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            tracing::warn!(status = status.as_u16(), "search response rejected");
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
+        search_response("parallel", status.as_u16(), bytes.len());
         let result = parse_mcp_jsonrpc_result(&bytes).ok_or(SearchFailure::Malformed)?;
         Ok(parse_parallel_mcp_hits(&result, limit))
     }
@@ -288,6 +304,7 @@ impl SearchClient {
             }
         });
         let body = body.to_string();
+        search_request("exa", url, query);
         let response = self
             .send_with_retry(|| {
                 self.http
@@ -298,10 +315,13 @@ impl SearchClient {
                     .body(body.clone())
             })
             .await?;
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            tracing::warn!(status = status.as_u16(), "search response rejected");
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
+        search_response("exa", status.as_u16(), bytes.len());
         let result = parse_mcp_jsonrpc_result(&bytes).ok_or(SearchFailure::Malformed)?;
         Ok(parse_exa_mcp_hits(&result, limit))
     }
@@ -321,6 +341,7 @@ impl SearchClient {
                 pairs.append_pair("df", df);
             }
         }
+        search_request("duckduckgo", &url, query);
         let html = self
             .get_html(
                 url,
@@ -353,6 +374,7 @@ impl SearchClient {
                 pairs.append_pair("with_date", df);
             }
         }
+        search_request("startpage", &url, query);
         let html = self
             .get_html(
                 url,
@@ -380,6 +402,7 @@ impl SearchClient {
                 pairs.append_pair("since", since);
             }
         }
+        search_request("mojeek", &url, query);
         let html = self
             .get_html(
                 url,
@@ -398,6 +421,7 @@ impl SearchClient {
     ) -> Result<Vec<SearchHit>, SearchFailure> {
         let mut url = base_url.clone();
         url.query_pairs_mut().append_pair("q", query);
+        search_request("ecosia", &url, query);
         let html = self
             .get_html(
                 url,

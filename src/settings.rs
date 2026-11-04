@@ -27,6 +27,7 @@ impl Settings {
     pub(crate) async fn load() -> Result<Self, String> {
         let loaded = Config::load().await?;
         install(loaded)?;
+        crate::logging::init()?;
         Self::from_config().await
     }
 
@@ -77,7 +78,15 @@ impl Settings {
             .as_deref()
             .map(|value| parse_http_endpoint(value, "cookie_refresh_url"))
             .transpose()?;
-        Ok(Self {
+        let database_file = cfg
+            .paths
+            .database_url
+            .split('?')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('/');
+        let database_file = Path::new(database_file).file_name();
+        let settings = Self {
             owner_id: UserId(owner_id),
             bot_username: String::new(),
             database,
@@ -96,7 +105,16 @@ impl Settings {
             max_media_bytes: cfg.media.max_bytes,
             downloads: Arc::new(Semaphore::new(cfg.media.concurrent_downloads)),
             user_rate_limits: Arc::new(RwLock::new(HashMap::new())),
-        })
+        };
+        tracing::info!(
+            database_file = ?database_file,
+            download_dir = %settings.download_dir.display(),
+            chat_enabled = settings.chat.is_some(),
+            cookies = settings.cookies_file.is_some(),
+            cookie_refresh = settings.cookie_refresh_url.is_some(),
+            "settings loaded"
+        );
+        Ok(settings)
     }
 }
 

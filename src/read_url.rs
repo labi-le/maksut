@@ -5,6 +5,7 @@ pub(crate) use crate::read_url_cache::{cache_get, cache_put};
 pub(crate) use crate::read_url_html::*;
 pub(crate) use crate::read_url_sites::*;
 pub(crate) use crate::read_url_text::*;
+use crate::{read_url_extracted, read_url_response_type};
 use reqwest::header::HeaderValue;
 
 // `read_url` negotiates Markdown ahead of HTML: some sites serve a Markdown
@@ -68,11 +69,14 @@ impl ReadUrlError {
 /// Fetch one public web page and return readable text. This is deliberately a
 /// narrow URL reader: it never reads local files, archives, SQLite, or internal
 /// agent schemes. The page body is untrusted data for the model.
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip_all, fields(host = tracing::field::Empty, path_len = tracing::field::Empty))]
 pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
     let (raw_url, selector) = split_url_selector(raw);
     let parsed_requested = parse_url(raw_url)?;
+    tracing::Span::current().record("host", parsed_requested.host_str());
+    tracing::Span::current().record("path_len", parsed_requested.path().chars().count());
     if let Some(page) = cache_get(parsed_requested.as_str()) {
+        tracing::debug!(chars = page.text.chars().count(), "read_url cache hit");
         return Ok(apply_url_selector(page, &selector));
     }
     let requested = parsed_requested.as_str().to_owned();
@@ -89,7 +93,9 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
     let mut attempt = 0u32;
     let mut pinned: Option<(String, reqwest::Client)> = None;
     'fetch: loop {
-        validate_url(&url)?;
+        validate_url(&url).inspect_err(
+            |error| tracing::warn!(host = url.host_str(), error = ?error, "read_url target rejected"),
+        )?;
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
@@ -172,7 +178,9 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
                 .and_then(|value| value.to_str().ok())
                 .ok_or(ReadUrlError::Redirect)?;
             let next = url.join(location).map_err(|_| ReadUrlError::Redirect)?;
-            validate_url(&next)?;
+            validate_url(&next).inspect_err(
+                |error| tracing::warn!(host = next.host_str(), error = ?error, "read_url redirect rejected"),
+            )?;
             url = next;
             redirects += 1;
             attempt = 0;
@@ -188,13 +196,17 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_owned();
+        read_url_response_type(&content_type);
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
         }
         let body = match time::timeout(remaining, read_body(response)).await {
             Ok(Ok(body)) => body,
-            Ok(Err(error @ (ReadUrlError::TooLarge | ReadUrlError::Empty))) => return Err(error),
+            Ok(Err(error @ (ReadUrlError::TooLarge | ReadUrlError::Empty))) => {
+                tracing::warn!(error = ?error, "read_url body rejected");
+                return Err(error);
+            }
             Ok(Err(error)) => {
                 if policy.retry_transport && policy.should_retry(attempt) {
                     if !policy.backoff(attempt, deadline).await {
@@ -217,9 +229,15 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
             }
         };
         let page = match special_method {
-            Some(method) => render_page_with_method(&url, &content_type, &body, Some(method))?,
-            None => render_page(&url, &content_type, &body)?,
-        };
+            Some(method) => render_page_with_method(&url, &content_type, &body, Some(method)),
+            None => render_page(&url, &content_type, &body),
+        }
+        .inspect_err(|error| {
+            if matches!(error, ReadUrlError::TooLarge | ReadUrlError::TooComplex) {
+                tracing::warn!(error = ?error, "read_url page rejected");
+            }
+        })?;
+        read_url_extracted(page.text.chars().count(), page.links.len());
         if page.text.chars().count() <= settings.cache_chars {
             cache_put(requested.clone(), page.clone());
             cache_put(url.as_str().to_owned(), page.clone());

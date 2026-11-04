@@ -119,12 +119,14 @@ pub(crate) fn parse_exa_mcp_hits(result: &Value, limit: usize) -> Vec<SearchHit>
 
 fn parse_json_hits(items: &[Value], limit: usize) -> Vec<SearchHit> {
     let mut hits = Vec::new();
+    let mut skipped = 0usize;
     for item in items.iter().take(limit) {
         let Some(url) = item
             .get("url")
             .and_then(Value::as_str)
             .filter(|u| !u.trim().is_empty())
         else {
+            skipped += 1;
             continue;
         };
         let title = item
@@ -160,6 +162,7 @@ fn parse_json_hits(items: &[Value], limit: usize) -> Vec<SearchHit> {
             snippet,
         });
     }
+    tracing::trace!(parsed = hits.len(), skipped, limit, "json hits parsed");
     hits
 }
 
@@ -199,11 +202,13 @@ fn parse_exa_text_blocks(raw: &str, limit: usize) -> Vec<SearchHit> {
             });
         }
     }
+    tracing::trace!(parsed = hits.len(), limit, "exa text blocks parsed");
     hits
 }
 
 pub(crate) fn extract_search_results(html: &str, limit: usize) -> Vec<(String, String, String)> {
     let mut results = Vec::new();
+    let mut skipped = 0usize;
     let mut cursor = 0;
     while results.len() < limit {
         let Some(relative) = html
@@ -248,9 +253,12 @@ pub(crate) fn extract_search_results(html: &str, limit: usize) -> Vec<(String, S
             .unwrap_or_default();
         if !href.is_empty() {
             results.push((title, href, snippet));
+        } else {
+            skipped += 1;
         }
         cursor = tag_end.max(marker + 1);
     }
+    tracing::trace!(parsed = results.len(), skipped, limit, "ddg results parsed");
     results
 }
 
@@ -315,15 +323,18 @@ fn extract_dom_results(
     }
     let document = dom_query::Document::from(html);
     let mut hits = Vec::new();
+    let mut skipped = 0usize;
     for item in document.select(item_sel).iter() {
         if hits.len() >= limit {
             break;
         }
         let anchor = item.select_single(link_sel);
         let Some(href) = anchor.attr("href") else {
+            skipped += 1;
             continue;
         };
         let Ok(url) = Url::parse(href.trim()) else {
+            skipped += 1;
             continue;
         };
         if !matches!(url.scheme(), "http" | "https")
@@ -331,6 +342,7 @@ fn extract_dom_results(
                 .host_str()
                 .is_some_and(|host| host.contains(self_domain))
         {
+            skipped += 1;
             continue;
         }
         let raw_title = title_sel
@@ -339,6 +351,7 @@ fn extract_dom_results(
             .unwrap_or_else(|| anchor.text());
         let title = clean_text(&raw_title);
         if title.is_empty() {
+            skipped += 1;
             continue;
         }
         let snippet = clean_text(&item.select_single(snippet_sel).text());
@@ -348,6 +361,7 @@ fn extract_dom_results(
             snippet,
         });
     }
+    tracing::trace!(parsed = hits.len(), skipped, limit, "dom results parsed");
     hits
 }
 fn decode_link(raw: &str) -> String {

@@ -45,20 +45,34 @@ impl ChatConfig {
             }
             entry.urls.push(url.clone());
         }
+        tracing::trace!(
+            chat_id = chat_id.0,
+            incoming = urls.len(),
+            stored = entry.urls.len(),
+            ttl_secs = ttl.as_secs(),
+            "urls remembered"
+        );
     }
 
     pub(crate) async fn recent_urls(&self, chat_id: ChatId) -> Vec<Url> {
         let mut recent = self.recent_urls.lock().await;
         let now = time::Instant::now();
         let ttl = Duration::from_secs(config().chat.discovered_url_ttl_secs);
-        match recent.get(&chat_id) {
+        let urls = match recent.get(&chat_id) {
             Some(entry) if now.duration_since(entry.updated_at) < ttl => entry.urls.clone(),
             Some(_) => {
                 recent.remove(&chat_id);
                 Vec::new()
             }
             None => Vec::new(),
-        }
+        };
+        tracing::trace!(
+            chat_id = chat_id.0,
+            urls = urls.len(),
+            ttl_secs = ttl.as_secs(),
+            "recent urls read"
+        );
+        urls
     }
 }
 

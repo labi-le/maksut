@@ -1,5 +1,7 @@
+use crate::elapsed_ms;
 use crate::prelude::*;
 use crate::router::Decision;
+use crate::sanitize_text;
 
 /// Client for the TypeSafe System One (`Jev`) decisions API: one `choice`
 /// question with three named answers. Any failure — transport, status, size,
@@ -42,6 +44,7 @@ impl JevClient {
     }
 
     pub(crate) async fn decide(&self, state: &str) -> Option<Decision> {
+        let started = time::Instant::now();
         let body = serde_json::json!({
             "model": self.model,
             "state": state,
@@ -57,7 +60,7 @@ impl JevClient {
                 }
             }
         });
-        let response = self
+        let response = match self
             .http
             .post(self.url.clone())
             .bearer_auth(&self.api_key)
@@ -65,14 +68,30 @@ impl JevClient {
             .json(&body)
             .send()
             .await
-            .ok()?;
+        {
+            Ok(response) => response,
+            Err(_) => {
+                tracing::warn!(
+                    host = self.url.host_str(),
+                    elapsed_ms = elapsed_ms(started),
+                    "jev request failed"
+                );
+                return None;
+            }
+        };
         if !response.status().is_success() {
+            tracing::warn!(
+                status = response.status().as_u16(),
+                elapsed_ms = elapsed_ms(started),
+                "jev HTTP error"
+            );
             return None;
         }
         if response
             .content_length()
             .is_some_and(|length| length > self.max_response_bytes as u64)
         {
+            tracing::warn!(max = self.max_response_bytes, "jev response too large");
             return None;
         }
         // Decoded chunked bodies can exceed the advertised length or arrive
@@ -85,11 +104,18 @@ impl JevClient {
                 break;
             };
             if bytes.len() + chunk.len() > self.max_response_bytes {
+                tracing::warn!(max = self.max_response_bytes, "jev response too large");
                 return None;
             }
             bytes.extend_from_slice(&chunk);
         }
-        let value: Value = serde_json::from_slice(&bytes).ok()?;
+        let value: Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => {
+                tracing::warn!(bytes = bytes.len(), "jev response is not JSON");
+                return None;
+            }
+        };
         let answer = value.pointer("/answers/action")?;
         let choice = answer.get("choice")?.as_str()?;
         let confidence = answer
@@ -98,13 +124,40 @@ impl JevClient {
             .and_then(Value::as_f64)
             .or_else(|| answer.get("confidence").and_then(Value::as_f64))?;
         if !confidence.is_finite() || confidence < self.min_confidence {
+            tracing::debug!(
+                choice_len = choice.chars().count(),
+                confidence,
+                min = self.min_confidence,
+                elapsed_ms = elapsed_ms(started),
+                "jev confidence too low"
+            );
             return None;
         }
-        match choice {
+        let decision = match choice {
             "reply" => Some(Decision::Reply),
             "wait" => Some(Decision::Wait),
             "silent" => Some(Decision::Silent),
             _ => None,
+        };
+        match decision {
+            Some(decision) => {
+                tracing::debug!(
+                    choice_len = choice.chars().count(),
+                    confidence,
+                    decision = ?decision,
+                    elapsed_ms = elapsed_ms(started),
+                    "jev decision"
+                );
+                Some(decision)
+            }
+            None => {
+                tracing::warn!(
+                    choice_len = choice.chars().count(),
+                    "jev returned an unknown choice"
+                );
+                tracing::trace!(choice = %sanitize_text(choice), "jev raw choice");
+                None
+            }
         }
     }
 }

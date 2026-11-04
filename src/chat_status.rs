@@ -198,6 +198,12 @@ pub(crate) fn status_answer(snapshot: &Value, overview: Option<&Value>, view: &s
             None => "Очередь пуста".to_owned(),
         };
     }
+    let selected = match view {
+        "links" => "links",
+        "summary" => "summary",
+        _ => "details",
+    };
+    tracing::debug!(view = selected, items = tasks.len(), "status view selected");
     match view {
         "links" => status_links_answer(&tasks),
         "summary" => status_summary_answer(&tasks, overview),
@@ -413,10 +419,16 @@ pub(crate) async fn resolve_status_reply(
     let snapshot = state.status_snapshot.as_ref();
     let view = state.status_view.as_str();
     if status_answer_grounded(content, snapshot, view) {
-        return Some(style_status_reply(&crate::self_improve::redact_secret(
+        let styled = style_status_reply(&crate::self_improve::redact_secret(
             content,
             &ctx.chat.api_key,
-        )));
+        ));
+        tracing::trace!(
+            view = %crate::sanitize_text(view),
+            redactions = styled.matches("[redacted]").count(),
+            "status reply redacted"
+        );
+        return Some(styled);
     }
     // Let the model correct itself once with the snapshot in context. If it
     // still contradicts the data, deliver the deterministic fallback.

@@ -8,6 +8,7 @@ pub(crate) fn extract_html_with_links(
     links: &mut Vec<(String, Url)>,
 ) -> Result<(Option<String>, String), ReadUrlError> {
     if html_is_too_complex(html) {
+        tracing::debug!(method = "reject", reason = "too_complex", "html extraction");
         return Err(ReadUrlError::TooComplex);
     }
     // Readability picks the main article and strips navigation/chrome. Parse
@@ -49,16 +50,26 @@ pub(crate) fn extract_html_with_links(
                 } else {
                     text
                 };
+                tracing::debug!(
+                    method = "readability",
+                    chars = chosen.chars().count(),
+                    links = links.len(),
+                    "html extraction"
+                );
                 return Ok(((!title.is_empty()).then_some(title), chosen));
             }
         }
     }
     // A readability failure must not turn a simple page into an error. Fall
     // back to the cleaned body text; links and headings are lost but content is not.
-    Ok((
-        (!title.is_empty()).then_some(title),
-        fallback_text(&document),
-    ))
+    let fallback = fallback_text(&document);
+    tracing::debug!(
+        method = "fallback",
+        chars = fallback.chars().count(),
+        links = links.len(),
+        "html extraction"
+    );
+    Ok(((!title.is_empty()).then_some(title), fallback))
 }
 
 pub(crate) fn strip_chrome(document: dom_query::Document) -> dom_query::Document {

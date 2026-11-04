@@ -74,6 +74,11 @@ pub(crate) async fn handle_improve(
     let Some(rest) = command_goal(text, &cfg.bot_username) else {
         return false;
     };
+    tracing::info!(
+        chat_id = message.chat.id.0,
+        command = "improve",
+        "owner command recognized"
+    );
     if !message.chat.is_private()
         || !message
             .from
@@ -202,6 +207,11 @@ pub(crate) async fn handle_owner_text(
     let Some(command) = parse_owner_command(text) else {
         return false;
     };
+    tracing::info!(
+        chat_id = message.chat.id.0,
+        command = "owner",
+        "owner command recognized"
+    );
     let dir = queue_dir(cfg);
     let owner = cfg.owner_id;
     let title = command_approval_title(
@@ -371,7 +381,11 @@ pub(crate) async fn improvement_notifier(bot: Bot, cfg: Arc<Settings>) {
                 .map(|chat| chat.api_key.as_str())
                 .unwrap_or("");
             if !key.is_empty() && text.contains(key) {
-                tracing::warn!("Improvement update withheld: credential in output");
+                tracing::warn!(
+                    chat_id = update.chat_id,
+                    status = %update.status,
+                    "Improvement update withheld: credential in output"
+                );
             } else {
                 let markup = notification_markup(&update.value);
                 if update.status == "proposed" && markup.is_none() {
@@ -380,6 +394,11 @@ pub(crate) async fn improvement_notifier(bot: Bot, cfg: Arc<Settings>) {
                 if !send_update(&bot, update.chat_id, &text, markup).await {
                     continue;
                 }
+                tracing::info!(
+                    chat_id = update.chat_id,
+                    status = %update.status,
+                    "improvement update sent"
+                );
             }
             let marker = update.marker;
             let _ = run_blocking(move || atomic_write(&marker, b"1")).await;

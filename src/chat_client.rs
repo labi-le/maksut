@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::search::{SearchClient, SearchProvider};
+use crate::{llm_request_built, llm_response};
 use crate::{
     CompleteError, Completion, CompletionRequest, ResearchRegistry, TitleResult, ToolRegistry,
     Usage,
@@ -315,12 +316,14 @@ impl ChatConfig {
         }
     }
 
+    #[tracing::instrument(skip_all, fields(model = %self.model, max_tokens = request.max_tokens, tools = with_tools, reasoning = with_reasoning))]
     pub(crate) async fn complete_with(
         &self,
         request: &CompletionRequest<'_>,
         with_tools: bool,
         with_reasoning: bool,
     ) -> Result<Completion, CompleteError> {
+        let complete_started = time::Instant::now();
         let mut body = serde_json::Map::new();
         body.insert("model".to_owned(), json!(self.model));
         body.insert("messages".to_owned(), json!(request.messages));
@@ -348,8 +351,10 @@ impl ChatConfig {
             + Duration::from_secs(config().llm.request_timeout_secs)
                 .saturating_mul(policy_attempts);
         let payload = body.to_string();
+        llm_request_built(request.messages.len(), payload.len(), request.temperature);
         let mut attempt = 0u32;
         loop {
+            tracing::debug!(attempt = attempt + 1, "llm attempt");
             let remaining = deadline.saturating_duration_since(time::Instant::now());
             if remaining.is_zero() {
                 return Err(CompleteError::Timeout);
@@ -363,7 +368,7 @@ impl ChatConfig {
             let response = match time::timeout(remaining, request.send()).await {
                 Ok(Ok(response)) => response,
                 Ok(Err(err)) => {
-                    tracing::warn!("LLM transport error (attempt {}): {err}", attempt + 1);
+                    tracing::warn!(attempt = attempt + 1, error = %err, "LLM transport error");
                     if policy.retry_transport && policy.should_retry(attempt) {
                         if !policy.backoff(attempt, deadline).await {
                             return Err(CompleteError::Timeout);
@@ -374,7 +379,7 @@ impl ChatConfig {
                     return Err(CompleteError::Failed);
                 }
                 Err(_) => {
-                    tracing::warn!("LLM request timed out (attempt {})", attempt + 1);
+                    tracing::warn!(attempt = attempt + 1, "LLM request timed out");
                     if policy.retry_transport && policy.should_retry(attempt) {
                         if !policy.backoff(attempt, deadline).await {
                             return Err(CompleteError::Timeout);
@@ -387,11 +392,15 @@ impl ChatConfig {
             };
             let status = response.status();
             if matches!(status.as_u16(), 400 | 404 | 422) {
-                tracing::warn!("LLM rejected request with HTTP {}", status.as_u16());
+                tracing::warn!(status = status.as_u16(), "LLM rejected request");
                 return Err(CompleteError::Rejected);
             }
             if !status.is_success() {
-                tracing::warn!("LLM HTTP {} (attempt {})", status.as_u16(), attempt + 1);
+                tracing::warn!(
+                    status = status.as_u16(),
+                    attempt = attempt + 1,
+                    "LLM HTTP error"
+                );
                 if policy.retry_status(status.as_u16()) && policy.should_retry(attempt) {
                     if !policy.backoff(attempt, deadline).await {
                         return Err(CompleteError::Status(status.as_u16()));
@@ -419,14 +428,35 @@ impl ChatConfig {
                 }
             };
             if bytes.len() > max_bytes {
+                tracing::warn!(
+                    bytes = bytes.len(),
+                    max = max_bytes,
+                    "LLM response too large"
+                );
                 return Err(CompleteError::Failed);
             }
-            let value: Value = serde_json::from_slice(&bytes).map_err(|_| CompleteError::Failed)?;
+            let value: Value = match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(_) => {
+                    tracing::warn!(bytes = bytes.len(), "LLM response is not JSON");
+                    return Err(CompleteError::Failed);
+                }
+            };
             let usage = Usage::from_response(&value);
-            let mut msg = value
-                .pointer("/choices/0/message")
-                .cloned()
-                .ok_or(CompleteError::Failed)?;
+            let Some(mut msg) = value.pointer("/choices/0/message").cloned() else {
+                tracing::warn!("LLM response has no message");
+                return Err(CompleteError::Failed);
+            };
+            let finish_reason = value
+                .pointer("/choices/0/finish_reason")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            llm_response(
+                complete_started,
+                finish_reason,
+                usage.map(|u| u.input_tokens as u64),
+                usage.map(|u| u.output_tokens as u64),
+            );
             if with_reasoning && self.reasoning_effort.is_some() {
                 if let (Some(obj), Some(fr)) = (
                     msg.as_object_mut(),

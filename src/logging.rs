@@ -145,6 +145,9 @@ fn ring() -> MutexGuard<'static, Option<LogRing>> {
 /// the bounded in-process ring that `read_logs` serves, so the container needs
 /// no docker socket to read its own output.
 pub(crate) fn init() -> Result<(), String> {
+    if tracing::dispatcher::has_been_set() {
+        return Ok(());
+    }
     let level = match config().log.level.as_str() {
         "trace" => LevelFilter::TRACE,
         "debug" => LevelFilter::DEBUG,
@@ -168,7 +171,9 @@ pub(crate) fn init() -> Result<(), String> {
         .with_ansi(false)
         .with_writer(LogTee)
         .try_init()
-        .map_err(|_| "logging subscriber was already installed".to_string())
+        .map_err(|_| "logging subscriber was already installed".to_string())?;
+    tracing::info!(level = %config().log.level, "logging installed");
+    Ok(())
 }
 
 struct LogTee;

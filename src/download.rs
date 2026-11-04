@@ -105,17 +105,33 @@ pub(crate) async fn images_metadata_with_refresh(
     }
 }
 
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip_all, fields(host = url.host_str(), timeout_ms = duration.as_millis() as u64))]
 pub(crate) async fn download_with_timeout(
     url: &Url,
     cfg: &Settings,
     dir: &Path,
     duration: Duration,
 ) -> Result<DownloadResult, DownloadFailure> {
+    let started = time::Instant::now();
+    tracing::info!(
+        host = url.host_str(),
+        timeout_ms = duration.as_millis() as u64,
+        "download started"
+    );
     let deadline = time::Instant::now() + duration;
     let mut refresh_events = Vec::new();
     if let Some(path) = &cfg.cookies_file {
-        if validate_cookie_jar_async(path).await.is_err()
+        let valid = validate_cookie_jar_async(path).await.is_ok();
+        tracing::debug!(host = url.host_str(), valid, "cookie jar checked");
+        if !valid {
+            tracing::warn!(
+                host = url.host_str(),
+                source = cookie_source(url),
+                refresh_configured = cfg.cookie_refresh_url.is_some(),
+                "cookie jar invalid before download"
+            );
+        }
+        if !valid
             && (!request_cookie_refresh(cfg, cookie_source(url), deadline, &mut refresh_events)
                 .await
                 || validate_cookie_jar_async(path).await.is_err())
@@ -186,6 +202,11 @@ pub(crate) async fn download_with_timeout(
                     && (retryable_output(dir, cfg.max_media_bytes).await || video_has_files)
                 {
                     let mut refresh_events = Vec::new();
+                    tracing::warn!(
+                        host = url.host_str(),
+                        source = "twitter",
+                        "refreshing cookies after auth failure"
+                    );
                     if request_cookie_refresh(cfg, "twitter", deadline, &mut refresh_events).await {
                         if time::Instant::now() >= deadline {
                             twitter_events.append(&mut refresh_events);
@@ -347,6 +368,31 @@ pub(crate) async fn download_with_timeout(
         }
     }
     result.twitter_photos_failed = twitter_failed;
+    let files = result.selection.files.len();
+    if let Some(diagnostic) = result.diagnostic {
+        if files == 0 {
+            tracing::error!(
+                stage = diagnostic.stage,
+                detail = diagnostic.detail,
+                exit_code = diagnostic.exit_code,
+                "download failed"
+            );
+        } else {
+            tracing::warn!(
+                stage = diagnostic.stage,
+                detail = diagnostic.detail,
+                files,
+                "download partially failed"
+            );
+        }
+    }
+    tracing::info!(
+        host = url.host_str(),
+        files = result.selection.files.len(),
+        skipped = result.selection.skipped,
+        elapsed_ms = elapsed_ms(started),
+        "download finished"
+    );
     Ok(result)
 }
 

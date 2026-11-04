@@ -30,16 +30,27 @@ pub(crate) async fn delete_source(bot: &Bot, message: &Message) {
     if bot
         .delete_message(message.chat.id, message.id)
         .await
-        .is_err()
+        .is_ok()
     {
-        let warning = if message.chat.is_private() {
-            "Медиа доставлены, но не удалось удалить исходную ссылку."
-        } else {
-            "Медиа доставлены, но не удалось удалить исходную ссылку. Назначьте бота администратором группы с правом удаления сообщений (can_delete_messages)."
-        };
-        let _ = bot
-            .send_message(message.chat.id, warning)
-            .disable_notification(true)
-            .await;
+        tracing::debug!(
+            chat_id = message.chat.id.0,
+            message_id = message.id.0,
+            "source message deleted"
+        );
+        return;
     }
+    let warning = if message.chat.is_private() {
+        "Медиа доставлены, но не удалось удалить исходную ссылку."
+    } else {
+        "Медиа доставлены, но не удалось удалить исходную ссылку. Назначьте бота администратором группы с правом удаления сообщений (can_delete_messages)."
+    };
+    let _ = bot
+        .send_message(message.chat.id, warning)
+        .disable_notification(true)
+        .await;
+    tracing::debug!(
+        chat_id = message.chat.id.0,
+        message_id = message.id.0,
+        "source link deletion warning sent"
+    );
 }

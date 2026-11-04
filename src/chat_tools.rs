@@ -82,6 +82,7 @@ pub(crate) fn ack_lookup(ctx: &ToolContext<'_>) {
     }
 }
 
+#[tracing::instrument(skip_all, fields(tool = tracing::field::Empty, chat_id = ctx.chat_id.0))]
 pub(crate) async fn run_tool_call(
     call: &Value,
     ctx: &ToolContext<'_>,
@@ -96,6 +97,9 @@ pub(crate) async fn run_tool_call(
         .and_then(Value::as_str)
         .unwrap_or("{}");
     let args = serde_json::from_str::<Value>(arguments).unwrap_or(Value::Null);
+    tracing::Span::current().record("tool", name);
+    tool_call_args(&args, arguments.len());
+    tracing::trace!(args = %sanitize_json_text(&args), "tool arguments");
     let query = args.get("query").and_then(Value::as_str).unwrap_or("");
     let sticker_name = args.get("name").and_then(Value::as_str).unwrap_or("");
     let sticker_id = args.get("sticker_id").and_then(Value::as_str).unwrap_or("");
@@ -108,9 +112,10 @@ pub(crate) async fn run_tool_call(
     let blocked_in_research = kind
         .is_some_and(|kind| !kind.allowed_in_research(state.allow_sticker, state.allow_feature));
     if state.research.used && blocked_in_research {
+        tracing::warn!(tool = name, reason = "research mode", "tool denied");
         return "в режиме ресерча инструмент недоступен".to_string();
     }
-    match kind {
+    let outcome = match kind {
         None if !ctx.owner
             && matches!(
                 name,
@@ -602,5 +607,7 @@ pub(crate) async fn run_tool_call(
                 }
             }
         }
-    }
+    };
+    tool_result(name, outcome.len());
+    outcome
 }

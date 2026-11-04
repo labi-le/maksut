@@ -107,17 +107,24 @@ pub(crate) async fn require_video_audio(
     .await;
     match result {
         Ok(Ok(status)) if status.success() => {
-            if std::str::from_utf8(&output)
+            let audio_streams = std::str::from_utf8(&output)
                 .ok()
-                .and_then(|text| text.trim().parse::<u32>().ok())
-                .is_some()
-            {
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            tracing::debug!(
+                audio_streams = u8::from(audio_streams.is_some()),
+                "video audio probed"
+            );
+            if audio_streams.is_some() {
                 Ok(())
             } else {
+                tracing::warn!("video has no audio stream");
                 Err("Видео без аудиодорожки не отправляется: в выбранном файле нет звука.".into())
             }
         }
-        _ => Err("Не удалось проверить аудиодорожку видео".into()),
+        _ => {
+            tracing::debug!("video audio probe failed");
+            Err("Не удалось проверить аудиодорожку видео".into())
+        }
     }
 }
 
@@ -138,6 +145,13 @@ pub(crate) async fn convert_video(
     deadline: time::Instant,
 ) -> Result<tempfile::TempPath, String> {
     check_video_dimensions(dimensions)?;
+    let started = time::Instant::now();
+    tracing::info!(
+        width = dimensions.0,
+        height = dimensions.1,
+        max_bytes,
+        "video conversion started"
+    );
     let parent = path
         .parent()
         .ok_or("Не удалось подготовить конвертацию")?
@@ -180,6 +194,7 @@ pub(crate) async fn convert_video(
         tokio::select! {
             result = process.wait() => {
                 if !result.is_ok_and(|status| status.success()) {
+                    tracing::error!("ffmpeg conversion failed");
                     return Err("Не удалось конвертировать видео".into());
                 }
                 break None;
@@ -197,6 +212,7 @@ pub(crate) async fn convert_video(
         }
     };
     if let Some(reason) = failure {
+        tracing::error!(reason, "video conversion aborted");
         // ffmpeg still holds the output open, so it must be reaped before unlinking.
         process.stop();
         let _ = process.wait().await;
@@ -210,5 +226,12 @@ pub(crate) async fn convert_video(
     if size == 0 || size > max_bytes {
         return Err("Видео после конвертации пустое или превышает лимит размера".into());
     }
+    tracing::info!(
+        width = dimensions.0,
+        height = dimensions.1,
+        bytes = size,
+        elapsed_ms = elapsed_ms(started),
+        "video conversion finished"
+    );
     Ok(output)
 }

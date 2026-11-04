@@ -96,8 +96,12 @@ impl DownloadProcess {
     pub(crate) fn new(mut child: tokio::process::Child) -> std::io::Result<Self> {
         #[cfg(unix)]
         let group = match child.id() {
-            Some(pid) => pid as i32,
+            Some(pid) => {
+                tracing::debug!(pid, "download process started");
+                pid as i32
+            }
             None => {
+                tracing::warn!("spawned child has no process id");
                 return Err(std::io::Error::other("spawned child has no process id"));
             }
         };
@@ -233,6 +237,7 @@ impl DownloadProcess {
         if self.reaped {
             return;
         }
+        tracing::debug!("process stopped");
         #[cfg(unix)]
         // yt-dlp owns a new process group; ffmpeg and other children inherit it.
         unsafe {
@@ -245,12 +250,18 @@ impl DownloadProcess {
     }
 
     pub(crate) async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        let started = time::Instant::now();
         let child = self
             .child
             .as_mut()
             .ok_or_else(|| std::io::Error::other("child process already reaped"))?;
         let status = child.wait().await?;
         self.reaped = true;
+        tracing::debug!(
+            exit_code = status.code(),
+            elapsed_ms = elapsed_ms(started),
+            "process exited"
+        );
         Ok(status)
     }
 
@@ -271,7 +282,10 @@ impl DownloadProcess {
             }
         };
         let text = std::str::from_utf8(&bytes).unwrap_or("");
-        stderr_detail(text)
+        let label = stderr_detail(text);
+        tracing::trace!(bytes = bytes.len(), "stderr captured");
+        tracing::debug!(label, "stderr classified");
+        label
     }
 }
 

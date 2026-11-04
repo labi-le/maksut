@@ -9,6 +9,7 @@ use crate::chat_text::{fence_open_ticks, is_fence_close, shorten};
 use crate::config::config;
 use crate::permitted_ipv4;
 use crate::prelude::*;
+use crate::{telegraph_fallback, telegraph_finished, telegraph_start};
 use serde_json::{json, Value};
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
@@ -435,12 +436,16 @@ pub(crate) async fn publish_telegraph_with_prompt(
     prompt: &str,
     text: &str,
 ) -> Option<String> {
+    let started = time::Instant::now();
+    let host = base.host_str();
     if !article_is_publishable(text) {
+        tracing::debug!(host, "telegraph publish skipped: credential");
         return None;
     }
     let client = telegraph_client(base).await?;
     let token = ensure_telegraph_token(&client, base).await?;
     let (mut t, nodes) = telegraph_document(text);
+    telegraph_start(host, text.chars().count(), nodes.len());
     if t == "Maksut" {
         if let Some(p) = prompt_title(prompt) {
             t = p;
@@ -456,7 +461,9 @@ pub(crate) async fn publish_telegraph_with_prompt(
         "return_content": false
     });
     let resp = post_telegraph_json(&client, base.join("createPage").ok()?, &payload).await?;
-    valid_telegraph_url(resp.pointer("/result/url").and_then(Value::as_str)?)
+    let url = valid_telegraph_url(resp.pointer("/result/url").and_then(Value::as_str)?)?;
+    telegraph_finished(host, started);
+    Some(url)
 }
 
 /// Publishes `text` to `https://api.telegra.ph` when `text` exceeds
@@ -469,7 +476,10 @@ pub(crate) async fn maybe_publish_reply(prompt: &str, text: &str) -> Option<Stri
         return None;
     }
     let base = Url::parse(&format!("https://{TELEGRAPH_HOST}/")).ok()?;
-    let page_url = publish_telegraph_with_prompt(&base, prompt, text).await?;
+    let Some(page_url) = publish_telegraph_with_prompt(&base, prompt, text).await else {
+        telegraph_fallback(text.chars().count());
+        return None;
+    };
     Some(format_telegraph_chat_message(text, &page_url))
 }
 

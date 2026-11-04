@@ -7,11 +7,26 @@ pub(crate) async fn download_videos(
     dir: &Path,
     duration: Duration,
 ) -> Result<DownloadResult, DownloadFailure> {
+    let started = time::Instant::now();
+    tracing::info!(host = url.host_str(), "video download started");
+    let finish = |files: usize| {
+        tracing::info!(
+            host = url.host_str(),
+            files,
+            elapsed_ms = elapsed_ms(started),
+            "video download finished"
+        )
+    };
     let deadline = time::Instant::now() + duration;
     let selected_format = if youtube_single_video(url) {
         match probe_youtube_mp4(url, cfg, dir, deadline).await {
             Ok(format) => format,
             Err(detail) => {
+                tracing::warn!(
+                    host = url.host_str(),
+                    detail,
+                    "youtube probe rejected video"
+                );
                 return Err(DownloadFailure::new(
                     "Видео слишком длинное или это стрим; такие ролики не скачиваются.".into(),
                     "metadata",
@@ -25,7 +40,14 @@ pub(crate) async fn download_videos(
     let (mut first, interrupted) =
         download_videos_attempt(url, cfg, dir, deadline, selected_format.as_deref())
             .await
-            .map_err(|reason| DownloadFailure::new(reason, "yt-dlp", "Download failed"))?;
+            .map_err(|reason| {
+                tracing::error!(
+                    host = url.host_str(),
+                    stage = "yt-dlp",
+                    "video download failed"
+                );
+                DownloadFailure::new(reason, "yt-dlp", "Download failed")
+            })?;
     if let Some(diagnostic) = first.diagnostic {
         trace_event(&mut first.events, diagnostic);
     }
@@ -60,6 +82,7 @@ pub(crate) async fn download_videos(
                             retry.diagnostic = first.diagnostic;
                         }
                         retry.events = first.events;
+                        finish(retry.selection.files.len());
                         return Ok(retry);
                     }
                     Err(reason) => trace_event(
@@ -81,6 +104,7 @@ pub(crate) async fn download_videos(
                 );
             }
         }
+        finish(first.selection.files.len());
         return Ok(first);
     }
     if selected_format.is_none()
@@ -91,6 +115,7 @@ pub(crate) async fn download_videos(
         || time::Instant::now() >= deadline
         || !retryable_output(dir, cfg.max_media_bytes).await
     {
+        finish(first.selection.files.len());
         return Ok(first);
     }
     if let Err(reason) = clear_failed_attempt(dir).await {
@@ -101,6 +126,7 @@ pub(crate) async fn download_videos(
         });
     }
     if time::Instant::now() >= deadline {
+        finish(first.selection.files.len());
         return Ok(first);
     }
     trace_event(
@@ -125,6 +151,7 @@ pub(crate) async fn download_videos(
         trace_event(&mut first.events, diagnostic);
     }
     fallback.events = first.events;
+    finish(fallback.selection.files.len());
     Ok(fallback)
 }
 
@@ -135,6 +162,12 @@ pub(crate) async fn download_videos_attempt(
     deadline: time::Instant,
     selected_format: Option<&str>,
 ) -> Result<(DownloadResult, bool), String> {
+    let started = time::Instant::now();
+    tracing::info!(
+        host = url.host_str(),
+        format = selected_format,
+        "video attempt started"
+    );
     let cookie = process_cookies_async(cfg.cookies_file.as_deref(), dir).await?;
     let manifest = dir.join("completed-paths.txt");
     let output = dir.join("%(playlist_index|0)s-%(id)s-%(autonumber)s.%(ext)s");
@@ -214,6 +247,12 @@ pub(crate) async fn download_videos_attempt(
     let child = cmd
         .spawn()
         .map_err(|_| "Не удалось запустить yt-dlp".to_string())?;
+    let binary = cfg
+        .ytdlp_bin
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("yt-dlp");
+    tracing::debug!(binary, "download process spawned");
     let mut process =
         DownloadProcess::new(child).map_err(|_| "Не удалось запустить yt-dlp".to_string())?;
     process.capture_stdout();
@@ -287,6 +326,14 @@ pub(crate) async fn download_videos_attempt(
             },
             exit_code: status.code(),
         });
+    tracing::info!(
+        files = selection.files.len(),
+        skipped = selection.skipped,
+        size_skipped = selection.size_skipped,
+        exit_code = status.code(),
+        elapsed_ms = elapsed_ms(started),
+        "video attempt finished"
+    );
     Ok((
         DownloadResult {
             selection,

@@ -70,17 +70,16 @@ pub(crate) fn address_kind(
     text: &str,
     bot_username: &str,
 ) -> AddressKind {
-    if message.chat.is_private() || reply_to_bot(message, bot_username) {
-        return AddressKind::Explicit;
-    }
-    if explicit_mention(text, bot_username) {
-        return AddressKind::Explicit;
-    }
-    if named_content_left(text, bot_username) {
+    let private = message.chat.is_private() || reply_to_bot(message, bot_username);
+    let kind = if private || explicit_mention(text, bot_username) {
+        AddressKind::Explicit
+    } else if named_content_left(text, bot_username) {
         AddressKind::Named
     } else {
         AddressKind::None
-    }
+    };
+    tracing::trace!(kind = ?kind, text_len = text.chars().count(), "address kind");
+    kind
 }
 
 /// True when at least one bot name form is present and stripping it leaves
