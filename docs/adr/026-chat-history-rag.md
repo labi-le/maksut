@@ -40,10 +40,14 @@ them instead of comparing incompatible dimensions.
 
 The call goes through the existing OpenAI-compatible endpoint
 (`POST {llm.base_url}/embeddings`) with `memory.embedding_model`, reusing the
-chat HTTP client, API key, and timeout. A provider-supplied `index` orders the
-result; every vector must match `memory.embedding_dim` when it is nonzero.
-Setting `memory.embedding_model = ""` disables the whole feature and both tools
-report that plainly.
+chat HTTP client, API key, and `config().retry.llm` policy: transport errors and
+`retry.llm.retry_statuses` get exponential backoff inside one deadline, exactly
+like `complete_with`. A provider-supplied `index` orders the result; every
+vector must match `memory.embedding_dim` when it is nonzero. Setting
+`memory.embedding_model = ""` disables the whole feature and both tools report
+that plainly. The transport lives in `src/chat_embeddings.rs` (`embed_texts`),
+retrieval in `src/chat_search.rs`, so `src/chat_client.rs` stays inside the
+500-line module bound.
 
 Local ONNX inference was the requested first choice. It is not in this change:
 `fastembed`/`ort` would add a dependency (a `Cargo.lock` edit) and the
@@ -133,5 +137,7 @@ still filtered at query time.
 Covered in `src/chat_embeddings_test.rs`: indexing skips flagged rows, a query
 never crosses chats, low scores are dropped, recent messages are merged and
 deduplicated, author and date filters apply, foreign-model rows are re-embedded,
-coverage is reported, malformed arguments are rejected. Mutating the chat filter
-or the flags filter in the query makes those tests fail.
+coverage is reported, malformed arguments are rejected, the transport retries a
+transient status and does not retry a rejected request, and dispatch scopes the
+tool to the current turn. Mutating the chat filter, the flags filter, or the
+retry loop makes those tests fail.

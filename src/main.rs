@@ -70,6 +70,7 @@ pub(crate) use tool_registry::*;
 mod memory;
 pub(crate) use memory::*;
 mod chat_embeddings;
+mod chat_search;
 mod code_inspect;
 mod improve_commands;
 mod improve_store;

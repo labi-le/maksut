@@ -1,6 +1,6 @@
 # Free chat, memory, stickers, and tools
 
-> **When to read this:** Read before touching `src/chat.rs`, `src/chat_client.rs`, `src/chat_media.rs`, `src/chat_status.rs`, `src/chat_style.rs`, `src/chat_text.rs`, `src/chat_tools.rs`, `src/snapcompact.rs`, `src/telegraph.rs`, `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs`, `src/browser.rs`, `src/research.rs`, `src/tool_registry.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`, `src/read_url_text.rs`, `src/memory.rs`, `src/chat_embeddings.rs`, `src/stickers.rs`, or `tools/build_sticker_index.py`.
+> **When to read this:** Read before touching `src/chat.rs`, `src/chat_client.rs`, `src/chat_media.rs`, `src/chat_status.rs`, `src/chat_style.rs`, `src/chat_text.rs`, `src/chat_tools.rs`, `src/snapcompact.rs`, `src/telegraph.rs`, `src/search.rs`, `src/search_providers.rs`, `src/search_parse.rs`, `src/browser.rs`, `src/research.rs`, `src/tool_registry.rs`, `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`, `src/read_url_text.rs`, `src/memory.rs`, `src/chat_embeddings.rs`, `src/chat_search.rs`, `src/stickers.rs`, or `tools/build_sticker_index.py`.
 
 ## Module map
 

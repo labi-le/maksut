@@ -65,13 +65,13 @@ pub(crate) struct FeatureProposal {
 
 #[derive(Clone)]
 pub(crate) struct ChatConfig {
-    base_url: Url,
+    pub(crate) base_url: Url,
     pub(crate) system_prompt: Arc<str>,
     pub(crate) api_key: String,
     pub(crate) model: String,
     pub(crate) search: Arc<SearchClient>,
     pub(crate) tools: ToolRegistry,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     requests: Arc<Semaphore>,
     last_reply: Arc<Mutex<HashMap<UserId, time::Instant>>>,
     pub(crate) last_research: Arc<Mutex<HashMap<UserId, time::Instant>>>,
@@ -211,91 +211,6 @@ impl ChatConfig {
             url.path().trim_end_matches('/')
         ));
         Ok(url)
-    }
-
-    /// One OpenAI-compatible `/embeddings` call. Vectors come back in request
-    /// order; a provider-supplied `index` wins when present. The response is
-    /// capped by `memory.embedding_max_response_bytes`, and every vector must
-    /// match `memory.embedding_dim` when that is set, so a model or provider
-    /// swap cannot silently store incompatible dimensions.
-    pub(crate) async fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
-        let model = config().memory.embedding_model.trim();
-        if model.is_empty() {
-            return Err("embeddings disabled".into());
-        }
-        let mut url = self.base_url.clone();
-        url.set_path(&format!("{}/embeddings", url.path().trim_end_matches('/')));
-        let body = json!({"model": model, "input": inputs});
-        let timeout = Duration::from_secs(config().llm.request_timeout_secs);
-        let response = time::timeout(
-            timeout,
-            self.http
-                .post(url)
-                .bearer_auth(&self.api_key)
-                .header("content-type", "application/json")
-                .json(&body)
-                .send(),
-        )
-        .await
-        .map_err(|_| "embeddings timeout".to_string())?
-        .map_err(|_| "embeddings transport".to_string())?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("embeddings HTTP {}", status.as_u16()));
-        }
-        let bytes = time::timeout(timeout, response.bytes())
-            .await
-            .map_err(|_| "embeddings timeout".to_string())?
-            .map_err(|_| "embeddings transport".to_string())?;
-        if bytes.len() > config().memory.embedding_max_response_bytes {
-            return Err("embeddings response too large".into());
-        }
-        let value: Value =
-            serde_json::from_slice(&bytes).map_err(|_| "embeddings json".to_string())?;
-        let data = value
-            .get("data")
-            .and_then(Value::as_array)
-            .ok_or_else(|| "embeddings data".to_string())?;
-        if data.len() != inputs.len() {
-            return Err("embeddings count mismatch".into());
-        }
-        let dim = config().memory.embedding_dim;
-        let mut vectors = vec![Vec::new(); inputs.len()];
-        for (position, item) in data.iter().enumerate() {
-            let index = item
-                .get("index")
-                .and_then(Value::as_u64)
-                .map(|index| index as usize)
-                .unwrap_or(position);
-            let slot = vectors
-                .get_mut(index)
-                .ok_or_else(|| "embeddings index out of range".to_string())?;
-            let raw = item
-                .get("embedding")
-                .and_then(Value::as_array)
-                .ok_or_else(|| "embeddings vector".to_string())?;
-            if raw.len() > 8192 {
-                return Err("embeddings dimension out of range".into());
-            }
-            if dim > 0 && raw.len() != dim {
-                return Err(format!("embeddings dimension {} != {dim}", raw.len()));
-            }
-            let mut vector = Vec::with_capacity(raw.len());
-            for value in raw {
-                let value = value
-                    .as_f64()
-                    .ok_or_else(|| "embeddings value".to_string())?;
-                vector.push(value as f32);
-            }
-            *slot = vector;
-        }
-        if vectors.iter().any(Vec::is_empty) {
-            return Err("embeddings missing vector".into());
-        }
-        Ok(vectors)
     }
 
     /// One model call with no tools, for the internal title generator.

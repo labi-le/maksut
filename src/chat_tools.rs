@@ -379,12 +379,12 @@ pub(crate) async fn run_tool_call(
             if state.chat_search_calls >= config().chat.chat_search_calls_per_reply {
                 "лимит поиска по истории на ответ".to_string()
             } else {
-                match crate::chat_embeddings::parse_search_request(&args) {
+                match crate::chat_search::parse_search_request(&args) {
                     Err(reason) => reason,
                     Ok(request) => {
                         state.chat_search_calls += 1;
                         ack_lookup(ctx);
-                        match crate::chat_embeddings::search(
+                        match crate::chat_search::search(
                             ctx.chat,
                             ctx.pool,
                             ctx.chat_id,

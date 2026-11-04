@@ -1,6 +1,5 @@
-use crate::chat_embeddings::{
-    coverage, index_pending, parse_search_request, reindex, search, SearchRequest,
-};
+use crate::chat_embeddings::{coverage, embed_texts, index_pending, reindex};
+use crate::chat_search::{parse_search_request, search, SearchRequest};
 use crate::test_support::*;
 use crate::*;
 use serde_json::json;
@@ -46,6 +45,27 @@ async fn recorded(pool: &SqlitePool, chat: i64, author: i64, name: &str, text: &
 
 fn request(args: Value) -> SearchRequest {
     parse_search_request(&args).unwrap()
+}
+
+#[tokio::test]
+async fn embeddings_retry_a_transient_status() {
+    let server =
+        mock_server_with_statuses(vec![(503, "{}".into()), (200, embeddings_body(&[axis(0)]))])
+            .await;
+    let chat = chat_config(&server.url).await;
+    let vectors = embed_texts(&chat, &["котики".to_string()]).await.unwrap();
+    assert_eq!(vectors.len(), 1);
+    assert_eq!(server.requests.lock().unwrap().len(), 2);
+    server.task.abort();
+}
+
+#[tokio::test]
+async fn embeddings_do_not_retry_a_rejected_request() {
+    let server = mock_server_with_statuses(vec![(400, "{}".into())]).await;
+    let chat = chat_config(&server.url).await;
+    assert!(embed_texts(&chat, &["котики".to_string()]).await.is_err());
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
+    server.task.abort();
 }
 
 #[tokio::test]
