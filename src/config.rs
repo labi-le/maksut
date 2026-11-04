@@ -15,6 +15,7 @@ pub(crate) struct Config {
     pub(crate) telegram: TelegramSettings,
     pub(crate) chat: ChatSettings,
     pub(crate) github: GithubSettings,
+    pub(crate) voice: VoiceSettings,
     pub(crate) llm: LlmSettings,
     pub(crate) router: RouterSettings,
     pub(crate) search: SearchSettings,

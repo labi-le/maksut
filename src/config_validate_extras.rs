@@ -1,6 +1,21 @@
 use crate::config_validate::{count, non_empty, signed, usize_count};
 use crate::*;
 
+impl VoiceSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        count("voice.timeout_secs", self.timeout_secs, 5, 120)?;
+        count("voice.max_bytes", self.max_bytes, 65_536, 20_971_520)?;
+        count("voice.max_duration_secs", self.max_duration_secs, 5, 1800)?;
+        usize_count(
+            "voice.max_transcript_chars",
+            self.max_transcript_chars,
+            100,
+            8000,
+        )?;
+        usize_count("voice.concurrency", self.concurrency, 1, 16)
+    }
+}
+
 impl CodeSettings {
     pub(crate) fn validate(&self) -> Result<(), String> {
         count(

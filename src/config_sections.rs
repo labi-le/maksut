@@ -96,6 +96,20 @@ pub(crate) struct GithubSettings {
     pub(crate) cache_ttl_secs: u64,
 }
 
+/// Speech-to-text for voice and audio attachments. `enabled` and a non-empty
+/// `model` are both required before any download or model call happens.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct VoiceSettings {
+    pub(crate) enabled: bool,
+    pub(crate) model: String,
+    pub(crate) timeout_secs: u64,
+    pub(crate) max_bytes: u64,
+    pub(crate) max_duration_secs: u64,
+    pub(crate) max_transcript_chars: usize,
+    pub(crate) concurrency: usize,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LlmSettings {
@@ -426,6 +440,16 @@ defaults!(GithubSettings {
     timeout_secs: 15,
     max_response_bytes: 512 * 1024,
     cache_ttl_secs: 60,
+});
+
+defaults!(VoiceSettings {
+    enabled: true,
+    model: "gemini-2.5-flash".into(),
+    timeout_secs: 25,
+    max_bytes: 4 * 1024 * 1024,
+    max_duration_secs: 300,
+    max_transcript_chars: 2000,
+    concurrency: 2,
 });
 
 defaults!(LlmSettings {

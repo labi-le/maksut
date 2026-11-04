@@ -110,18 +110,6 @@ async fn reply_with_sticker(bot: &Bot, message: &Message, cfg: &Settings, text: 
     true
 }
 
-fn user_record<'a>(
-    message: &Message,
-    author_id: i64,
-    author_name: &'a str,
-    text: &'a str,
-    flags: i64,
-) -> RecordMessage<'a> {
-    RecordMessage::new(message.chat.id, author_id, author_name, "user", text)
-        .with_message_id(Some(message.id.0))
-        .with_flags(flags)
-}
-
 pub(crate) async fn handle_message(
     bot: Bot,
     message: Message,
@@ -131,7 +119,13 @@ pub(crate) async fn handle_message(
     let current_media = message_image(&message);
     let reply_media = message.reply_to_message().and_then(message_image);
     let has_sticker = message.sticker().is_some();
-    if text.is_empty() && current_media.is_none() && reply_media.is_none() && !has_sticker {
+    let has_voice = crate::voice::pending(&message);
+    if text.is_empty()
+        && current_media.is_none()
+        && reply_media.is_none()
+        && !has_sticker
+        && !has_voice
+    {
         return Ok(());
     }
     let Some(sender) = message.from.as_ref().filter(|user| !user.is_bot) else {
@@ -140,6 +134,29 @@ pub(crate) async fn handle_message(
     let owner = sender.id == cfg.owner_id;
     let sender_name = display_author_name(sender);
     let forwarded = message.forward_origin().is_some();
+    let now = crate::memory::unix_now();
+    let reply_ignored =
+        crate::memory::reply_ignored(&cfg.database, &message, cfg.owner_id, now).await;
+    // Ignored senders and non-owner private chats never reach the model, so
+    // paying for a download and an STT call before those gates would be waste.
+    let sender_ignored = crate::memory::sender_ignored(&cfg.database, sender.id, owner, now).await;
+    // The transcript is untrusted user input: it becomes the message text
+    // before `detect_flags` and `injection_attempt` run.
+    let typed = text;
+    let voice = crate::voice::turn(
+        &bot,
+        &message,
+        &cfg,
+        typed,
+        owner,
+        sender_ignored,
+        reply_ignored,
+    )
+    .await;
+    let text = voice.text.as_deref().unwrap_or(typed);
+    // A quoted transcript belongs to its author, so its markers must not get
+    // the person quoting it ignored; typed text still counts on its own.
+    let injection_text = if voice.quoted { typed } else { text };
     let raw_log_text = if text.trim().is_empty() {
         "[вложение]"
     } else {
@@ -156,24 +173,19 @@ pub(crate) async fn handle_message(
     } else {
         raw_log_text
     };
-    let now = crate::memory::unix_now();
+    if sender_ignored {
+        let flags = flags | crate::memory::FLAG_IGNORED;
+        let _ = crate::memory::record_message(
+            &cfg.database,
+            user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
+        )
+        .await;
+        return Ok(());
+    }
     if !owner {
-        match crate::memory::ignore_active(&cfg.database, sender.id, now).await {
-            Ok(true) => {
-                let flags = flags | crate::memory::FLAG_IGNORED;
-                let _ = crate::memory::record_message(
-                    &cfg.database,
-                    user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
-                )
-                .await;
-                return Ok(());
-            }
-            Ok(false) => {}
-            Err(error) => tracing::error!("Ignore lookup failed: {error}"),
-        }
         let group = message.chat.is_group() || message.chat.is_supergroup();
         if group
-            && crate::memory_guard::injection_attempt(raw_log_text)
+            && crate::memory_guard::injection_attempt(injection_text)
             && group_enabled(&cfg.database, message.chat.id)
                 .await
                 .is_ok_and(|enabled| enabled)
@@ -198,32 +210,21 @@ pub(crate) async fn handle_message(
             return Ok(());
         }
     }
-    let reply_author = message
-        .reply_to_message()
-        .and_then(|reply| reply.from.as_ref());
-    let reply_ignored = match reply_author {
-        Some(user) if user.id != cfg.owner_id => {
-            crate::memory::ignore_active(&cfg.database, user.id, now)
-                .await
-                .is_ok_and(|active| active)
-        }
-        _ => false,
-    };
     let media = current_media.or_else(|| (!reply_ignored).then_some(reply_media).flatten());
     if text.is_empty() && media.is_none() && !has_sticker {
         return Ok(());
     }
-    if text.trim_start().starts_with('/') {
+    if typed.trim_start().starts_with('/') {
         flags |= crate::memory::FLAG_JUNK;
         let _ = crate::memory::record_message(
             &cfg.database,
             user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
         )
         .await;
-        if crate::self_improve::handle_improve(&bot, &message, &cfg, text).await {
+        if crate::self_improve::handle_improve(&bot, &message, &cfg, typed).await {
             return Ok(());
         }
-        if let Some(command) = maksut_command(text, &cfg.bot_username) {
+        if let Some(command) = maksut_command(typed, &cfg.bot_username) {
             handle_command(&bot, &message, &cfg, command).await;
         }
         return Ok(());
@@ -246,12 +247,12 @@ pub(crate) async fn handle_message(
     .await;
     if owner
         && message.chat.is_private()
-        && crate::self_improve::handle_owner_text(&bot, &message, &cfg, text).await
+        && crate::self_improve::handle_owner_text(&bot, &message, &cfg, typed).await
     {
         return Ok(());
     }
-    let Some(url) = first_link(text) else {
-        if reply_with_sticker(&bot, &message, &cfg, text).await {
+    let Some(url) = first_link(typed) else {
+        if reply_with_sticker(&bot, &message, &cfg, typed).await {
             return Ok(());
         }
         reply_with_chat(
