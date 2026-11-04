@@ -21,6 +21,7 @@ mod config_sections;
 mod config_validate;
 mod config_validate_extras;
 mod config_validate_media;
+mod log_redact;
 mod logging;
 mod retry;
 pub(crate) use config::*;
@@ -254,6 +255,8 @@ mod chat_status_test;
 #[cfg(test)]
 mod chat_test;
 #[cfg(test)]
+mod chat_tools_test;
+#[cfg(test)]
 mod code_inspect_test;
 #[cfg(test)]
 mod config_test;
@@ -283,6 +286,10 @@ mod image_fetch_test;
 mod images_test;
 #[cfg(test)]
 mod links_test;
+#[cfg(test)]
+mod log_redact_test;
+#[cfg(test)]
+mod logging_test;
 #[cfg(test)]
 mod media_cache_test;
 #[cfg(test)]

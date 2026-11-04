@@ -5,6 +5,10 @@ use crate::*;
 pub(crate) struct LogSettings {
     /// trace, debug, info, warn, error or off.
     pub(crate) level: String,
+    /// Newest formatted lines kept in the in-process ring behind `read_logs`.
+    pub(crate) ring_lines: usize,
+    /// Hard byte cap for that ring; a few multi-line events can exhaust it.
+    pub(crate) ring_max_bytes: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -66,6 +70,7 @@ pub(crate) struct ChatSettings {
     pub(crate) read_url_calls_per_reply: usize,
     pub(crate) inspect_code_calls_per_reply: usize,
     pub(crate) chat_profile_calls_per_reply: usize,
+    pub(crate) read_logs_calls_per_reply: usize,
     pub(crate) remember_self_calls_per_reply: usize,
     pub(crate) search_calls_per_reply: usize,
     pub(crate) research_calls_per_reply: usize,
@@ -330,7 +335,9 @@ macro_rules! defaults {
 }
 
 defaults!(LogSettings {
-    level: "info".into()
+    level: "info".into(),
+    ring_lines: 500,
+    ring_max_bytes: 262_144
 });
 
 defaults!(PathSettings {
@@ -385,6 +392,7 @@ defaults!(ChatSettings {
     read_url_calls_per_reply: 5,
     inspect_code_calls_per_reply: 5,
     chat_profile_calls_per_reply: 3,
+    read_logs_calls_per_reply: 3,
     remember_self_calls_per_reply: 3,
     search_calls_per_reply: 6,
     research_calls_per_reply: 1,

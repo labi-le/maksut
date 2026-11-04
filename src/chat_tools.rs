@@ -33,6 +33,7 @@ pub(crate) struct ToolState {
     pub(crate) chat_search_calls: usize,
     pub(crate) inspect_calls: usize,
     pub(crate) chat_profile_calls: usize,
+    pub(crate) read_logs_calls: usize,
     pub(crate) inspect_announced: bool,
     pub(crate) remember_calls: usize,
     pub(crate) usage_calls: usize,
@@ -59,6 +60,7 @@ impl ToolState {
             chat_search_calls: 0,
             inspect_calls: 0,
             chat_profile_calls: 0,
+            read_logs_calls: 0,
             inspect_announced: false,
             remember_calls: 0,
             usage_calls: 0,
@@ -246,6 +248,45 @@ pub(crate) async fn run_tool_call(
                 })
                 .await
                 .unwrap_or_else(|_| "Снимок кода недоступен.".to_owned())
+            }
+        }
+        Some(ToolKind::ReadLogs) => {
+            if !ctx.owner {
+                "read_logs доступен только владельцу бота".to_string()
+            } else if state.read_logs_calls >= config().chat.read_logs_calls_per_reply {
+                "лимит чтения логов на ответ".to_string()
+            } else {
+                let level = args
+                    .get("level")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let target = args
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let grep = args
+                    .get("grep")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if level.is_some_and(|value| !crate::logging::level_recognised(value)) {
+                    "level должен быть trace, debug, info, warn или error".to_string()
+                } else {
+                    state.read_logs_calls += 1;
+                    ack_lookup(ctx);
+                    let limit = args
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .map_or(crate::logging::DEFAULT_LOG_LIMIT, |value| value as usize);
+                    crate::logging::read_logs(&crate::logging::LogQuery {
+                        level,
+                        target,
+                        grep,
+                        limit,
+                    })
+                }
             }
         }
         Some(ToolKind::ChatProfile) => {

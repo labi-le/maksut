@@ -16,6 +16,11 @@
 [log]
 # trace, debug, info, warn, error, off
 level = "info"
+# In-process ring behind the owner-only read_logs tool: newest formatted lines
+# and their byte cap. Overflow drops the oldest records (50..=5000 lines,
+# 16384..=4194304 bytes).
+ring_lines = 500
+ring_max_bytes = 262144
 
 [paths]
 database_url = "sqlite:///data/maksut.db"
@@ -68,6 +73,7 @@ image_timeout_secs = 20
 read_url_calls_per_reply = 5
 inspect_code_calls_per_reply = 5
 chat_profile_calls_per_reply = 3
+read_logs_calls_per_reply = 3
 remember_self_calls_per_reply = 3
 search_calls_per_reply = 6
 research_calls_per_reply = 1
