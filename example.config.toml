@@ -73,6 +73,8 @@ search_calls_per_reply = 6
 research_calls_per_reply = 1
 chat_search_calls_per_reply = 3
 usage_stats_calls_per_reply = 3
+research_status_calls_per_reply = 3
+research_cancel_calls_per_reply = 2
 
 [llm]
 base_url = "https://llm.labile.cc/v1"
@@ -118,6 +120,8 @@ query_min_chars = 3
 query_max_chars = 200
 question_max_chars = 500
 url_max_chars = 2048
+max_tracked = 256
+tracked_ttl_secs = 3600
 
 [read_url]
 max_bytes = 2097152

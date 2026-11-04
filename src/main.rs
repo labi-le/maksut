@@ -67,6 +67,10 @@ mod telegraph;
 pub(crate) use reaction::*;
 mod research;
 pub(crate) use research::*;
+mod research_dossier;
+mod research_registry;
+pub(crate) use research_registry::*;
+mod research_tools;
 mod search;
 mod search_parse;
 mod search_providers;
@@ -289,6 +293,8 @@ mod memory_test;
 mod process_test;
 #[cfg(test)]
 mod read_url_test;
+#[cfg(test)]
+mod research_registry_test;
 #[cfg(test)]
 mod research_test;
 #[cfg(test)]

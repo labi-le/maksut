@@ -28,7 +28,14 @@ impl ResearchSettings {
             10,
             4000,
         )?;
-        usize_count("research.url_max_chars", self.url_max_chars, 32, 8192)
+        usize_count("research.url_max_chars", self.url_max_chars, 32, 8192)?;
+        usize_count("research.max_tracked", self.max_tracked, 1, 4096)?;
+        count(
+            "research.tracked_ttl_secs",
+            self.tracked_ttl_secs,
+            1,
+            86_400,
+        )
     }
 }
 

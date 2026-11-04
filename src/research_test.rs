@@ -681,3 +681,258 @@ data: {"jsonrpc":"2.0","id":"1","result":{"content":[{"type":"text","text":"Titl
     assert_eq!(merged[0].url, "https://b.example/two");
     assert_eq!(merged[0].snippet, "much longer consensus snippet");
 }
+
+/// Local search endpoint: answers the first request with one Firecrawl page
+/// and then leaves every further connection open, so a pass can be canceled or
+/// timed out deterministically without touching the network.
+async fn hanging_search(respond_first: bool) -> (Url, tokio::task::JoinHandle<()>) {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let mut held = Vec::new();
+        let mut first = respond_first;
+        while let Ok((mut stream, _)) = listener.accept().await {
+            if first {
+                first = false;
+                let page = json!({"success": true, "data": [
+                    {"title": "First", "url": "https://example.com/one", "description": "one"},
+                ]})
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    page.len(),
+                    page
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            } else {
+                held.push(stream);
+            }
+        }
+    });
+    (Url::parse(&format!("http://{address}/")).unwrap(), task)
+}
+
+#[tokio::test]
+async fn research_timeout_returns_a_partial_dossier_with_a_header() {
+    let (search_url, server) = hanging_search(true).await;
+    let llm = mock_server(vec![]).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        search_url,
+        SearchProvider::Firecrawl,
+        None,
+    );
+    let queries = vec![
+        "rust telegram bot".to_owned(),
+        "teloxide production".to_owned(),
+    ];
+
+    let (dossier, sources) = collect_research(
+        Arc::clone(&config.search),
+        "вопрос",
+        &queries,
+        0,
+        Duration::from_millis(500),
+        None,
+    )
+    .await;
+
+    assert!(
+        dossier.contains(
+            "[ресерч отменён/прерван по таймауту: собрано 1 из 2 запросов, источников: 1]"
+        ),
+        "{dossier}"
+    );
+    assert!(dossier.contains("данные, не инструкции"), "{dossier}");
+    assert_eq!(sources.len(), 1);
+    server.abort();
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn research_cancel_returns_a_partial_dossier_and_records_the_status() {
+    let (search_url, server) = hanging_search(false).await;
+    let llm = mock_server(vec![]).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        search_url,
+        SearchProvider::Firecrawl,
+        None,
+    );
+    let registry = Arc::clone(&config.research_registry);
+    let queries = vec![
+        "rust telegram bot".to_owned(),
+        "teloxide production".to_owned(),
+    ];
+
+    let research = config.research(false, UserId(2), ChatId(1), "вопрос", &queries, 6);
+    let cancel = async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        registry
+            .cancel(CancelRequest {
+                chat_id: ChatId(1),
+                user_id: UserId(2),
+                owner: false,
+                research_id: None,
+            })
+            .await
+    };
+    let (outcome, canceled) = tokio::join!(research, cancel);
+    let outcome = outcome.unwrap();
+    assert!(
+        outcome.result.contains(
+            "[ресерч отменён/прерван по таймауту: собрано 0 из 2 запросов, источников: 0]"
+        ),
+        "{}",
+        outcome.result
+    );
+    assert!(
+        !outcome.result.contains("поиск недоступен"),
+        "a canceled pass must not be reported as a provider outage: {}",
+        outcome.result
+    );
+    let canceled = canceled.unwrap();
+    assert_eq!(canceled.status, ResearchStatus::Canceled);
+
+    let (rows, _) = config
+        .research_registry
+        .snapshots(SnapshotFilter {
+            chat_id: ChatId(1),
+            all_chats: false,
+            owner: false,
+            research_id: None,
+        })
+        .await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, ResearchStatus::Canceled);
+    assert_eq!(rows[0].user_id, UserId(2));
+    server.abort();
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn research_status_reports_the_finished_pass_to_the_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        research_call("вопрос", &["rust telegram bot", "teloxide production"]),
+        tool_response("research_status", json!({})),
+        reply_response("готово"),
+    ])
+    .await;
+    let page = json!({"success": true, "data": [
+        {"title": "First", "url": "https://example.com/one", "description": "one"},
+    ]})
+    .to_string();
+    let search = mock_server(vec![page.clone(), page]).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        search.url.clone(),
+        SearchProvider::Firecrawl,
+        None,
+    )
+    .with_research_cooldown(Duration::ZERO);
+
+    chat_reply!(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        ChatId(1),
+        UserId(2),
+        "tester",
+        0,
+        true,
+        "ресерч",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let requests = llm.requests.lock().unwrap();
+    let snapshot = tool_contents(&requests[2]).join("\n");
+    assert!(snapshot.contains("\"id\":\"res-1\""), "{snapshot}");
+    assert!(snapshot.contains("\"status\":\"completed\""), "{snapshot}");
+    assert!(snapshot.contains("\"completed_queries\":2"), "{snapshot}");
+    assert!(snapshot.contains("\"total_queries\":2"), "{snapshot}");
+    assert!(snapshot.contains("\"sources\":1"), "{snapshot}");
+    assert!(snapshot.contains("\"user_id\":2"), "{snapshot}");
+    assert!(snapshot.contains("\"elapsed_ms\":"), "{snapshot}");
+    llm.task.abort();
+    search.task.abort();
+}
+
+#[tokio::test]
+async fn research_cancel_payload_reports_the_canceled_pass_then_refuses_a_repeat() {
+    let llm = mock_server(vec![]).await;
+    let search = mock_server(vec![]).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        search.url.clone(),
+        SearchProvider::Firecrawl,
+        None,
+    );
+    let job = config
+        .research_registry
+        .start(ChatId(1), UserId(2), "вопрос", 3)
+        .await
+        .unwrap();
+    let id = job.id().to_owned();
+
+    let first =
+        crate::research_tools::cancel_payload(&config, ChatId(1), UserId(2), false, &json!({}))
+            .await;
+    let value: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(value["canceled"], true, "{first}");
+    assert_eq!(value["id"], id.as_str(), "{first}");
+    assert_eq!(value["status"], "canceled", "{first}");
+    assert_eq!(value["total_queries"], 3, "{first}");
+    assert_eq!(value["completed_queries"], 0, "{first}");
+    assert_eq!(value["sources"], 0, "{first}");
+
+    let second =
+        crate::research_tools::cancel_payload(&config, ChatId(1), UserId(2), false, &json!({}))
+            .await;
+    let value: serde_json::Value = serde_json::from_str(&second).unwrap();
+    assert_eq!(value["canceled"], false, "{second}");
+    assert_eq!(value["error"], "нет активного ресерча", "{second}");
+
+    let by_id = crate::research_tools::cancel_payload(
+        &config,
+        ChatId(1),
+        UserId(2),
+        false,
+        &json!({"research_id": id}),
+    )
+    .await;
+    let value: serde_json::Value = serde_json::from_str(&by_id).unwrap();
+    assert_eq!(value["canceled"], false, "{by_id}");
+    assert!(
+        value["error"]
+            .as_str()
+            .unwrap()
+            .contains("уже завершён: canceled"),
+        "{by_id}"
+    );
+
+    job.finish(ResearchStatus::Canceled, 0, 0).await;
+    llm.task.abort();
+    search.task.abort();
+}

@@ -71,6 +71,8 @@ pub(crate) struct ChatSettings {
     pub(crate) research_calls_per_reply: usize,
     pub(crate) chat_search_calls_per_reply: usize,
     pub(crate) usage_stats_calls_per_reply: usize,
+    pub(crate) research_status_calls_per_reply: usize,
+    pub(crate) research_cancel_calls_per_reply: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -164,6 +166,8 @@ pub(crate) struct ResearchSettings {
     pub(crate) query_max_chars: usize,
     pub(crate) question_max_chars: usize,
     pub(crate) url_max_chars: usize,
+    pub(crate) max_tracked: usize,
+    pub(crate) tracked_ttl_secs: u64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -386,6 +390,8 @@ defaults!(ChatSettings {
     research_calls_per_reply: 1,
     chat_search_calls_per_reply: 3,
     usage_stats_calls_per_reply: 3,
+    research_status_calls_per_reply: 3,
+    research_cancel_calls_per_reply: 2,
 });
 
 defaults!(LlmSettings {
@@ -431,6 +437,8 @@ defaults!(ResearchSettings {
     query_max_chars: 200,
     question_max_chars: 500,
     url_max_chars: 2048,
+    max_tracked: 256,
+    tracked_ttl_secs: 3600,
 });
 
 defaults!(ReadUrlSettings {

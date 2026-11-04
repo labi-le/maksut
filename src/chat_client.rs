@@ -1,6 +1,9 @@
 use crate::prelude::*;
 use crate::search::{SearchClient, SearchProvider};
-use crate::{CompleteError, Completion, CompletionRequest, TitleResult, ToolRegistry, Usage};
+use crate::{
+    CompleteError, Completion, CompletionRequest, ResearchRegistry, TitleResult, ToolRegistry,
+    Usage,
+};
 use serde_json::json;
 use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
@@ -75,6 +78,7 @@ pub(crate) struct ChatConfig {
     requests: Arc<Semaphore>,
     last_reply: Arc<Mutex<HashMap<UserId, time::Instant>>>,
     pub(crate) last_research: Arc<Mutex<HashMap<UserId, time::Instant>>>,
+    pub(crate) research_registry: Arc<ResearchRegistry>,
     last_active: Arc<Mutex<HashMap<ChatId, time::Instant>>>,
     pub(crate) recent_urls: Arc<Mutex<HashMap<ChatId, RecentUrls>>>,
     pub(crate) profile_cache: Arc<Mutex<crate::chat_profile::ProfileCache>>,
@@ -123,6 +127,7 @@ impl ChatConfig {
             requests: Arc::new(Semaphore::new(settings.chat.concurrency)),
             last_reply: Arc::new(Mutex::new(HashMap::new())),
             last_research: Arc::new(Mutex::new(HashMap::new())),
+            research_registry: Arc::new(ResearchRegistry::from_config()),
             last_active: Arc::new(Mutex::new(HashMap::new())),
             recent_urls: Arc::new(Mutex::new(HashMap::new())),
             profile_cache: Arc::new(Mutex::new(crate::chat_profile::ProfileCache::default())),

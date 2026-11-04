@@ -957,7 +957,7 @@ async fn non_owner_can_use_stickers_and_inspect_code_but_not_remember_self() {
         .iter()
         .any(|message| message["role"] == "system"
             && message["content"].as_str().unwrap().contains(
-                "Доступные инструменты: web_search, research, read_url, propose_feature, feature_status, inspect_code, chat_profile, usage_stats, find_stickers, send_sticker"
+                "Доступные инструменты: web_search, research, research_status, research_cancel, read_url, propose_feature, feature_status, inspect_code, chat_profile, usage_stats, find_stickers, send_sticker"
             )));
     let second = body_of(&requests[1]);
     let tool_outputs = tool_contents(&requests[1]);

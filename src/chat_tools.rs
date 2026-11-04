@@ -26,6 +26,8 @@ pub(crate) struct ToolState {
     pub(crate) status_view: String,
     pub(crate) research: ResearchState,
     pub(crate) research_calls: usize,
+    pub(crate) research_status_calls: usize,
+    pub(crate) research_cancel_calls: usize,
     pub(crate) search_calls: usize,
     pub(crate) read_url_calls: usize,
     pub(crate) chat_search_calls: usize,
@@ -50,6 +52,8 @@ impl ToolState {
             status_view: "details".to_owned(),
             research: ResearchState::default(),
             research_calls: 0,
+            research_status_calls: 0,
+            research_cancel_calls: 0,
             search_calls: 0,
             read_url_calls: 0,
             chat_search_calls: 0,
@@ -372,7 +376,14 @@ pub(crate) async fn run_tool_call(
                 ack_lookup(ctx);
                 match ctx
                     .chat
-                    .research(ctx.owner, ctx.user_id, question, &queries, budget)
+                    .research(
+                        ctx.owner,
+                        ctx.user_id,
+                        ctx.chat_id,
+                        question,
+                        &queries,
+                        budget,
+                    )
                     .await
                 {
                     Ok(outcome) => {
@@ -462,6 +473,29 @@ pub(crate) async fn run_tool_call(
                     .clamp(1, 20);
                 ack_lookup(ctx);
                 crate::chat_embeddings::reindex(ctx.chat, ctx.pool, passes).await
+            }
+        }
+        Some(ToolKind::ResearchStatus) => {
+            if state.research_status_calls >= config().chat.research_status_calls_per_reply {
+                "лимит статусов ресерча на ответ".to_string()
+            } else {
+                state.research_status_calls += 1;
+                crate::research_tools::status_payload(ctx.chat, ctx.chat_id, ctx.owner, &args).await
+            }
+        }
+        Some(ToolKind::ResearchCancel) => {
+            if state.research_cancel_calls >= config().chat.research_cancel_calls_per_reply {
+                "лимит отмены ресерча на ответ".to_string()
+            } else {
+                state.research_cancel_calls += 1;
+                crate::research_tools::cancel_payload(
+                    ctx.chat,
+                    ctx.chat_id,
+                    ctx.user_id,
+                    ctx.owner,
+                    &args,
+                )
+                .await
             }
         }
         Some(ToolKind::FindStickers) => {
