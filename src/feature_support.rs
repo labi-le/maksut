@@ -21,6 +21,20 @@ impl FeatureRequest {
         )
     }
 
+    pub(crate) fn is_text_reply(&self) -> bool {
+        matches!(self.method.as_str(), "sendmessage" | "sendrichmessage")
+    }
+
+    /// Reply body as delivered: `text` for `sendMessage`, the HTML flavour of
+    /// `rich_message` for `sendRichMessage`.
+    pub(crate) fn reply_text(&self) -> &str {
+        if self.method == "sendrichmessage" {
+            self.fields["rich_message"]["html"].as_str().unwrap_or("")
+        } else {
+            self.fields["text"].as_str().unwrap_or("")
+        }
+    }
+
     pub(crate) fn media(&self) -> Vec<Value> {
         if self.method == "sendmediagroup" {
             return self.fields["media"]

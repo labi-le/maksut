@@ -346,6 +346,19 @@ pub(crate) async fn recording_bot(
     Arc<tokio::sync::Mutex<Vec<(String, String)>>>,
     tokio::task::JoinHandle<()>,
 ) {
+    recording_bot_with_rich(video_ok, delete_ok, true).await
+}
+
+#[cfg(unix)]
+pub(crate) async fn recording_bot_with_rich(
+    video_ok: bool,
+    delete_ok: bool,
+    rich_ok: bool,
+) -> (
+    Bot,
+    Arc<tokio::sync::Mutex<Vec<(String, String)>>>,
+    tokio::task::JoinHandle<()>,
+) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
@@ -364,6 +377,7 @@ pub(crate) async fn recording_bot(
             let body = String::from_utf8_lossy(&body).into_owned();
             let response = if (api_method_is(&path, "sendVideo") && !video_ok)
                 || (api_method_is(&path, "deleteMessage") && !delete_ok)
+                || (api_method_is(&path, "sendRichMessage") && !rich_ok)
             {
                 r#"{"ok":false,"error_code":400,"description":"Bad Request: not enough rights"}"#
             } else if api_method_is(&path, "deleteMessage")

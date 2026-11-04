@@ -787,7 +787,7 @@ async fn feature_confirmation_reply_carries_buttons() {
         .snapshot()
         .await
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(messages.len(), 1, "one text reply");
     let markup = &messages[0].fields["reply_markup"];
@@ -844,14 +844,14 @@ async fn sticker_only_reply_keeps_the_decision_buttons() {
     );
     let messages: Vec<_> = requests
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(
         messages.len(),
         1,
         "buttons must not be lost with a sticker-only reply"
     );
-    assert_eq!(messages[0].fields["text"], "жми кнопку");
+    assert_eq!(messages[0].reply_text(), "жми кнопку");
     assert_eq!(
         messages[0].fields["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
         "approve:plan-1"
@@ -932,10 +932,10 @@ async fn group_chat_replies_with_reply_parameters_and_continues_room_dialogue_un
         .snapshot()
         .await
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(first.len(), 1);
-    assert_eq!(first[0].fields["text"], "шизик с шизиком сошёлся, классика");
+    assert_eq!(first[0].reply_text(), "шизик с шизиком сошёлся, классика");
     assert_eq!(first[0].fields["reply_parameters"]["message_id"], 101);
     let first_raw = llm.requests.lock().unwrap()[0].clone();
     assert!(
@@ -963,10 +963,10 @@ async fn group_chat_replies_with_reply_parameters_and_continues_room_dialogue_un
         .snapshot()
         .await
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(second.len(), 1);
-    assert_eq!(second[0].fields["text"], "тут без вариантов, оба хороши");
+    assert_eq!(second[0].reply_text(), "тут без вариантов, оба хороши");
     assert_eq!(second[0].fields["reply_parameters"]["message_id"], 102);
     api.clear().await;
 
@@ -997,12 +997,11 @@ async fn group_chat_replies_with_reply_parameters_and_continues_room_dialogue_un
         .snapshot()
         .await
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(third_sent.len(), 1);
-    assert_eq!(third_sent[0].fields["parse_mode"], "HTML");
     assert_eq!(
-        third_sent[0].fields["text"],
+        third_sent[0].reply_text(),
         "ничего там нет:\n<pre><code class=\"language-rust\">let ok = 1 &lt; 2;</code></pre>"
     );
     api.clear().await;
@@ -1155,14 +1154,14 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         .snapshot()
         .await
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(
         replies.len(),
         1,
         "follow-up reply to a photo message must not be dropped"
     );
-    assert_eq!(replies[0].fields["text"], "на скрине в 13 раз дешевле");
+    assert_eq!(replies[0].reply_text(), "на скрине в 13 раз дешевле");
     let second_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[1]);
     let second_content = &second_body["messages"].as_array().unwrap().last().unwrap()["content"];
     assert!(
@@ -1240,14 +1239,14 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         .snapshot()
         .await
         .into_iter()
-        .filter(|request| request.method == "sendmessage")
+        .filter(|request| request.is_text_reply())
         .collect();
     assert_eq!(
         photo_replies.len(),
         1,
         "own photo posted during active follow-up window must reach the model"
     );
-    assert_eq!(photo_replies[0].fields["text"], "99.7% зига и 0.3% си");
+    assert_eq!(photo_replies[0].reply_text(), "99.7% зига и 0.3% си");
     assert!(
         api.snapshot()
             .await

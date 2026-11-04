@@ -119,7 +119,15 @@ pub(crate) async fn reply_with_chat(
                     }
                     (false, None) => "лпмка временно отвалилась, повтори ещё раз".to_owned(),
                 };
-                let _ = send_chat_chunk(bot, message.chat.id, message.id, &msg, true, None).await;
+                let _ = crate::rich_message::send_chat_chunk(
+                    bot,
+                    message.chat.id,
+                    message.id,
+                    &msg,
+                    true,
+                    None,
+                )
+                .await;
             }
         }
     }
@@ -138,9 +146,9 @@ async fn deliver_chat_reply(
         return;
     }
     let mut delivered = false;
-    if let Some(id) = reply.sticker {
+    if let Some(id) = &reply.sticker {
         if let Ok(s) = bot
-            .send_sticker(message.chat.id, InputFile::file_id(id))
+            .send_sticker(message.chat.id, InputFile::file_id(id.clone()))
             .reply_parameters(ReplyParameters::new(message.id).allow_sending_without_reply())
             .disable_notification(true)
             .await
@@ -154,28 +162,19 @@ async fn deliver_chat_reply(
         .as_ref()
         .and_then(crate::self_improve::decision_markup);
     let p = message.text().or_else(|| message.caption()).unwrap_or("");
-    let mut out = None;
-    let mut chunks = if followup && is_pass_reply(&reply.text) {
-        Vec::new()
-    } else {
-        if !reply.proposed_feature {
-            out = crate::telegraph::maybe_publish_reply(p, &reply.text).await;
-        }
-        split_message(out.as_deref().unwrap_or(&reply.text))
-    };
-    if chunks.is_empty() && markup.is_some() {
-        chunks.push("жми кнопку".to_owned());
-    }
-    let mut first_id = None;
-    for (i, chunk) in chunks.iter().enumerate() {
-        let m = (i == 0).then(|| markup.clone()).flatten();
-        if let Some(id) = send_chat_chunk(bot, message.chat.id, message.id, chunk, i == 0, m).await
-        {
-            delivered = true;
-            first_id.get_or_insert(id);
-        }
-    }
-    if let Some(id) = first_id {
+    let skip_text = followup && is_pass_reply(&reply.text);
+    let delivered_text = crate::rich_message::deliver_reply_text(
+        bot,
+        message.chat.id,
+        message.id,
+        p,
+        skip_text,
+        markup,
+        &reply,
+    )
+    .await;
+    delivered |= delivered_text.is_some();
+    if let Some((id, out)) = delivered_text {
         let rec = match out.as_deref() {
             Some(published) => published,
             None if reply.text.trim().is_empty() => "жми кнопку",
@@ -188,39 +187,6 @@ async fn deliver_chat_reply(
     } else if delivered {
         chat.note_reply(message.chat.id).await;
     }
-}
-
-async fn send_chat_chunk(
-    bot: &Bot,
-    chat_id: ChatId,
-    reply_to: MessageId,
-    chunk: &str,
-    first: bool,
-    markup: Option<teloxide::types::InlineKeyboardMarkup>,
-) -> Option<i32> {
-    let apply = |mut req: teloxide::requests::JsonRequest<teloxide::payloads::SendMessage>| {
-        if first {
-            req =
-                req.reply_parameters(ReplyParameters::new(reply_to).allow_sending_without_reply());
-            if let Some(m) = markup.clone() {
-                req = req.reply_markup(m);
-            }
-        }
-        req.disable_notification(true)
-    };
-    if let Some(html) = render_telegram_html(chunk) {
-        match apply(bot.send_message(chat_id, html).parse_mode(ParseMode::Html)).await {
-            Ok(s) => return Some(s.id.0),
-            Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => {}
-            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref m)))
-                if m.contains("can't parse entities") => {}
-            Err(_) => return None,
-        }
-    }
-    apply(bot.send_message(chat_id, chunk.to_owned()))
-        .await
-        .ok()
-        .map(|s| s.id.0)
 }
 
 pub(crate) async fn chat_reply_with_proposal(

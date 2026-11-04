@@ -52,6 +52,7 @@ pub(crate) use chat_tools::*;
 mod chat_urls;
 mod jev;
 mod reaction;
+mod rich_message;
 mod router;
 pub(crate) use router::*;
 mod typing;
