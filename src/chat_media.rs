@@ -58,8 +58,13 @@ static IMAGE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
 /// One client for every attachment download: building a fresh one per photo
 /// message threw away the connection pool and its TLS setup.
 static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    let cfg = config();
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(config().chat.image_timeout_secs))
+        .connect_timeout(Duration::from_secs(cfg.telegram.connect_timeout_secs))
+        .timeout(Duration::from_secs(cfg.chat.image_timeout_secs))
+        .pool_idle_timeout(Duration::from_secs(cfg.telegram.pool_idle_timeout_secs))
+        .tcp_keepalive(Duration::from_secs(cfg.telegram.tcp_keepalive_secs))
+        .tcp_nodelay(true)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });

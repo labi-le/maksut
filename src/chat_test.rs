@@ -2813,3 +2813,57 @@ async fn rich_reply_falls_back_to_send_message_when_bot_api_rejects_it() {
     assert_eq!(body["parse_mode"], "HTML");
     server.abort();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rich_reply_retries_transient_disconnect_before_falling_back() {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let records = Arc::clone(&requests);
+    let server = tokio::spawn(async move {
+        let mut attempt = 0usize;
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (head, body) = read_bot_api_request(&mut stream).await;
+            let path = head.split_whitespace().nth(1).unwrap().to_owned();
+            let body = String::from_utf8_lossy(&body).into_owned();
+            records.lock().await.push((path, body));
+            attempt += 1;
+            if attempt == 1 {
+                drop(stream);
+                continue;
+            }
+            let response = r#"{"ok":true,"result":{"message_id":99,"date":1700000000,"chat":{"id":1,"type":"private"}}}"#;
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            );
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            stream.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+    let bot = Bot::new("123:dummy").set_api_url(Url::parse(&format!("http://{address}/")).unwrap());
+    let reply = ChatReply {
+        text: "ответ после обрыва".into(),
+        ..Default::default()
+    };
+    let id = crate::rich_message::deliver_reply_text(
+        &bot,
+        ChatId(1),
+        MessageId(7),
+        "привет",
+        false,
+        None,
+        &reply,
+    )
+    .await;
+    assert_eq!(id, Some((99, None)));
+    let calls = requests.lock().await;
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert!(api_method_is(&calls[0].0, "sendRichMessage"));
+    assert!(api_method_is(&calls[1].0, "sendRichMessage"));
+    server.abort();
+}

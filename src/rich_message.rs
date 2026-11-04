@@ -45,6 +45,29 @@ pub(crate) fn prefer_rich(prompt: &str, text: &str) -> bool {
         && !crate::telegraph::explicit_article_request(prompt)
 }
 
+/// `true` when a Telegram Bot API error is a transient transport or rate-limit
+/// failure worth one short retry on a fresh connection.
+pub(crate) fn retryable_telegram_error(error: &teloxide::RequestError) -> Option<Duration> {
+    match error {
+        teloxide::RequestError::Network(_) => Some(Duration::from_millis(200)),
+        teloxide::RequestError::RetryAfter(wait) => {
+            Some(wait.duration().min(Duration::from_secs(5)))
+        }
+        teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref msg))
+            if msg.contains("500")
+                || msg.contains("502")
+                || msg.contains("503")
+                || msg.contains("504") =>
+        {
+            Some(Duration::from_millis(200))
+        }
+        teloxide::RequestError::Api(_)
+        | teloxide::RequestError::MigrateToChatId(_)
+        | teloxide::RequestError::InvalidJson { .. }
+        | teloxide::RequestError::Io(_) => None,
+    }
+}
+
 /// Sends `text` as one rich message whose HTML comes from
 /// `render_telegram_html`, or from an escaped copy of `text` when it carries no
 /// Telegram markup. Returns the message id, or `None` on any API error so the
@@ -56,26 +79,42 @@ pub(crate) async fn send_rich_reply(
     text: &str,
     markup: Option<teloxide::types::InlineKeyboardMarkup>,
 ) -> Option<i32> {
-    let payload = SendRichMessage {
-        chat_id,
-        rich_message: InputRichMessage {
-            html: crate::chat_text::render_telegram_html(text)
-                .unwrap_or_else(|| crate::chat_text::escape_html(text)),
-        },
-        reply_parameters: Some(ReplyParameters::new(reply_to).allow_sending_without_reply()),
-        reply_markup: markup,
-        disable_notification: true,
-    };
-    match teloxide::requests::JsonRequest::new(bot.clone(), payload).await {
-        Ok(message) => Some(message.id.0),
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                "sendRichMessage failed, falling back to sendMessage"
-            );
-            None
+    let html = crate::chat_text::render_telegram_html(text)
+        .unwrap_or_else(|| crate::chat_text::escape_html(text));
+    for attempt in 0..2u8 {
+        let payload = SendRichMessage {
+            chat_id,
+            rich_message: InputRichMessage { html: html.clone() },
+            reply_parameters: Some(ReplyParameters::new(reply_to).allow_sending_without_reply()),
+            reply_markup: markup.clone(),
+            disable_notification: true,
+        };
+        match teloxide::requests::JsonRequest::new(bot.clone(), payload).await {
+            Ok(message) => return Some(message.id.0),
+            Err(error) => {
+                if attempt == 0 {
+                    if let Some(delay) = retryable_telegram_error(&error) {
+                        tracing::warn!(
+                            timeout = matches!(&error, teloxide::RequestError::Network(err) if err.is_timeout()),
+                            connect = matches!(&error, teloxide::RequestError::Network(err) if err.is_connect()),
+                            "sendRichMessage transient error, retrying"
+                        );
+                        time::sleep(delay).await;
+                        continue;
+                    }
+                }
+                tracing::warn!(
+                    timeout =
+                        matches!(&error, teloxide::RequestError::Network(err) if err.is_timeout()),
+                    connect =
+                        matches!(&error, teloxide::RequestError::Network(err) if err.is_connect()),
+                    "sendRichMessage failed, falling back to sendMessage"
+                );
+                return None;
+            }
         }
     }
+    None
 }
 
 /// Sends the reply text rich-first, then falls back to `telegra.ph` publishing
@@ -141,16 +180,57 @@ pub(crate) async fn send_chat_chunk(
         req.disable_notification(true)
     };
     if let Some(html) = render_telegram_html(chunk) {
-        match apply(bot.send_message(chat_id, html).parse_mode(ParseMode::Html)).await {
-            Ok(s) => return Some(s.id.0),
-            Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => {}
-            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref m)))
-                if m.contains("can't parse entities") => {}
-            Err(_) => return None,
+        for attempt in 0..2u8 {
+            match apply(
+                bot.send_message(chat_id, html.clone())
+                    .parse_mode(ParseMode::Html),
+            )
+            .await
+            {
+                Ok(s) => return Some(s.id.0),
+                Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => break,
+                Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(ref m)))
+                    if m.contains("can't parse entities") =>
+                {
+                    break;
+                }
+                Err(err) => {
+                    if attempt == 0 {
+                        if let Some(delay) = retryable_telegram_error(&err) {
+                            time::sleep(delay).await;
+                            continue;
+                        }
+                    }
+                    tracing::warn!(
+                        timeout =
+                            matches!(&err, teloxide::RequestError::Network(e) if e.is_timeout()),
+                        connect =
+                            matches!(&err, teloxide::RequestError::Network(e) if e.is_connect()),
+                        "sendMessage HTML failed"
+                    );
+                    return None;
+                }
+            }
         }
     }
-    apply(bot.send_message(chat_id, chunk.to_owned()))
-        .await
-        .ok()
-        .map(|s| s.id.0)
+    for attempt in 0..2u8 {
+        match apply(bot.send_message(chat_id, chunk.to_owned())).await {
+            Ok(s) => return Some(s.id.0),
+            Err(err) => {
+                if attempt == 0 {
+                    if let Some(delay) = retryable_telegram_error(&err) {
+                        time::sleep(delay).await;
+                        continue;
+                    }
+                }
+                tracing::warn!(
+                    timeout = matches!(&err, teloxide::RequestError::Network(e) if e.is_timeout()),
+                    connect = matches!(&err, teloxide::RequestError::Network(e) if e.is_connect()),
+                    "sendMessage plain failed"
+                );
+                return None;
+            }
+        }
+    }
+    None
 }

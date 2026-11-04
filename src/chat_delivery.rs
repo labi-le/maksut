@@ -24,14 +24,29 @@ pub(crate) async fn deliver_chat_reply(
     }
     let mut delivered = false;
     if let Some(id) = &reply.sticker {
-        if let Ok(s) = bot
-            .send_sticker(message.chat.id, InputFile::file_id(id.clone()))
-            .reply_parameters(ReplyParameters::new(message.id).allow_sending_without_reply())
-            .disable_notification(true)
-            .await
-        {
-            delivered = true;
-            record_assistant_reply(&cfg.database, message.chat.id, "[стикер]", s.id.0).await;
+        for attempt in 0..2u8 {
+            match bot
+                .send_sticker(message.chat.id, InputFile::file_id(id.clone()))
+                .reply_parameters(ReplyParameters::new(message.id).allow_sending_without_reply())
+                .disable_notification(true)
+                .await
+            {
+                Ok(s) => {
+                    delivered = true;
+                    record_assistant_reply(&cfg.database, message.chat.id, "[стикер]", s.id.0)
+                        .await;
+                    break;
+                }
+                Err(err) => {
+                    if attempt == 0 {
+                        if let Some(delay) = crate::rich_message::retryable_telegram_error(&err) {
+                            time::sleep(delay).await;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            }
         }
     }
     let markup = reply
