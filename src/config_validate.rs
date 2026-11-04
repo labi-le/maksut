@@ -152,6 +152,7 @@ impl ChatSettings {
             86_400,
         )?;
         usize_count("chat.reply_max_chars", self.reply_max_chars, 100, 4096)?;
+        usize_count("chat.rich_max_chars", self.rich_max_chars, 100, 32_768)?;
         usize_count(
             "chat.research_body_chars",
             self.research_body_chars,

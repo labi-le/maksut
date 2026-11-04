@@ -408,7 +408,7 @@ fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
     None
 }
 
-fn escape_html(text: &str) -> String {
+pub(crate) fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     push_escaped_html(&mut out, text);
     out

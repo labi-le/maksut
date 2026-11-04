@@ -2729,3 +2729,83 @@ fn telegraph_rejects_banter_as_title_and_renders_markdown_tables_in_pre() {
         "markdown pipe table must be wrapped in pre/code: {html}"
     );
 }
+
+#[test]
+fn rich_prefers_text_but_defers_explicit_articles() {
+    assert!(crate::rich_message::prefer_rich("привет", "ответ"));
+    assert!(!crate::rich_message::prefer_rich("напиши статью", "текст"));
+    assert!(!crate::rich_message::prefer_rich("привет", "   "));
+    assert!(!crate::rich_message::prefer_rich(
+        "привет",
+        &"x".repeat(16_001)
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rich_reply_sends_one_send_rich_message_instead_of_chunking() {
+    let (bot, calls, server) = recording_bot(true, true).await;
+    let markup = teloxide::types::InlineKeyboardMarkup::new(vec![vec![
+        teloxide::types::InlineKeyboardButton::callback("ок", "ok"),
+    ]]);
+    let text = "а".repeat(5000);
+    let reply = ChatReply {
+        text: text.clone(),
+        ..Default::default()
+    };
+    let id = crate::rich_message::deliver_reply_text(
+        &bot,
+        ChatId(1),
+        MessageId(7),
+        "привет",
+        false,
+        Some(markup),
+        &reply,
+    )
+    .await;
+    assert_eq!(id, Some((99, None)));
+    let calls = calls.lock().await;
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        api_method_is(&calls[0].0, "sendRichMessage"),
+        "{}",
+        calls[0].0
+    );
+    let body: Value = serde_json::from_str(&calls[0].1).unwrap();
+    assert_eq!(body["chat_id"], 1);
+    assert_eq!(body["rich_message"]["html"], text);
+    assert_eq!(body["reply_parameters"]["message_id"], 7);
+    assert_eq!(body["disable_notification"], true);
+    assert!(body["reply_markup"]["inline_keyboard"].is_array());
+    server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rich_reply_falls_back_to_send_message_when_bot_api_rejects_it() {
+    let (bot, calls, server) = recording_bot_with_rich(true, true, false).await;
+    let reply = ChatReply {
+        text: "**жирный** ответ".into(),
+        ..Default::default()
+    };
+    let id = crate::rich_message::deliver_reply_text(
+        &bot,
+        ChatId(1),
+        MessageId(7),
+        "привет",
+        false,
+        None,
+        &reply,
+    )
+    .await;
+    assert_eq!(id, Some((99, None)));
+    let calls = calls.lock().await;
+    let paths: Vec<_> = calls.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths.len(), 2, "{paths:?}");
+    assert!(api_method_is(&calls[0].0, "sendRichMessage"), "{paths:?}");
+    assert!(api_method_is(&calls[1].0, "sendMessage"), "{paths:?}");
+    let body: Value = serde_json::from_str(&calls[1].1).unwrap();
+    assert_eq!(body["text"], "<b>жирный</b> ответ");
+    assert_eq!(body["parse_mode"], "HTML");
+    server.abort();
+}
