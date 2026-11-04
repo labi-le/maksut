@@ -11,6 +11,7 @@ impl Config {
         self.telegram.validate()?;
         self.chat.validate()?;
         self.github.validate()?;
+        self.voice.validate()?;
         self.llm.validate()?;
         self.router.validate()?;
         self.search.validate()?;

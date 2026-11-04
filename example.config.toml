@@ -92,6 +92,19 @@ timeout_secs = 15
 max_response_bytes = 524288
 cache_ttl_secs = 60
 
+[voice]
+# Voice and audio messages are transcribed through the OpenAI-compatible
+# /chat/completions endpoint of llm.base_url with LLM_API_KEY. An empty model
+# or enabled = false disables transcription; the message is then ignored as
+# before. max_transcript_chars bounds what reaches the prompt and chat history.
+enabled = true
+model = "gemini-2.5-flash"
+timeout_secs = 25
+max_bytes = 4194304
+max_duration_secs = 300
+max_transcript_chars = 2000
+concurrency = 2
+
 [llm]
 base_url = "https://llm.labile.cc/v1"
 model = "deepseek-v4.1-flash"

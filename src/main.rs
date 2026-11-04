@@ -60,6 +60,7 @@ mod jev;
 mod reaction;
 mod rich_message;
 mod router;
+mod voice;
 pub(crate) use router::*;
 mod typing;
 pub(crate) use typing::*;
@@ -325,5 +326,7 @@ mod usage_test;
 mod user_errors_test;
 #[cfg(test)]
 mod video_convert_test;
+#[cfg(test)]
+mod voice_test;
 #[cfg(test)]
 mod youtube_test;

@@ -22,6 +22,55 @@ pub(crate) fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
+pub(crate) fn user_record<'a>(
+    message: &Message,
+    author_id: i64,
+    author_name: &'a str,
+    text: &'a str,
+    flags: i64,
+) -> RecordMessage<'a> {
+    RecordMessage::new(message.chat.id, author_id, author_name, "user", text)
+        .with_message_id(Some(message.id.0))
+        .with_flags(flags)
+}
+
+/// The sender's active ignore window; a failed lookup counts as not ignored.
+pub(crate) async fn sender_ignored(
+    pool: &SqlitePool,
+    user_id: UserId,
+    owner: bool,
+    now: i64,
+) -> bool {
+    if owner {
+        return false;
+    }
+    match ignore_active(pool, user_id, now).await {
+        Ok(active) => active,
+        Err(error) => {
+            tracing::error!("Ignore lookup failed: {error}");
+            false
+        }
+    }
+}
+
+/// Whether the author of the replied message is currently ignored.
+pub(crate) async fn reply_ignored(
+    pool: &SqlitePool,
+    message: &Message,
+    owner_id: UserId,
+    now: i64,
+) -> bool {
+    match message
+        .reply_to_message()
+        .and_then(|reply| reply.from.as_ref())
+    {
+        Some(user) if user.id != owner_id => ignore_active(pool, user.id, now)
+            .await
+            .is_ok_and(|active| active),
+        _ => false,
+    }
+}
+
 pub(crate) async fn ignore_active(
     pool: &SqlitePool,
     user_id: UserId,
