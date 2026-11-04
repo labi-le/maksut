@@ -136,6 +136,12 @@ fn followup_questions_and_requests_reply() {
     assert_eq!(decide_rules(&followup("а щас")), Decision::Reply);
     assert_eq!(decide_rules(&followup("але")), Decision::Reply);
     assert_eq!(decide_rules(&followup("што думаешь")), Decision::Reply);
+    assert_eq!(
+        decide_rules(&followup(
+            "и эту https://amnezia.org/ru/blog/amneziawg-3-1-is-here"
+        )),
+        Decision::Reply
+    );
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
 }
 
@@ -326,7 +332,21 @@ async fn explicit_address_never_calls_jev() {
             .await,
         Decision::Reply
     );
+    assert_eq!(
+        router
+            .decide(&followup(
+                "и эту https://amnezia.org/ru/blog/amneziawg-3-1-is-here"
+            ))
+            .await,
+        Decision::Reply
+    );
     assert_eq!(stub.requests.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        router
+            .decide(&followup("обычная реплика без вопроса"))
+            .await,
+        Decision::Wait
+    );
 }
 
 #[tokio::test]

@@ -28,8 +28,13 @@ impl JevClient {
     ) -> Result<Self, String> {
         // The endpoint is fixed by configuration; a redirect must never turn
         // it into a request to an unexpected host carrying the API key.
+        let telegram = &crate::config::config().telegram;
         let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(telegram.connect_timeout_secs))
             .timeout(timeout)
+            .pool_idle_timeout(Duration::from_secs(telegram.pool_idle_timeout_secs))
+            .tcp_keepalive(Duration::from_secs(telegram.tcp_keepalive_secs))
+            .tcp_nodelay(true)
             .redirect(Policy::none())
             .build()
             .map_err(|_| "unable to build the jev HTTP client".to_string())?;

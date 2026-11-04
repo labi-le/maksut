@@ -57,3 +57,59 @@ fn bare_mention_is_not_explicit() {
     assert!(!explicit_mention("@MyBot", "MyBot"));
     assert!(explicit_mention("@MyBot что нового", "MyBot"));
 }
+
+#[test]
+fn reply_to_bot_media_post_is_not_addressed_to_bot() {
+    let mut reply_msg =
+        crate::feature_support::feature_message(-1002045081420, 1, Some("video"), "v1");
+    reply_msg["from"] = serde_json::json!({
+        "id": 8399828471_i64,
+        "is_bot": true,
+        "first_name": "Maksut",
+        "username": "MyBot"
+    });
+    reply_msg["caption"] = serde_json::json!("Делаем это вместе\nОт Андрей\nСсылка");
+    let reply_to_video: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 218897,
+        "date": 1700000100,
+        "chat": { "id": -1002045081420_i64, "type": "supergroup" },
+        "from": { "id": 280584660, "is_bot": false, "first_name": "Вадик" },
+        "text": "почему у него МакБук изогнутый",
+        "reply_to_message": reply_msg
+    }))
+    .unwrap();
+    assert!(!crate::addressing::reply_to_bot(&reply_to_video, "MyBot"));
+    assert_eq!(
+        address_kind(&reply_to_video, "почему у него МакБук изогнутый", "MyBot"),
+        AddressKind::None
+    );
+    assert_eq!(
+        address_kind(
+            &reply_to_video,
+            "максут почему у него МакБук изогнутый",
+            "MyBot"
+        ),
+        AddressKind::Named
+    );
+
+    let reply_to_text: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 218899,
+        "date": 1700000200,
+        "chat": { "id": -1002045081420_i64, "type": "supergroup" },
+        "from": { "id": 280584660, "is_bot": false, "first_name": "Вадик" },
+        "text": "а щас",
+        "reply_to_message": {
+            "message_id": 218898,
+            "date": 1700000150,
+            "chat": { "id": -1002045081420_i64, "type": "supergroup" },
+            "from": { "id": 8399828471_i64, "is_bot": true, "first_name": "Maksut", "username": "MyBot" },
+            "text": "обычный ответ бота"
+        }
+    }))
+    .unwrap();
+    assert!(crate::addressing::reply_to_bot(&reply_to_text, "MyBot"));
+    assert_eq!(
+        address_kind(&reply_to_text, "а щас", "MyBot"),
+        AddressKind::Explicit
+    );
+}

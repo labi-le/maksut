@@ -62,7 +62,7 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
 
 | Constant | Value |
 |---|---:|
-| `router.jev_timeout_ms` | 400 (range 50-10 000) |
+| `router.jev_timeout_ms` | 800 (range 50-10 000) |
 | `router.jev_max_response_bytes` | 16 KiB (range 1 KiB-1 MiB) |
 | `router.jev_concurrency` | 8 (range 1-64) |
 | `router.jev_min_confidence` | 0.6 (range 0-1) |

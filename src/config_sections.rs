@@ -464,7 +464,7 @@ defaults!(RouterSettings {
     mode: RouterMode::Off,
     jev_url: "https://api.typesafe.ai/v1/systemone".into(),
     jev_model: "jev-latest".into(),
-    jev_timeout_ms: 400,
+    jev_timeout_ms: 800,
     jev_max_response_bytes: 16 * 1024,
     jev_concurrency: 8,
     jev_min_confidence: 0.6,

@@ -30,17 +30,36 @@ pub(crate) enum AddressKind {
     Explicit,
 }
 
+/// Media uploads posted by the bot always end with an attribution line
+/// (`От <name>`) and a trailing `Ссылка` line (`src/caption.rs`). A reply to
+/// such a post is a comment to the human who shared the link, not a reply to
+/// the bot unless the message also mentions the bot by name or `@username`.
+pub(crate) fn is_bot_media_post(reply: &teloxide::types::Message) -> bool {
+    let Some(caption) = reply.caption().or_else(|| {
+        crate::chat_media::message_has_attachment(reply)
+            .then(|| reply.text())
+            .flatten()
+    }) else {
+        return false;
+    };
+    let mut lines = caption.lines().rev().map(str::trim);
+    lines.next() == Some("Ссылка")
+        && lines
+            .next()
+            .is_some_and(|line| line.starts_with("От ") && line.len() > "От ".len())
+}
+
 pub(crate) fn reply_to_bot(message: &teloxide::types::Message, bot_username: &str) -> bool {
-    message
-        .reply_to_message()
-        .and_then(|reply| reply.from.as_ref())
-        .is_some_and(|user| {
-            user.is_bot
-                && user
-                    .username
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(bot_username))
-        })
+    message.reply_to_message().is_some_and(|reply| {
+        !is_bot_media_post(reply)
+            && reply.from.as_ref().is_some_and(|user| {
+                user.is_bot
+                    && user
+                        .username
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(bot_username))
+            })
+    })
 }
 
 /// True when a word is exactly `@<bot_username>` and some other content

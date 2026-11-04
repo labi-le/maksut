@@ -129,20 +129,29 @@ impl Router {
         if input.address == AddressKind::Named && !input.text.trim().is_empty() {
             return Decision::Reply;
         }
+        if self.mode == RouterMode::Off {
+            return Decision::Reply;
+        }
+        let rules = decide_rules(input);
+        if input.followup && rules == Decision::Reply {
+            return Decision::Reply;
+        }
         let decision = match self.mode {
-            RouterMode::Off => Decision::Reply,
-            RouterMode::Rules => decide_rules(input),
+            RouterMode::Off | RouterMode::Rules => rules,
             RouterMode::Jev => {
                 let slot = self.jev_slots.as_ref().map(|slots| slots.try_acquire());
                 if matches!(&slot, Some(Err(_))) {
-                    decide_rules(input)
+                    rules
                 } else {
                     match &self.jev {
                         Some(client) => match client.decide(&jev_state(input)).await {
+                            Some(Decision::Silent) if input.followup && rules == Decision::Wait => {
+                                Decision::Wait
+                            }
                             Some(decision) => decision,
-                            None => decide_rules(input),
+                            None => rules,
                         },
-                        None => decide_rules(input),
+                        None => rules,
                     }
                 }
             }
@@ -306,6 +315,16 @@ fn expects_answer(text: &str) -> bool {
         "а тут",
         "а там",
         "а ты",
+        "а эту",
+        "а этот",
+        "а это",
+        "а вот ",
+        "и эту",
+        "и этот",
+        "и это",
+        "и вот ",
+        "вот эту",
+        "вот этот",
         "не хочешь",
         "может ",
         "давай ",
