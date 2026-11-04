@@ -23,6 +23,7 @@ impl Config {
         self.cookies.validate()?;
         self.image_fetch.validate()?;
         self.cleanup.validate()?;
+        self.usage.validate()?;
         self.retry.validate()
     }
 }
@@ -236,6 +237,10 @@ impl ChatSettings {
             (
                 "chat.chat_search_calls_per_reply",
                 self.chat_search_calls_per_reply,
+            ),
+            (
+                "chat.usage_stats_calls_per_reply",
+                self.usage_stats_calls_per_reply,
             ),
         ] {
             usize_count(key, value, 1, 64)?;

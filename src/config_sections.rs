@@ -70,6 +70,7 @@ pub(crate) struct ChatSettings {
     pub(crate) search_calls_per_reply: usize,
     pub(crate) research_calls_per_reply: usize,
     pub(crate) chat_search_calls_per_reply: usize,
+    pub(crate) usage_stats_calls_per_reply: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -292,6 +293,17 @@ pub(crate) struct CleanupSettings {
     pub(crate) max_age_secs: u64,
 }
 
+/// LLM spend accounting. Prices are USD per 1M tokens and turn reported token
+/// counts into `llm_usage.cost_microdollars`; zero disables the money column.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct UsageSettings {
+    pub(crate) retention_days: u64,
+    pub(crate) input_price_per_m: f64,
+    pub(crate) cached_input_price_per_m: f64,
+    pub(crate) output_price_per_m: f64,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetrySettings {
@@ -373,6 +385,7 @@ defaults!(ChatSettings {
     search_calls_per_reply: 6,
     research_calls_per_reply: 1,
     chat_search_calls_per_reply: 3,
+    usage_stats_calls_per_reply: 3,
 });
 
 defaults!(LlmSettings {
@@ -527,6 +540,13 @@ defaults!(ImageFetchSettings {
 
 defaults!(CleanupSettings {
     max_age_secs: 24 * 60 * 60
+});
+
+defaults!(UsageSettings {
+    retention_days: 90,
+    input_price_per_m: 0.27,
+    cached_input_price_per_m: 0.07,
+    output_price_per_m: 1.10,
 });
 
 defaults!(RetrySettings {

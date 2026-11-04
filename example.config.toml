@@ -72,6 +72,7 @@ remember_self_calls_per_reply = 3
 search_calls_per_reply = 6
 research_calls_per_reply = 1
 chat_search_calls_per_reply = 3
+usage_stats_calls_per_reply = 3
 
 [llm]
 base_url = "https://llm.labile.cc/v1"
@@ -219,6 +220,15 @@ pinned_client_ttl_secs = 3600
 
 [cleanup]
 max_age_secs = 86400
+
+# LLM spend accounting. Prices are USD per 1M tokens; 0 disables the money
+# column. `llm_usage` rows older than retention_days are pruned by the
+# background compactor.
+[usage]
+retention_days = 90
+input_price_per_m = 0.27
+cached_input_price_per_m = 0.07
+output_price_per_m = 1.10
 
 # attempts counts the first try: 1 disables retries. Backoff grows as
 # base_backoff_ms * 2^(attempt-1), capped at max_backoff_ms.

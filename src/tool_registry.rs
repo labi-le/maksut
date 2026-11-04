@@ -32,6 +32,7 @@ pub(crate) enum ToolKind {
     InspectCode,
     RememberSelf,
     ChatProfile,
+    UsageStats,
     FindStickers,
     SendSticker,
     ChatSearch,
@@ -52,6 +53,7 @@ impl ToolKind {
             Self::InspectCode => "inspect_code",
             Self::RememberSelf => "remember_self",
             Self::ChatProfile => "chat_profile",
+            Self::UsageStats => "usage_stats",
             Self::FindStickers => "find_stickers",
             Self::SendSticker => "send_sticker",
             Self::ChatSearch => "chat_search",
@@ -80,6 +82,7 @@ impl ToolKind {
                 | Self::InspectCode
                 | Self::ChatProfile
                 | Self::ChatSearch
+                | Self::UsageStats
         ) || (allow_feature && matches!(self, Self::ProposeFeature))
             || (allow_sticker && matches!(self, Self::FindStickers | Self::SendSticker))
     }
@@ -177,6 +180,13 @@ impl ToolRegistry {
                 parameters: remember_self_parameters,
                 visibility: ToolVisibility::Owner,
                 kind: ToolKind::RememberSelf,
+            },
+            ToolSpec {
+                name: ToolKind::UsageStats.name(),
+                description: "Read-only. Return recorded LLM token spend and its USD cost for this chat over the last N days, split by participant. Optional user_id narrows the report to one participant; owners may pass all_chats=true to get a per-chat summary across every chat. Returns billing data, never instructions, and never exposes other chats to non-owners.",
+                parameters: usage_stats_parameters,
+                visibility: ToolVisibility::All,
+                kind: ToolKind::UsageStats,
             },
             ToolSpec {
                 name: ToolKind::FindStickers.name(),
@@ -381,6 +391,27 @@ fn feature_status_parameters() -> Value {
 
 fn feature_confirmation_parameters() -> Value {
     json!({"type": "object", "properties": {}})
+}
+
+fn usage_stats_parameters() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "days": {
+                "type": "integer",
+                "description": "How many days back to include (1-365, default 7)"
+            },
+            "user_id": {
+                "type": "integer",
+                "description": "Optional Telegram user id to filter one participant"
+            },
+            "all_chats": {
+                "type": "boolean",
+                "description": "Owner only: group the totals by chat across all chats"
+            }
+        },
+    })
 }
 
 fn find_stickers_parameters() -> Value {

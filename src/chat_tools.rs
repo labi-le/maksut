@@ -33,6 +33,7 @@ pub(crate) struct ToolState {
     pub(crate) chat_profile_calls: usize,
     pub(crate) inspect_announced: bool,
     pub(crate) remember_calls: usize,
+    pub(crate) usage_calls: usize,
     pub(crate) proposed_feature: bool,
     pub(crate) discovered_urls: Vec<Url>,
     pub(crate) allow_sticker: bool,
@@ -56,6 +57,7 @@ impl ToolState {
             chat_profile_calls: 0,
             inspect_announced: false,
             remember_calls: 0,
+            usage_calls: 0,
             proposed_feature: false,
             discovered_urls: Vec::new(),
             allow_sticker,
@@ -413,6 +415,37 @@ pub(crate) async fn run_tool_call(
                             Ok(text) => text,
                             Err(reason) => format!("chat_search: {reason}"),
                         }
+                    }
+                }
+            }
+        }
+        Some(ToolKind::UsageStats) => {
+            if state.usage_calls >= config().chat.usage_stats_calls_per_reply {
+                "лимит статистики расхода на ответ".to_string()
+            } else {
+                state.usage_calls += 1;
+                let days = args
+                    .get("days")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(7)
+                    .clamp(1, 365);
+                let user_id = args.get("user_id").and_then(Value::as_i64);
+                let all_chats = ctx.owner
+                    && args
+                        .get("all_chats")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                let query = UsageQuery {
+                    chat_id: ctx.chat_id.0,
+                    days,
+                    user_id,
+                    all_chats,
+                };
+                match crate::usage::report(ctx.pool, query).await {
+                    Ok(report) => report.to_string(),
+                    Err(error) => {
+                        tracing::warn!("Usage report failed: {error}");
+                        "статистика расхода недоступна".to_string()
                     }
                 }
             }
