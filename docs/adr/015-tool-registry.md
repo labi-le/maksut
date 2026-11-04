@@ -35,6 +35,8 @@ the lists could drift.
 |---|---|---|
 | `web_search` | `All` | `WebSearch` |
 | `research` | `All` | `Research` |
+| `research_status` | `All` | `ResearchStatus` |
+| `research_cancel` | `All` | `ResearchCancel` |
 | `read_url` | `All` | `ReadUrl` |
 | `propose_feature` | `All` | `ProposeFeature` |
 | `feature_status` | `All` | `FeatureStatus` |

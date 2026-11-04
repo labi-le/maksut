@@ -25,6 +25,8 @@ impl ToolVisibility {
 pub(crate) enum ToolKind {
     WebSearch,
     Research,
+    ResearchStatus,
+    ResearchCancel,
     ReadUrl,
     ProposeFeature,
     FeatureStatus,
@@ -46,6 +48,8 @@ impl ToolKind {
         match self {
             Self::WebSearch => "web_search",
             Self::Research => "research",
+            Self::ResearchStatus => "research_status",
+            Self::ResearchCancel => "research_cancel",
             Self::ReadUrl => "read_url",
             Self::ProposeFeature => "propose_feature",
             Self::FeatureStatus => "feature_status",
@@ -78,6 +82,7 @@ impl ToolKind {
             self,
             Self::WebSearch
                 | Self::Research
+                | Self::ResearchStatus
                 | Self::ReadUrl
                 | Self::InspectCode
                 | Self::ChatProfile
@@ -131,6 +136,20 @@ impl ToolRegistry {
                 parameters: research_parameters,
                 visibility: ToolVisibility::All,
                 kind: ToolKind::Research,
+            },
+            ToolSpec {
+                name: ToolKind::ResearchStatus.name(),
+                description: "List running and recently finished research passes of this chat with their id, author, question, status (running, completed, canceled, timed_out), completed and total queries, collected sources and elapsed time. Pass research_id for one pass; the owner may include every chat.",
+                parameters: research_status_parameters,
+                visibility: ToolVisibility::All,
+                kind: ToolKind::ResearchStatus,
+            },
+            ToolSpec {
+                name: ToolKind::ResearchCancel.name(),
+                description: "Cancel a running research pass: its remaining queries are aborted at once and that pass returns its partial dossier, headed by a note with how many queries and sources were collected. This call returns only the pass id, status and collected counts, never the sources themselves. Without research_id it targets the pass you started in this chat; the owner's no-id target is the newest running pass of the chat. A participant may cancel only their own pass, the bot owner may cancel any.",
+                parameters: research_cancel_parameters,
+                visibility: ToolVisibility::All,
+                kind: ToolKind::ResearchCancel,
             },
             ToolSpec {
                 name: ToolKind::ReadUrl.name(),
@@ -347,6 +366,36 @@ fn research_parameters() -> Value {
             }
         },
         "required": ["question", "queries"]
+    })
+}
+
+fn research_status_parameters() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "research_id": {
+                "type": "string",
+                "description": "Optional exact id such as res-3; omit for the recent passes of this chat"
+            },
+            "all_chats": {
+                "type": "boolean",
+                "description": "Owner only: include passes from every chat"
+            }
+        },
+    })
+}
+
+fn research_cancel_parameters() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "research_id": {
+                "type": "string",
+                "description": "Optional exact id such as res-3; omit for the active pass of this chat"
+            }
+        },
     })
 }
 

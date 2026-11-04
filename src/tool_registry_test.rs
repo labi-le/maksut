@@ -67,6 +67,8 @@ fn builtin_visibility_matches_current_roles() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
+            "research_cancel".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
             "feature_status".to_string(),
@@ -83,6 +85,8 @@ fn builtin_visibility_matches_current_roles() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
+            "research_cancel".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
             "feature_status".to_string(),
@@ -102,6 +106,8 @@ fn builtin_visibility_matches_current_roles() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
+            "research_cancel".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
             "inspect_code".to_string(),
@@ -117,6 +123,8 @@ fn builtin_visibility_matches_current_roles() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
+            "research_cancel".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
             "inspect_code".to_string(),
@@ -144,6 +152,7 @@ fn research_mode_hides_side_effect_tools() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
             "read_url".to_string(),
             "inspect_code".to_string(),
             "chat_profile".to_string(),
@@ -162,6 +171,7 @@ fn research_mode_hides_side_effect_tools() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
             "read_url".to_string(),
             "inspect_code".to_string(),
             "chat_profile".to_string(),
@@ -182,6 +192,7 @@ fn research_mode_hides_side_effect_tools() {
         vec![
             "web_search".to_string(),
             "research".to_string(),
+            "research_status".to_string(),
             "read_url".to_string(),
             "propose_feature".to_string(),
             "inspect_code".to_string(),
@@ -198,6 +209,16 @@ fn builtin_names_match_their_kinds_and_visibility() {
     let expected = [
         (ToolKind::WebSearch, "web_search", ToolVisibility::All),
         (ToolKind::Research, "research", ToolVisibility::All),
+        (
+            ToolKind::ResearchStatus,
+            "research_status",
+            ToolVisibility::All,
+        ),
+        (
+            ToolKind::ResearchCancel,
+            "research_cancel",
+            ToolVisibility::All,
+        ),
         (ToolKind::ReadUrl, "read_url", ToolVisibility::All),
         (
             ToolKind::ProposeFeature,

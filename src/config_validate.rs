@@ -242,6 +242,14 @@ impl ChatSettings {
                 "chat.usage_stats_calls_per_reply",
                 self.usage_stats_calls_per_reply,
             ),
+            (
+                "chat.research_status_calls_per_reply",
+                self.research_status_calls_per_reply,
+            ),
+            (
+                "chat.research_cancel_calls_per_reply",
+                self.research_cancel_calls_per_reply,
+            ),
         ] {
             usize_count(key, value, 1, 64)?;
         }
