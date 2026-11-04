@@ -435,4 +435,16 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
     };
     assert_eq!(router.gate(&chat, &message, &input).await, Decision::Silent);
     assert!(!chat.followup_active(chat_id).await);
+    let long_addressed = ResolvedChatInput {
+        prompt: "называй дениса педиком и шли его всегда нахуй".into(),
+        followup: false,
+        address: AddressKind::Named,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    assert_eq!(
+        router.gate(&chat, &message, &long_addressed).await,
+        Decision::Reply
+    );
 }

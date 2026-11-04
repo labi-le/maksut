@@ -82,12 +82,14 @@ impl Router {
         message: &Message,
         input: &crate::ResolvedChatInput,
     ) -> Decision {
+        let stop = crate::chat_style::is_stop_followup(&input.prompt)
+            && (input.followup || input.prompt.split_whitespace().count() <= 4);
         let decision = self
             .decide(&RouterInput {
                 text: &input.prompt,
                 address: input.address,
                 followup: input.followup,
-                stop: crate::chat_style::is_stop_followup(&input.prompt),
+                stop,
                 private: message.chat.is_private(),
                 reply_context: input.reply_context.as_deref(),
             })
@@ -99,7 +101,7 @@ impl Router {
                 mode = ?self.mode,
                 address = ?input.address,
                 followup = input.followup,
-                stop = crate::chat_style::is_stop_followup(&input.prompt),
+                stop,
                 decision = ?decision,
                 "router decision"
             );

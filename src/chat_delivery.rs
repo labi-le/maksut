@@ -75,7 +75,7 @@ pub(crate) async fn deliver_chat_reply(
         };
         record_assistant_reply(&cfg.database, message.chat.id, rec, id).await;
     }
-    if is_stop_followup(p) {
+    if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 4) {
         chat.clear_followup(message.chat.id).await;
     } else if delivered {
         chat.note_reply(message.chat.id).await;

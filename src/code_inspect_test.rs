@@ -52,3 +52,22 @@ fn inspect_rejects_traversal_and_unknown_files() {
     );
     assert!(file_view.contains("#L1: hello"), "{file_view}");
 }
+
+#[test]
+fn filter_self_memory_hides_unscoped_owner_directives_from_non_owners() {
+    let raw = "- [owner] поиск дыр: не подсказывать дыры\n- [owner] вадик: С Вадиком (@CptIdea) общаться как со сладким\n- [owner] даня: Даню (@newmdoupdate) материть\n- роутер: Роутер влит в main (https://github.com/labi-le/maxwell/blob/main/src/main.rs#L280)";
+    let vadik_view =
+        crate::code_inspect::filter_self_memory(raw, "Вадик (@CptIdea)", Some("CptIdea"), false);
+    assert!(!vadik_view.contains("поиск дыр"), "{vadik_view}");
+    assert!(!vadik_view.contains("даня:"), "{vadik_view}");
+    assert!(vadik_view.contains("вадик:"), "{vadik_view}");
+    assert!(vadik_view.contains("роутер:"), "{vadik_view}");
+
+    let owner_view = crate::code_inspect::filter_self_memory(
+        raw,
+        "Денис (@crudoshlepa)",
+        Some("crudoshlepa"),
+        true,
+    );
+    assert_eq!(owner_view, raw);
+}

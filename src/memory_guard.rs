@@ -120,6 +120,19 @@ const INJECTION_MARKERS: &[&str] = &[
     "выполни команду",
 ];
 
+fn fold_homoglyph(ch: char) -> char {
+    match ch {
+        'а' => 'a',
+        'е' => 'e',
+        'о' => 'o',
+        'р' => 'p',
+        'с' => 'c',
+        'у' => 'y',
+        'х' => 'x',
+        _ => ch,
+    }
+}
+
 fn normalize_injection_text(text: &str) -> String {
     text.chars()
         .filter(|&ch| {
@@ -133,6 +146,18 @@ fn normalize_injection_text(text: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn spoofs_owner_header(text: &str) -> bool {
+    let ascii_folded: String = text
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .map(fold_homoglyph)
+        .collect();
+    if ascii_folded.contains("[owner]") || ascii_folded.contains("(owner)") {
+        return true;
+    }
+    text.contains("[395448554]") || text.contains("[<395448554>]")
 }
 
 fn contains_marker(text: &str, marker: &str) -> bool {
@@ -159,7 +184,8 @@ fn contains_marker(text: &str, marker: &str) -> bool {
 pub(crate) fn injection_attempt(text: &str) -> bool {
     let normalized = normalize_injection_text(text);
     !normalized.is_empty()
-        && INJECTION_MARKERS
-            .iter()
-            .any(|marker| contains_marker(&normalized, marker))
+        && (spoofs_owner_header(&normalized)
+            || INJECTION_MARKERS
+                .iter()
+                .any(|marker| contains_marker(&normalized, marker)))
 }

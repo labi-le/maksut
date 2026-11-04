@@ -455,9 +455,9 @@ fn line_matches_speaker(line: &str, speaker_handles: &[String], speaker_stems: &
         || topic_matches_speaker(line, speaker_stems)
 }
 
-/// Keeps code-verified facts, general `- [owner]` directives (no `@handle`),
-/// and per-user `- [owner]` directives whose `@handle` or topic name matches the
-/// current speaker (all rows stay visible on owner turns so the owner sees every rule).
+/// Keeps code-verified facts and, for non-owners, only per-user `- [owner]`
+/// directives whose `@handle` or topic name explicitly matches the current
+/// speaker (all rows stay visible on owner turns so the owner sees every rule).
 pub(crate) fn filter_self_memory(
     self_memory: &str,
     sender_name: &str,
@@ -471,7 +471,13 @@ pub(crate) fn filter_self_memory(
     let stems = speaker_name_stems(sender_name, owner);
     self_memory
         .lines()
-        .filter(|l| !l.starts_with("- [owner]") || line_matches_speaker(l, &handles, &stems))
+        .filter(|l| {
+            !l.starts_with("- [owner]")
+                || extract_at_handles(l)
+                    .iter()
+                    .any(|lh| handles.iter().any(|sh| sh == lh))
+                || topic_matches_speaker(l, &stems)
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
