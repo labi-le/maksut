@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::settings::Settings;
+use crate::{UsageSite, KIND_FEATURE_TITLE};
 
 pub(crate) use crate::improve_commands::*;
 pub(crate) use crate::improve_store::*;
@@ -20,7 +21,12 @@ where
 /// The model writes the issue title at the owner's approval; the host
 /// orchestrator that creates the issue stays agent-free, so the bot is the only
 /// place with a model client.
-async fn approval_title(cfg: &Settings, dir: &Path, target: &str) -> String {
+async fn approval_title(
+    cfg: &Settings,
+    dir: &Path,
+    target: &str,
+    site: Option<UsageSite>,
+) -> String {
     let Some(chat) = cfg.chat.as_ref() else {
         return String::new();
     };
@@ -29,16 +35,26 @@ async fn approval_title(cfg: &Settings, dir: &Path, target: &str) -> String {
     let goal = run_blocking(move || approval_goal(&dir, &target))
         .await
         .flatten();
-    match goal {
-        Some(goal) => chat.feature_title(&goal).await.unwrap_or_default(),
-        None => String::new(),
+    let Some(goal) = goal else {
+        return String::new();
+    };
+    let result = chat.feature_title(&goal).await;
+    if let Some(site) = site.as_ref() {
+        site.record(&cfg.database, &chat.model, KIND_FEATURE_TITLE, result.usage)
+            .await;
     }
+    result.title.unwrap_or_default()
 }
 
-async fn command_approval_title(cfg: &Settings, dir: &Path, command: &OwnerCommand) -> String {
+async fn command_approval_title(
+    cfg: &Settings,
+    dir: &Path,
+    command: &OwnerCommand,
+    site: Option<UsageSite>,
+) -> String {
     match command.action {
         OwnerAction::Approve => match command.targets.first() {
-            Some(target) => approval_title(cfg, dir, target).await,
+            Some(target) => approval_title(cfg, dir, target, site).await,
             None => String::new(),
         },
         OwnerAction::Reject
@@ -99,7 +115,13 @@ pub(crate) async fn handle_improve(
         let command_text = rest.replacen(':', " ", 1);
         let reply = match parse_owner_command(&command_text) {
             Some(command) => {
-                let title = command_approval_title(cfg, &dir, &command).await;
+                let title = command_approval_title(
+                    cfg,
+                    &dir,
+                    &command,
+                    Some(UsageSite::from_message(message, owner)),
+                )
+                .await;
                 let command_dir = dir.clone();
                 run_blocking(move || apply_owner_command(&command_dir, owner, command, &title))
                     .await
@@ -182,7 +204,13 @@ pub(crate) async fn handle_owner_text(
     };
     let dir = queue_dir(cfg);
     let owner = cfg.owner_id;
-    let title = command_approval_title(cfg, &dir, &command).await;
+    let title = command_approval_title(
+        cfg,
+        &dir,
+        &command,
+        Some(UsageSite::from_message(message, owner)),
+    )
+    .await;
     let reply = run_blocking(move || apply_owner_command(&dir, owner, command, &title))
         .await
         .unwrap_or_else(|| "Не смог обработать команду.".to_owned());
@@ -412,7 +440,7 @@ pub(crate) async fn handle_callback(
     let id = id.to_owned();
     let action = action.to_owned();
     let title = if action == "approve" {
-        approval_title(cfg, &dir, &id).await
+        approval_title(cfg, &dir, &id, UsageSite::from_callback(query)).await
     } else {
         String::new()
     };

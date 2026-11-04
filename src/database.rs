@@ -74,6 +74,18 @@ pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> 
     )
     .execute(&pool)
     .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS llm_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, author_name TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cached_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0, cost_microdollars INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS llm_usage_chat_time ON llm_usage(chat_id, created_at)")
+        .execute(&pool)
+        .await?;
+    // Retention deletes and the owner's all-chats report filter on time alone.
+    sqlx::query("CREATE INDEX IF NOT EXISTS llm_usage_time ON llm_usage(created_at)")
+        .execute(&pool)
+        .await?;
     migrate_chat_turns(&pool).await?;
     init_cache(&pool).await?;
     Ok(pool)

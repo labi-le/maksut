@@ -8,7 +8,9 @@ Free chat is split by concern across focused modules and subsystem test files:
 
 | Module | Test | Owns |
 |---|---|---|
-| `src/chat.rs` | `src/chat_test.rs` | turn orchestration (`reply_with_chat`, `chat_reply_with_proposal`), gating, typing keepalive, tool loop, delivery |
+| `src/chat.rs` | `src/chat_test.rs` | turn orchestration (`reply_with_chat`, `chat_reply_with_proposal`), gating, typing keepalive, tool loop |
+| `src/chat_delivery.rs` | `src/chat_test.rs` | reply delivery: sticker, decision markup, reply parameters, and `chat_messages` assistant rows; text goes through `src/rich_message.rs` |
+| `src/completion.rs` | `src/chat_test.rs` | completion request/response types (`CompletionRequest`, `Completion`, `TitleResult`, `CompleteError`) |
 | `src/rich_message.rs` | `src/chat_test.rs` | reply text delivery: raw Bot API 10.1 `sendRichMessage` (teloxide 0.17 has no typed method), `chat.rich_messages` / `chat.rich_max_chars` gating, `deliver_reply_text`, `send_chat_chunk`, and the `telegra.ph` / chunked `SendMessage` fallback |
 | `src/chat_client.rs` | `src/chat_test.rs` | `ChatConfig`, prompt assembly, completion transport, retries, cooldowns |
 | `src/chat_media.rs` | `src/chat_test.rs` | vision attachments (`chat.image_concurrency` default 4, `chat.image_max_bytes` default 8 MiB) and chat-input/media resolution (`resolve_chat_input`) |
@@ -20,6 +22,7 @@ Free chat is split by concern across focused modules and subsystem test files:
 | `src/browser.rs` | `src/browser_test.rs` | Firefox navigation header set shared by `read_url` and the public HTML search engines |
 | `src/research.rs` | `src/research_test.rs` | multi-query research over `public_web_search` and dossier rendering |
 | `src/tool_registry.rs` | `src/tool_registry_test.rs` | tool schemas, visibility, authorization |
+| `src/usage.rs` | `src/usage_test.rs` | LLM token/money accounting (`llm_usage`), `/usage` parsing, USD pricing, retention pruning, `usage_stats` report |
 | `src/read_url.rs`, `src/read_url_html.rs`, `src/read_url_sites.rs`, `src/read_url_text.rs` | `src/read_url_test.rs` | public page reader, `:A-B`/`:-N`/`:raw` selectors, special site handlers (GitHub/Reddit/Wikipedia/HN/crates.io/PyPI), RSS/Atom markdown, HTML extraction, complexity guard, and turn URL collection (`collect_turn_urls`) |
 | `src/memory.rs`, `src/snapcompact.rs` | `src/memory_test.rs` | chat history storage, flags, ignores, and omp-style model-free snapcompact archival (`build_snap_archive`, 1-bit indexed PNG `8x13` frames + `text_head`/`text_tail`) |
 
@@ -55,7 +58,7 @@ Free chat is split by concern across focused modules and subsystem test files:
 
 ## Function tool registry (`src/tool_registry.rs`, `src/chat_tools.rs`, [ADR 015](../adr/015-tool-registry.md))
 
-`ToolRegistry::builtin()` is the single source of truth for the schemas, visibility and research-mode filtering of all 13 function tools; `run_tool_call` (`src/chat_tools.rs`) is the only executor and enforces the per-reply budgets. Web search providers live in `src/search.rs` + `src/search_providers.rs` + `src/search_parse.rs`, multi-query research in `src/research.rs`, the deterministic `feature_status` renderer in `src/chat_status.rs`, and the page reader in `src/read_url.rs` + `src/read_url_html.rs` + `src/read_url_sites.rs`; chat-member profiles live in `src/chat_profile.rs`.
+`ToolRegistry::builtin()` is the single source of truth for the schemas, visibility and research-mode filtering of all 14 function tools; `run_tool_call` (`src/chat_tools.rs`) is the only executor and enforces the per-reply budgets. Web search providers live in `src/search.rs` + `src/search_providers.rs` + `src/search_parse.rs`, multi-query research in `src/research.rs`, the deterministic `feature_status` renderer in `src/chat_status.rs`, the page reader in `src/read_url.rs` + `src/read_url_html.rs` + `src/read_url_sites.rs`, and chat-member profiles in `src/chat_profile.rs`.
 
 | Tool | Visibility | Kind | Purpose |
 |---|---|---|---|
@@ -68,10 +71,19 @@ Free chat is split by concern across focused modules and subsystem test files:
 | `inspect_code` | `All` | `InspectCode` | Read-only search or file read over `/var/lib/maksut/code` (sorting `src/` and `Cargo.toml` ahead of `tools/` and `docs/`) with GitHub blob URLs (`https://github.com/labi-le/maxwell/blob/main/<path>#L<line>`, max 5 calls/reply; [ADR 018](../adr/018-owner-code-inspection.md)) |
 | `chat_profile` | `All` | `ChatProfile` | Read-only `getChatMember` profile of one participant in the current chat (`src/chat_profile.rs`): `user_id`, first/last name, `username`, `is_bot`, `is_premium`, chat status (`creator`/`administrator`/`member`/`restricted`/`left`/`kicked`), `custom_title`, and `until_date` when present; no join date because Bot API does not expose it. The target is the sender, the replied-to author, or a participant from the chat's uncompacted `chat_messages` history resolved by `user_id`, `username`, or display name; non-owners may read only those, the owner any participant of this chat. Responses stay in an in-memory TTL cache (`chat.profile_cache_ttl_secs` default 300, `chat.profile_cache_max_entries` default 1024) and are never written to SQLite; max `chat.chat_profile_calls_per_reply` (default 3) calls/reply |
 | `remember_self` | `Owner` | `RememberSelf` | Persist an owner conversational directive/note under a canonical short `topic` such as a participant name (when `source_url` is omitted/empty; empty `fact` deletes the topic) or a code-verified fact with its GitHub blob URL into `bot_self_memory` after `inspect_code` (max 3 calls/reply) |
+| `usage_stats` | `All` | `UsageStats` | Read-only LLM spend for the current chat: tokens and USD per participant over `days` (default 7, max 365), optional `user_id` filter; owners may pass `all_chats: true` for a per-chat summary across every chat; max `chat.usage_stats_calls_per_reply` (default 3) calls/reply |
 | `find_stickers` | `All` | `FindStickers` | Semantic search over the owner's 15 newest sticker packs (`sticker_descriptions.json`) |
 | `send_sticker` | `All` | `SendSticker` | Send at most one sticker per reply by `sticker_id`, semantic `query` (with Russian word-stem matching in `StickerCatalog::search`), or classic alias |
 | `chat_search` | `All` | `ChatSearch` | Semantic search over this chat's own log: `query`, optional `author_id`, `since`/`until` (`YYYY-MM-DD`, MSK), `limit` (default 5, max `memory.search_limit`). Returns scored fragments with date and author plus the newest messages of the same chat. The chat id comes from the current turn, never from arguments; max `chat.chat_search_calls_per_reply` (default 3) calls per reply; [ADR 026](../adr/026-chat-history-rag.md) |
 | `chat_index` | `Owner` | `ChatIndex` | Owner-only maintenance: `passes` (default 3, max 20) bounded embedding passes over pending `chat_messages` rows plus an indexed/pending coverage report; [ADR 026](../adr/026-chat-history-rag.md) |
+
+## LLM usage accounting (`src/usage.rs`)
+
+- Every successful completion response carries a `Completion { message, usage }`; `src/chat_client.rs` parses `/usage` (`prompt_tokens`/`input_tokens`, `completion_tokens`/`output_tokens`, a `total_tokens` fallback, and optional `prompt_tokens_details.cached_tokens` / `completion_tokens_details.reasoning_tokens`). Attempts that fail by timeout, transport error, or HTTP status without a body record nothing; a successful reasoning retry is a separate `chat_retry` row, so retries are never double counted.
+- Rows land in `llm_usage` (`chat_id`, `user_id`, `author_name`, `model`, `kind`, token counts, `cost_microdollars`, `created_at`) for the main chat loop (`chat`), the reasoning retry (`chat_retry`), the `feature_status` repair call (`status_repair`), and the approval-time issue title (`feature_title`).
+- Money comes from `[usage]`: `input_price_per_m` (default 0.27), `cached_input_price_per_m` (default 0.07), `output_price_per_m` (default 1.10), USD per 1M tokens; cached input is priced separately and reasoning tokens are already part of output. Zero prices keep token accounting and report `$0.0000`.
+- `memory_compactor` also prunes `llm_usage` rows older than `usage.retention_days` (default 90, `1..=3650`), so the live SQLite volume stays bounded.
+- `usage_stats` is scoped to `ctx.chat_id`; `all_chats` is honored only when `ctx.owner` is true, so group members never see another chat's spend.
 
 ## Stickers (`src/stickers.rs`, `tools/build_sticker_index.py`, [ADR 010](../adr/010-sticker-replies.md), [ADR 011](../adr/011-semantic-sadness.md), [ADR 013](../adr/013-newest-sticker-packs.md))
 

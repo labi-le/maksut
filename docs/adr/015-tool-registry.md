@@ -42,6 +42,7 @@ the lists could drift.
 | `inspect_code` | `All` | `InspectCode` |
 | `chat_profile` | `All` | `ChatProfile` |
 | `remember_self` | `Owner` | `RememberSelf` |
+| `usage_stats` | `All` | `UsageStats` |
 | `find_stickers` | `All` | `FindStickers` |
 | `send_sticker` | `All` | `SendSticker` |
 ## Consequences

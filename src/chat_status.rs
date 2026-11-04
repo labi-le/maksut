@@ -1,4 +1,5 @@
 use crate::self_improve::short_task_id;
+use crate::{Completion, UsageSite, KIND_STATUS_REPAIR};
 use serde_json::Value;
 
 fn status_label(status: &str) -> &'static str {
@@ -428,18 +429,24 @@ pub(crate) async fn resolve_status_reply(
     messages.push(serde_json::json!({"role": "system", "content": repair}));
     let repair_request = crate::CompletionRequest::new(messages, ctx.owner, max_tokens)
         .feature_tools(ctx.proposal.is_some());
-    let repaired = ctx
-        .chat
-        .complete_with(&repair_request, false, false)
-        .await
-        .ok()
-        .and_then(|reply| {
-            reply
+    let usage_site = UsageSite {
+        chat_id: ctx.chat_id,
+        user_id: ctx.user_id,
+        author_name: ctx.sender_name.to_owned(),
+    };
+    let repaired = match ctx.chat.complete_with(&repair_request, false, false).await {
+        Ok(Completion { message, usage }) => {
+            usage_site
+                .record(ctx.pool, &ctx.chat.model, KIND_STATUS_REPAIR, usage)
+                .await;
+            message
                 .get("content")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .map(str::to_owned)
-        });
+        }
+        Err(_) => None,
+    };
     Some(match repaired {
         Some(repaired) if status_answer_grounded(&repaired, snapshot, view) => style_status_reply(
             &crate::self_improve::redact_secret(&repaired, &ctx.chat.api_key),

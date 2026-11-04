@@ -27,6 +27,7 @@ pub(crate) struct Config {
     pub(crate) cookies: CookieSettings,
     pub(crate) image_fetch: ImageFetchSettings,
     pub(crate) cleanup: CleanupSettings,
+    pub(crate) usage: UsageSettings,
     pub(crate) retry: RetrySettings,
 }
 

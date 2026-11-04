@@ -37,6 +37,10 @@ pub(crate) use media_cache::{
 mod addressing;
 mod chat;
 pub(crate) use chat::*;
+mod chat_delivery;
+pub(crate) use chat_delivery::*;
+mod completion;
+pub(crate) use completion::*;
 mod chat_client;
 pub(crate) use chat_client::*;
 mod chat_media;
@@ -73,6 +77,8 @@ mod memory;
 pub(crate) use memory::*;
 mod chat_embeddings;
 mod chat_search;
+mod usage;
+pub(crate) use usage::*;
 mod code_inspect;
 mod improve_commands;
 mod improve_store;
@@ -295,6 +301,8 @@ mod stickers_test;
 mod test_support;
 #[cfg(test)]
 mod tool_registry_test;
+#[cfg(test)]
+mod usage_test;
 #[cfg(test)]
 mod user_errors_test;
 #[cfg(test)]

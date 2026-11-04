@@ -105,6 +105,25 @@ impl CleanupSettings {
     }
 }
 
+impl UsageSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        count("usage.retention_days", self.retention_days, 1, 3650)?;
+        for (key, value) in [
+            ("usage.input_price_per_m", self.input_price_per_m),
+            (
+                "usage.cached_input_price_per_m",
+                self.cached_input_price_per_m,
+            ),
+            ("usage.output_price_per_m", self.output_price_per_m),
+        ] {
+            if !value.is_finite() || !(0.0..=1000.0).contains(&value) {
+                return Err(format!("{key} must be between 0 and 1000"));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl RetrySettings {
     pub(crate) fn validate(&self) -> Result<(), String> {
         self.llm.validate("retry.llm")?;

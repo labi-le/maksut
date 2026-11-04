@@ -338,6 +338,10 @@ pub(crate) async fn memory_compactor(cfg: Arc<Settings>) {
             Ok(_) => {}
             Err(error) => tracing::warn!("Ignore cleanup failed: {error}"),
         }
+        match crate::usage::prune(&cfg.database, unix_now()).await {
+            Ok(_) => {}
+            Err(error) => tracing::warn!("Usage cleanup failed: {error}"),
+        }
         if cfg.chat.is_some() {
             let chats: Vec<i64> = sqlx::query_scalar(
                 "SELECT DISTINCT chat_id FROM chat_messages WHERE compacted_at IS NULL AND flags = 0",
