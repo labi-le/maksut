@@ -133,6 +133,9 @@ fn followup_questions_and_requests_reply() {
     );
     assert_eq!(decide_rules(&followup("извинись")), Decision::Reply);
     assert_eq!(decide_rules(&followup("оформи заявку")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("а щас")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("але")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("што думаешь")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
 }
 

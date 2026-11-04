@@ -150,17 +150,62 @@ pub(crate) use cleanup::*;
 const TIKTOK_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
 
+const TELEGRAM_API_HOST: &str = "api.telegram.org";
+const TELEGRAM_FALLBACK_ADDRS: &[std::net::SocketAddr] = &[
+    std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+        std::net::Ipv4Addr::new(149, 154, 166, 110),
+        443,
+    )),
+    std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+        std::net::Ipv4Addr::new(149, 154, 167, 220),
+        443,
+    )),
+];
+
+/// When a split-tunnel resolver returns an RFC 2544 benchmark fake-IP for
+/// `api.telegram.org`, place Telegram's real public endpoints first so `reqwest`
+/// connects directly when the tunnel drops.
+pub(crate) fn apply_telegram_dns_fallback(
+    mut builder: reqwest::ClientBuilder,
+) -> reqwest::ClientBuilder {
+    if let Ok(resolved) = std::net::ToSocketAddrs::to_socket_addrs(&(TELEGRAM_API_HOST, 443)) {
+        let mut resolved_addrs: Vec<std::net::SocketAddr> = Vec::new();
+        let mut has_fake_ip = false;
+        for addr in resolved {
+            if let std::net::IpAddr::V4(ip) = addr.ip() {
+                let octets = ip.octets();
+                if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+                    has_fake_ip = true;
+                }
+            }
+            if !resolved_addrs.contains(&addr) {
+                resolved_addrs.push(addr);
+            }
+        }
+        if has_fake_ip {
+            let mut addrs = TELEGRAM_FALLBACK_ADDRS.to_vec();
+            for addr in resolved_addrs {
+                if !addrs.contains(&addr) {
+                    addrs.push(addr);
+                }
+            }
+            builder = builder.resolve_to_addrs(TELEGRAM_API_HOST, &addrs);
+        }
+    }
+    builder
+}
+
 pub(crate) fn telegram_bot(token: String) -> Result<Bot, reqwest::Error> {
     // Proxy tunnels close idle sockets before reqwest's 90s pool default.
     // Don't use teloxide's default_reqwest_settings because it hardcodes a 17s timeout.
     let telegram = &config().telegram;
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(telegram.connect_timeout_secs))
         .timeout(Duration::from_secs(telegram.request_timeout_secs))
         .pool_idle_timeout(Duration::from_secs(telegram.pool_idle_timeout_secs))
         .tcp_keepalive(Duration::from_secs(telegram.tcp_keepalive_secs))
-        .tcp_nodelay(true)
-        .build()?;
+        .tcp_nodelay(true);
+    let client = apply_telegram_dns_fallback(builder).build()?;
     Ok(Bot::with_client(token, client))
 }
 
