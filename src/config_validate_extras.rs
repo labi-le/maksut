@@ -124,6 +124,31 @@ impl UsageSettings {
     }
 }
 
+impl GithubSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        let repo = self.repo.trim();
+        let (owner, name) = repo.split_once('/').unwrap_or(("", ""));
+        let valid_part = |part: &str| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        };
+        if !valid_part(owner) || !valid_part(name) {
+            return Err("github.repo must be owner/name".into());
+        }
+        parse_http_endpoint(&self.api_base, "github.api_base")?;
+        count("github.timeout_secs", self.timeout_secs, 1, 60)?;
+        usize_count(
+            "github.max_response_bytes",
+            self.max_response_bytes,
+            1024,
+            4 * 1024 * 1024,
+        )?;
+        count("github.cache_ttl_secs", self.cache_ttl_secs, 1, 3600)
+    }
+}
+
 impl RetrySettings {
     pub(crate) fn validate(&self) -> Result<(), String> {
         self.llm.validate("retry.llm")?;

@@ -34,6 +34,8 @@ pub(crate) struct ToolState {
     pub(crate) inspect_calls: usize,
     pub(crate) chat_profile_calls: usize,
     pub(crate) read_logs_calls: usize,
+    pub(crate) github_calls: usize,
+    pub(crate) github_comment_calls: usize,
     pub(crate) inspect_announced: bool,
     pub(crate) remember_calls: usize,
     pub(crate) usage_calls: usize,
@@ -61,6 +63,8 @@ impl ToolState {
             inspect_calls: 0,
             chat_profile_calls: 0,
             read_logs_calls: 0,
+            github_calls: 0,
+            github_comment_calls: 0,
             inspect_announced: false,
             remember_calls: 0,
             usage_calls: 0,
@@ -72,7 +76,7 @@ impl ToolState {
     }
 }
 
-fn ack_lookup(ctx: &ToolContext<'_>) {
+pub(crate) fn ack_lookup(ctx: &ToolContext<'_>) {
     if let Some(bot) = ctx.bot {
         mark_lookup(bot, ctx.chat_id, MessageId(ctx.message_id));
     }
@@ -107,7 +111,12 @@ pub(crate) async fn run_tool_call(
         return "в режиме ресерча инструмент недоступен".to_string();
     }
     match kind {
-        None if !ctx.owner && matches!(name, "feature_status" | "feature_confirmation") => {
+        None if !ctx.owner
+            && matches!(
+                name,
+                "feature_status" | "feature_confirmation" | "github_comment"
+            ) =>
+        {
             json!({"error": "доступно только владельцу"}).to_string()
         }
         None if !ctx.owner && name == "remember_self" => {
@@ -296,6 +305,9 @@ pub(crate) async fn run_tool_call(
                 state.chat_profile_calls += 1;
                 crate::chat_profile::run(&args, ctx).await
             }
+        }
+        Some(kind @ (ToolKind::GithubIssue | ToolKind::GithubSearch | ToolKind::GithubComment)) => {
+            crate::github_dispatch::run(kind, &args, ctx, state).await
         }
         Some(ToolKind::RememberSelf) => {
             if !ctx.owner {
