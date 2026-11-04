@@ -9,7 +9,7 @@ help:
 	@printf "  make logs-cookies    Follow cookie-refresh container logs (TAIL=$(TAIL))\n"
 	@printf "  make logs-deploy     Follow maksut-deploy-hook.service journal logs (TAIL=$(TAIL))\n"
 	@printf "  make logs-improve    Follow maksut-self-improve.service journal logs (TAIL=$(TAIL))\n"
-	@printf "  make deploy-status   Show deployed SHA, HEAD, origin/main, container image, and recent deploy events\n"
+	@printf "  make deploy-status   Show deployed SHA, HEAD, origin/main, container image drift, and recent deploy events\n"
 	@printf "  make deploy-now      Run the published deploy shim now (the path the webhook takes)\n"
 
 logs:
@@ -35,9 +35,10 @@ deploy-status:
 	@git fetch --quiet origin main 2>/dev/null || true
 	@printf "origin/main:   %s\n" "$$(git rev-parse origin/main 2>/dev/null || echo unknown)"
 	@printf "deployed_sha:  %s\n" "$$(cat self-improve/deployed_sha 2>/dev/null || echo none)"
-	@printf "container:     %s\n" "$$(docker inspect maksut-maksut-1 --format '{{.Config.Image}} (started {{.State.StartedAt}})' 2>/dev/null || echo not-running)"
+	@printf "container:     %s\n" "$$(docker inspect $${AUTO_DEPLOY_CONTAINER:-maksut-maksut-1} --format '{{.Config.Image}} (started {{.State.StartedAt}})' 2>/dev/null || echo not-running)"
+	@printf "drift:         %s\n" "$$(AUTO_DEPLOY_REPO=$(CURDIR) python3 tools/auto_deploy.py --status || echo 'unknown: status failed')"
 	@printf "\nRecent deploy actions:\n"
-	@journalctl --user -u maksut-deploy-hook.service --grep="(deploy-hook: (deploying|deploy for)|auto-deploy: (deployed|fast-forwarded|docker |git |unable ))" -n 10 --no-pager || true
+	@journalctl --user -u maksut-deploy-hook.service --grep="(deploy-hook: (deploying|deploy for)|auto-deploy: (deployed|reconcil|fast-forwarded|docker |git |unable ))" -n 10 --no-pager || true
 	@printf "\nLatest deploy tick:\n"
 	@journalctl --user -u maksut-deploy-hook.service --grep="deploy-hook:" -n 3 --no-pager || true
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fcntl
 import io
+import json
 import os
 import re
 import shutil
@@ -35,6 +36,17 @@ CODE_PATHS = ("src", "tools", "docs", "Cargo.toml", "README.md", "AGENTS.md")
 # resolving against the repository root, then removed.
 COMPOSE_OVERRIDE = ".auto-deploy.compose.yaml"
 UNPUBLISHED_IMAGE_MARKERS = ("manifest unknown", "not found")
+# `compose.yaml` names the project `maksut`, so the single service container keeps
+# this name no matter which directory the file is read from.
+CONTAINER = os.environ.get("AUTO_DEPLOY_CONTAINER", "maksut-maksut-1")
+CODE_MOUNT = "/var/lib/maksut/code/src"
+INSPECT_TIMEOUT = 30
+# `docker inspect` without a template prints the whole config, including the
+# token from `Config.Env`; the drift check needs only these three fields.
+INSPECT_FORMAT = (
+    '{"running":{{json .State.Running}},"image":{{json .Config.Image}},'
+    '"mounts":{{json .Mounts}}}'
+)
 
 
 def log(message: str) -> None:
@@ -109,6 +121,64 @@ def write_deployed_sha(state_dir: Path, sha: str) -> None:
 
 def image_ref(sha: str) -> str:
     return f"{IMAGE_REPO}:{sha}"
+
+
+def inspect_container() -> dict | None:
+    """Return `{running, image, mounts}` for the `maksut` container, None when absent."""
+    try:
+        proc = run(
+            ["docker", "inspect", "--format", INSPECT_FORMAT, CONTAINER], timeout=INSPECT_TIMEOUT
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"docker inspect {CONTAINER} failed: {type(error).__name__}")
+        return None
+    if proc.returncode != 0:
+        detail = last_stderr_line(proc)
+        if "no such object" not in detail.lower():
+            log(f"docker inspect {CONTAINER} failed: {detail}")
+        return None
+    try:
+        container = json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        log(f"docker inspect {CONTAINER} returned invalid JSON")
+        return None
+    return container if isinstance(container, dict) else None
+
+
+def container_drift(sha: str, state_dir: Path) -> str | None:
+    """Explain why the running service does not serve `sha`, or None when it does.
+
+    `deployed_sha` only records what the last tick deployed; a manual
+    `docker compose up` with another `MAKSUT_IMAGE_TAG` or `MAKSUT_CODE_DIR`
+    leaves the marker lying, so the tick has to look at the container itself.
+    """
+    container = inspect_container()
+    if container is None:
+        return f"no {CONTAINER} container"
+    if container.get("running") is not True:
+        return f"{CONTAINER} is not running"
+    image = str(container.get("image") or "")
+    if image != image_ref(sha):
+        return f"container image {image or 'unknown'} != {image_ref(sha)}"
+    expected = state_dir / "code" / sha
+    source = ""
+    for mount in container.get("mounts") or []:
+        if isinstance(mount, dict) and mount.get("Destination") == CODE_MOUNT:
+            source = str(mount.get("Source") or "")
+            break
+    if not source or os.path.realpath(source) != os.path.realpath(expected):
+        return f"code mount {source or 'missing'} != {expected}"
+    return None
+
+
+def status(state_dir: Path = STATE_DIR) -> int:
+    """Print whether the running container serves the recorded `deployed_sha`."""
+    sha = read_deployed_sha(state_dir)
+    if not sha:
+        print("unknown: no deployed_sha")
+        return 0
+    print(container_drift(sha, state_dir) or f"ok: running {image_ref(sha)}")
+    return 0
 
 
 def pull_image(sha: str) -> bool:
@@ -258,7 +328,10 @@ def deploy_once(
     previous_sha = read_deployed_sha(state_dir)
     if previous_sha == target_sha:
         fast_forward_checkout(repo, remote, branch, target_sha)
-        return False
+        drift = container_drift(target_sha, state_dir)
+        if drift is None:
+            return False
+        log(f"reconciling {target_sha[:7]}: {drift}")
     if not pull_image(target_sha):
         return False
     code_dir = ensure_code_export(state_dir, target_sha, repo)
@@ -275,15 +348,22 @@ def deploy_once(
     finally:
         if temporary:
             compose_path.unlink(missing_ok=True)
-    write_deployed_sha(state_dir, target_sha)
+    if previous_sha != target_sha:
+        write_deployed_sha(state_dir, target_sha)
     prune_code_exports(state_dir, target_sha)
     if previous_sha and previous_sha != target_sha:
         remove_image(previous_sha)
-    log(f"deployed {target_sha[:7]}")
+    if previous_sha == target_sha:
+        log(f"reconciled container to {target_sha[:7]}")
+    else:
+        log(f"deployed {target_sha[:7]}")
     return True
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["--status"]:
+        return status()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = STATE_DIR / "auto-deploy.lock"
     with lock_path.open("w") as lock_file:

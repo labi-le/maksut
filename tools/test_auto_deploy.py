@@ -1,11 +1,13 @@
 import importlib.util
 import io
+import json
 import os
 import pathlib
 import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 IMAGE = "ghcr.io/labi-le/maxwell"
 # Pinned literally so a narrowed export list cannot silently drop a mounted path.
@@ -42,6 +44,17 @@ def tar_with(files: dict[str, str]) -> bytes:
     return buffer.getvalue()
 
 
+def container_state(image: str, code_dir: str, running: bool = True) -> dict:
+    """The `{running, image, mounts}` object `docker inspect --format` emits."""
+    return {
+        "running": running,
+        "image": image,
+        "mounts": [
+            {"Type": "bind", "Source": code_dir, "Destination": "/var/lib/maksut/code/src"},
+        ],
+    }
+
+
 class FakeGitAndDocker:
     """Answers the exact command shapes `auto_deploy.py` issues."""
 
@@ -58,6 +71,7 @@ class FakeGitAndDocker:
         compose_in_commit: bool = True,
         archive_ok: bool = True,
         up_ok: bool = True,
+        container: dict | None = None,
     ):
         self.branch = branch
         self.dirty = dirty
@@ -69,6 +83,7 @@ class FakeGitAndDocker:
         self.compose_in_commit = compose_in_commit
         self.archive_ok = archive_ok
         self.up_ok = up_ok
+        self.container = container
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
@@ -91,6 +106,15 @@ class FakeGitAndDocker:
                 return subprocess.CompletedProcess(args, 1, stdout="", stderr="merge refused")
             self.head_sha = self.remote_sha
             return subprocess.CompletedProcess(args, 0, stdout="Fast-forward\n", stderr="")
+        if args[:2] == ["docker", "inspect"]:
+            if self.container is None:
+                return subprocess.CompletedProcess(
+                    args, 1, stdout="", stderr=f"Error: No such object: {args[-1]}"
+                )
+            # Plain `docker inspect` prints a list of documents; the deploy only
+            # parses the single object its `--format` template emits.
+            payload = self.container if args[2:3] == ["--format"] else [self.container]
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
         if args[:3] == ["docker", "pull", "--quiet"]:
             code = 0 if self.pull_ok else 1
             return subprocess.CompletedProcess(args, code, stdout="", stderr=self.pull_stderr)
@@ -186,20 +210,172 @@ class AutoDeployTests(unittest.TestCase):
     def test_same_sha_does_not_pull_or_recreate(self):
         with tempfile.TemporaryDirectory() as tmp:
             module, repo, state = load_module(tmp)
-            module.write_deployed_sha(state, "b" * 40)
-            fake = install(module, FakeGitAndDocker(remote_sha="b" * 40, head_sha="b" * 40))
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", str(state / "code" / sha)),
+                ),
+            )
             self.assertFalse(module.deploy_once(repo, state))
-            self.assertEqual(fake.named(["docker"]), [])
+            self.assertEqual(fake.named(["docker", "pull"]), [])
+            self.assertEqual(fake.named(["docker", "compose"]), [])
             self.assertEqual(fake.named(["git", "merge"]), [])
 
     def test_idle_tick_catches_a_behind_checkout_up(self):
         with tempfile.TemporaryDirectory() as tmp:
             module, repo, state = load_module(tmp)
-            module.write_deployed_sha(state, "b" * 40)
-            fake = install(module, FakeGitAndDocker(remote_sha="b" * 40, head_sha="a" * 40))
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha="a" * 40,
+                    container=container_state(f"{IMAGE}:{sha}", str(state / "code" / sha)),
+                ),
+            )
             self.assertFalse(module.deploy_once(repo, state))
             self.assertIn(["git", "merge", "--ff-only", "origin/main"], fake.calls)
-            self.assertEqual(fake.named(["docker"]), [])
+            self.assertEqual(fake.named(["docker", "compose"]), [])
+
+    def test_same_sha_with_a_foreign_image_recreates_the_container(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{'c' * 40}", str(state / "code" / sha)),
+                ),
+            )
+            with mock.patch.object(module, "log") as logged, mock.patch.object(
+                module, "write_deployed_sha"
+            ) as writer:
+                self.assertTrue(module.deploy_once(repo, state))
+            writer.assert_not_called()
+            reasons = [call.args[0] for call in logged.call_args_list]
+            self.assertTrue(
+                any(reason.startswith("reconciling") and "!=" in reason for reason in reasons),
+                reasons,
+            )
+            self.assertIn(["docker", "pull", "--quiet", f"{IMAGE}:{sha}"], fake.calls)
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
+            self.assertEqual(env["MAKSUT_IMAGE_TAG"], sha)
+            self.assertEqual(module.read_deployed_sha(state), sha)
+
+    def test_missing_container_is_recreated_when_the_marker_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(module, FakeGitAndDocker(remote_sha=sha, head_sha=sha))
+            self.assertTrue(module.deploy_once(repo, state))
+            inspect = fake.named(["docker", "inspect"])
+            self.assertEqual(len(inspect), 1)
+            self.assertEqual(inspect[0][-1], "maksut-maksut-1")
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
+            self.assertEqual(env["MAKSUT_IMAGE_TAG"], sha)
+
+    def test_foreign_code_mount_is_reconciled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", str(repo)),
+                ),
+            )
+            self.assertTrue(module.deploy_once(repo, state))
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            env = [item for item in fake.envs if item.get("MAKSUT_CODE_DIR")][0]
+            self.assertEqual(env["MAKSUT_CODE_DIR"], str(state / "code" / sha))
+
+    def test_stopped_container_is_recreated_when_the_marker_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(
+                        f"{IMAGE}:{sha}", str(state / "code" / sha), running=False
+                    ),
+                ),
+            )
+            self.assertTrue(module.deploy_once(repo, state))
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
+            self.assertEqual(env["MAKSUT_IMAGE_TAG"], sha)
+
+    def test_status_prints_the_container_image_comparison(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", str(state / "code" / sha)),
+                ),
+            )
+            with mock.patch("builtins.print") as printed:
+                self.assertEqual(module.status(state), 0)
+            self.assertEqual(printed.call_args.args[0], f"ok: running {IMAGE}:{sha}")
+
+            install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{'c' * 40}", str(state / "code" / sha)),
+                ),
+            )
+            with mock.patch("builtins.print") as drifted:
+                self.assertEqual(module.status(state), 0)
+            self.assertEqual(
+                drifted.call_args.args[0], f"container image {IMAGE}:{'c' * 40} != {IMAGE}:{sha}"
+            )
+
+    def test_status_argument_stays_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", str(state / "code" / sha)),
+                ),
+            )
+            with mock.patch("builtins.print"):
+                self.assertEqual(module.main(["--status"]), 0)
+            self.assertEqual(fake.named(["docker", "pull"]), [])
+            self.assertEqual(fake.named(["docker", "compose"]), [])
+            self.assertEqual(fake.named(["git", "fetch"]), [])
 
     def test_feature_branch_checkout_is_left_alone_but_the_deploy_proceeds(self):
         with tempfile.TemporaryDirectory() as tmp:
