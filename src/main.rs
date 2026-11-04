@@ -41,6 +41,7 @@ mod chat_client;
 pub(crate) use chat_client::*;
 mod chat_media;
 pub(crate) use chat_media::*;
+mod chat_profile;
 mod chat_status;
 pub(crate) use chat_status::*;
 mod chat_style;
@@ -236,6 +237,8 @@ mod browser_test;
 mod caption_test;
 #[cfg(test)]
 mod chat_embeddings_test;
+#[cfg(test)]
+mod chat_profile_test;
 #[cfg(test)]
 mod chat_status_test;
 #[cfg(test)]

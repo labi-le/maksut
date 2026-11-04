@@ -193,6 +193,7 @@ async fn chat_search_tool_scopes_to_the_current_chat() {
         sender_name: "аня",
         username: None,
         message_id: 0,
+        reply_user_id: None,
         bot: None,
         read_url_targets: &[],
     };

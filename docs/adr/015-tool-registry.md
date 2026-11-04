@@ -40,6 +40,7 @@ the lists could drift.
 | `feature_status` | `All` | `FeatureStatus` |
 | `feature_confirmation` | `Owner` | `FeatureConfirmation` |
 | `inspect_code` | `All` | `InspectCode` |
+| `chat_profile` | `All` | `ChatProfile` |
 | `remember_self` | `Owner` | `RememberSelf` |
 | `find_stickers` | `All` | `FindStickers` |
 | `send_sticker` | `All` | `SendSticker` |

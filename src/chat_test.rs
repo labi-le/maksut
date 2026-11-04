@@ -957,7 +957,7 @@ async fn non_owner_can_use_stickers_and_inspect_code_but_not_remember_self() {
         .iter()
         .any(|message| message["role"] == "system"
             && message["content"].as_str().unwrap().contains(
-                "Доступные инструменты: web_search, research, read_url, propose_feature, feature_status, inspect_code, find_stickers, send_sticker"
+                "Доступные инструменты: web_search, research, read_url, propose_feature, feature_status, inspect_code, chat_profile, find_stickers, send_sticker"
             )));
     let second = body_of(&requests[1]);
     let tool_outputs = tool_contents(&requests[1]);
@@ -1940,6 +1940,7 @@ async fn research_request_marks_the_message_with_eyes() {
         sender_name: "tester",
         username: None,
         message_id: 7,
+        reply_user_id: None,
         owner: true,
         prompt: "сделай ресерч по rust",
         image: None,
@@ -2010,6 +2011,7 @@ async fn plain_reply_does_not_react_to_the_message() {
         sender_name: "tester",
         username: None,
         message_id: 7,
+        reply_user_id: None,
         owner: true,
         prompt: "привет",
         image: None,
@@ -2074,6 +2076,7 @@ async fn web_search_marks_the_message_on_every_pass() {
         sender_name: "tester",
         username: None,
         message_id: 7,
+        reply_user_id: None,
         owner: true,
         prompt: "погугли rust",
         image: None,
@@ -2154,6 +2157,7 @@ async fn read_url_marks_the_message_on_every_pass() {
         sender_name: "tester",
         username: None,
         message_id: 7,
+        reply_user_id: None,
         owner: true,
         prompt: &prompt,
         image: None,
