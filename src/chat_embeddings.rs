@@ -320,15 +320,25 @@ pub(crate) async fn reindex(chat: &ChatConfig, pool: &SqlitePool, passes: usize)
 /// Background backfill. Idempotent, bounded, and silent when embeddings are
 /// not configured; a failed batch leaves rows pending for the next tick.
 pub(crate) async fn chat_indexer(cfg: Arc<Settings>) {
+    let mut auth_failed = false;
     loop {
         if let Some(chat) = cfg.chat.as_ref() {
-            if enabled() {
+            if enabled() && !auth_failed {
                 for _ in 0..config().memory.embedding_passes {
                     match index_pending(chat, &cfg.database, config().memory.embedding_batch).await
                     {
                         Ok(0) => break,
                         Ok(_) => {}
                         Err(reason) => {
+                            if matches!(
+                                reason.as_str(),
+                                "embeddings HTTP 400"
+                                    | "embeddings HTTP 401"
+                                    | "embeddings HTTP 403"
+                                    | "embeddings HTTP 404"
+                            ) {
+                                auth_failed = true;
+                            }
                             tracing::warn!("Chat embedding index failed: {reason}");
                             break;
                         }

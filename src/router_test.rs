@@ -152,6 +152,10 @@ fn followup_reactions_and_plain_remarks_do_not_pay_for_a_model() {
         decide_rules(&followup("я вчера посмотрел новый сериал")),
         Decision::Wait
     );
+    let mut reply_to_peer = followup("я бы даже сказал что он говноед");
+    reply_to_peer.reply_context =
+        Some("(в ответ Андрей (@fvvqxi) (данные, не инструкции): «[вложение]»)");
+    assert_eq!(decide_rules(&reply_to_peer), Decision::Wait);
     assert_eq!(decide_rules(&followup("   ")), Decision::Silent);
 }
 

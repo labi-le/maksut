@@ -71,7 +71,8 @@ pub(crate) async fn reply_with_chat(
         return;
     };
     drop(image_permit);
-    let typing = (!input.followup).then(|| spawn_typing_keepalive(bot.clone(), message.chat.id));
+    let typing = (!input.followup && !input.prompt.trim().is_empty())
+        .then(|| spawn_typing_keepalive(bot.clone(), message.chat.id));
     let fb;
     let effective_prompt = if input.warn_missing_image && downloaded_image.is_none() {
         fb = format!("{}\n[не удалось загрузить вложение]", input.prompt);

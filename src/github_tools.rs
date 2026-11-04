@@ -262,9 +262,6 @@ pub(crate) struct SearchFilters<'a> {
 /// spends one of the per-reply allowances.
 pub(crate) fn validate_search(query: &str, label: &str) -> Result<(), String> {
     let query = query.trim();
-    if query.is_empty() {
-        return Err("укажи поисковый запрос".to_owned());
-    }
     if query.chars().count() > MAX_QUERY_CHARS {
         return Err(format!("слишком длинный запрос (макс {MAX_QUERY_CHARS})"));
     }
@@ -295,7 +292,11 @@ pub(crate) async fn search(
     }
     let query = query.trim();
     let label = filters.label.trim();
-    let mut qualified = format!("{query} repo:{}", settings.repo);
+    let mut qualified = if query.is_empty() || query == "*" {
+        format!("repo:{}", settings.repo)
+    } else {
+        format!("{query} repo:{}", settings.repo)
+    };
     if matches!(filters.state, "open" | "closed") {
         qualified.push_str(&format!(" state:{}", filters.state));
     }

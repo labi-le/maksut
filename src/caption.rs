@@ -30,12 +30,25 @@ pub(crate) fn placeholder_title(title: &str) -> bool {
         && id.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+fn title_is_description_prefix(title: &str, description: &str) -> bool {
+    if title == description || description.starts_with(title) {
+        return true;
+    }
+    let stem = title
+        .strip_suffix("...")
+        .or_else(|| title.strip_suffix('…'))
+        .map(str::trim_end);
+    stem.is_some_and(|stem| !stem.is_empty() && description.starts_with(stem))
+}
+
 pub(crate) fn caption_text(title: Option<&str>, description: Option<&str>) -> Option<String> {
     let title = title.map(str::trim).filter(|text| !text.is_empty());
     let description = description.map(str::trim).filter(|text| !text.is_empty());
     let title = title.filter(|title| !placeholder_title(title));
     match (title, description) {
-        (Some(title), Some(description)) if title == description => Some(title.to_owned()),
+        (Some(title), Some(description)) if title_is_description_prefix(title, description) => {
+            Some(description.to_owned())
+        }
         (Some(title), Some(description)) => Some(format!("{title}\n\n{description}")),
         (Some(text), None) | (None, Some(text)) => Some(text.to_owned()),
         (None, None) => None,

@@ -115,7 +115,7 @@ async fn issue_truncates_long_bodies_to_the_output_cap() {
 
 #[tokio::test]
 async fn search_scopes_the_query_to_the_fixed_repo() {
-    let llm = mock_server(vec![json!({
+    let response = json!({
         "total_count": 1,
         "items": [{
             "number": 55,
@@ -127,8 +127,8 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
             "pull_request": {"merged_at": null}
         }]
     })
-    .to_string()])
-    .await;
+    .to_string();
+    let llm = mock_server(vec![response.clone(), response]).await;
     let cfg = settings(llm.url.as_str());
     let text = crate::github_tools::search(
         &cfg,
@@ -149,6 +149,22 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
         text.contains("https://github.com/labi-le/maxwell/pull/55"),
         "{text}"
     );
+    let empty_text = crate::github_tools::search(
+        &cfg,
+        None,
+        "",
+        crate::github_tools::SearchFilters {
+            state: "closed",
+            label: "",
+            kind: "pr",
+            limit: 5,
+        },
+    )
+    .await;
+    assert!(
+        empty_text.contains("ничего не найдено") || empty_text.contains("repo:"),
+        "{empty_text}"
+    );
     let requests = llm.requests.lock().unwrap();
     let request = &requests[0];
     assert!(request.starts_with("GET /search/issues?"), "{request}");
@@ -159,6 +175,11 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
         "{request}"
     );
     assert!(request.contains("per_page=3"), "{request}");
+    assert!(
+        requests[1].contains("q=repo%3Alabi-le%2Fmaxwell+state%3Aclosed+is%3Apr"),
+        "{}",
+        requests[1]
+    );
     llm.task.abort();
 }
 
@@ -333,21 +354,19 @@ async fn invalid_arguments_never_reach_the_network() {
         crate::github_tools::comment(&cfg, Some("t"), 0, "hi").await,
         "укажи номер issue или PR"
     );
-    assert_eq!(
-        crate::github_tools::search(
-            &cfg,
-            None,
-            "   ",
-            crate::github_tools::SearchFilters {
-                state: "all",
-                label: "",
-                kind: "all",
-                limit: 5,
-            },
-        )
-        .await,
-        "укажи поисковый запрос"
-    );
+    assert!(crate::github_tools::search(
+        &cfg,
+        None,
+        &"x".repeat(201),
+        crate::github_tools::SearchFilters {
+            state: "all",
+            label: "",
+            kind: "all",
+            limit: 5,
+        },
+    )
+    .await
+    .contains("слишком длинный"));
     assert!(llm.requests.lock().unwrap().is_empty());
     llm.task.abort();
 }

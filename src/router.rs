@@ -183,6 +183,9 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
     if !input.followup {
         return Decision::Silent;
     }
+    if input.reply_context.is_some() {
+        return Decision::Wait;
+    }
     let text = input.text.trim();
     if text.is_empty() {
         return Decision::Silent;

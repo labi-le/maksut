@@ -31,6 +31,14 @@ fn caption_text_keeps_title_and_deduplicates_matching_description() {
         Some("Одинаково")
     );
     assert_eq!(
+        caption_text(
+            Some("Ai interviewer losses her mind then hangs up on me for speaking gibbe..."),
+            Some("Ai interviewer losses her mind then hangs up on me for speaking gibberish")
+        )
+        .as_deref(),
+        Some("Ai interviewer losses her mind then hangs up on me for speaking gibberish")
+    );
+    assert_eq!(
         caption_text(Some("Video by someone"), Some("Описание")).as_deref(),
         Some("Описание")
     );

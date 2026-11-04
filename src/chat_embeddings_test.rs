@@ -400,3 +400,31 @@ fn search_request_rejects_bad_arguments_and_bounds_limit() {
         limit
     );
 }
+
+#[tokio::test]
+async fn search_falls_back_to_lexical_matching_when_embeddings_return_403() {
+    let (_dir, pool) = test_pool().await;
+    let server = mock_server_with_statuses(vec![(403, "{}".into())]).await;
+    let chat = chat_config(&server.url).await;
+    recorded(&pool, 1, 10, "аня", "котики любят свежую рыбу", 0).await;
+    recorded(&pool, 1, 11, "петя", "погода в москве", 0).await;
+
+    let output = search(
+        &chat,
+        &pool,
+        ChatId(1),
+        0,
+        &request(json!({"query": "котики рыбу"})),
+    )
+    .await
+    .unwrap();
+    let value: Value = serde_json::from_str(&output).unwrap();
+    let texts: Vec<&str> = value["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["котики любят свежую рыбу"]);
+    server.task.abort();
+}

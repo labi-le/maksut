@@ -122,8 +122,8 @@ pub(crate) fn flatten_reply_text(text: &str) -> String {
             in_code = true;
             fence_ticks = ticks;
         } else {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
+            let trimmed = line.trim_end();
+            if trimmed.trim().is_empty() {
                 if !out.is_empty() {
                     pending_blank = true;
                 }
@@ -132,10 +132,15 @@ pub(crate) fn flatten_reply_text(text: &str) -> String {
                     out.push('\n');
                     pending_blank = false;
                 }
-                let prose = if trimmed.contains(['—', '–']) {
-                    std::borrow::Cow::Owned(trimmed.replace(['—', '–'], "-"))
+                let row = if is_markdown_table_row(trimmed) {
+                    trimmed
                 } else {
-                    std::borrow::Cow::Borrowed(trimmed)
+                    trimmed.trim_start()
+                };
+                let prose = if row.contains(['—', '–']) {
+                    std::borrow::Cow::Owned(row.replace(['—', '–'], "-"))
+                } else {
+                    std::borrow::Cow::Borrowed(row)
                 };
                 push_line(&mut out, &expand_repo_blob_links(&prose));
             }
@@ -160,11 +165,29 @@ pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
     }
     let mut out = String::with_capacity(text.len() + 32);
     let mut code = String::new();
-    let mut table = String::new();
+    let mut table: Vec<String> = Vec::new();
     let mut lang = String::new();
     let mut in_code = false;
     let mut fence_ticks = 0;
     let mut formatted = false;
+    let flush_table = |out: &mut String, table: &mut Vec<String>, formatted: &mut bool| {
+        if table.len() >= 2 {
+            let mut block = String::with_capacity(table.iter().map(|l| l.len() + 1).sum());
+            for (idx, row) in table.iter().enumerate() {
+                if idx > 0 {
+                    block.push('\n');
+                }
+                push_escaped_html(&mut block, row);
+            }
+            push_html_pre(out, "", &block);
+            *formatted = true;
+            table.clear();
+        } else if let Some(single) = table.pop() {
+            let (rendered, line_has_code) = render_inline_code_html(&single);
+            *formatted |= line_has_code;
+            push_line(out, &rendered);
+        }
+    };
     for line in text.lines() {
         let line = line.trim_end_matches('\r');
         if in_code {
@@ -181,25 +204,14 @@ pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
                 code.push_str(&escape_html(line));
             }
         } else if let Some(ticks) = fence_open_ticks(line) {
-            if !table.is_empty() {
-                push_html_pre(&mut out, "", &table);
-                table.clear();
-                formatted = true;
-            }
+            flush_table(&mut out, &mut table, &mut formatted);
             in_code = true;
             fence_ticks = ticks;
             lang = fence_language(line, ticks);
         } else if has_table && is_markdown_table_row(line) {
-            if !table.is_empty() {
-                table.push('\n');
-            }
-            table.push_str(&escape_html(line.trim()));
+            table.push(line.trim_end().to_owned());
         } else {
-            if !table.is_empty() {
-                push_html_pre(&mut out, "", &table);
-                table.clear();
-                formatted = true;
-            }
+            flush_table(&mut out, &mut table, &mut formatted);
             if let Some(heading) = markdown_heading_body(line) {
                 let (rendered, _) = render_inline_code_html(heading);
                 push_line(&mut out, &format!("<b>{rendered}</b>"));
@@ -211,10 +223,7 @@ pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
             }
         }
     }
-    if !table.is_empty() {
-        push_html_pre(&mut out, "", &table);
-        formatted = true;
-    }
+    flush_table(&mut out, &mut table, &mut formatted);
     if in_code {
         push_html_pre(&mut out, &lang, &code);
         formatted = true;
@@ -297,7 +306,23 @@ fn markdown_heading_body(line: &str) -> Option<&str> {
 
 fn is_markdown_table_row(line: &str) -> bool {
     let trimmed = line.trim();
-    trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.matches('|').count() >= 3
+    if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.matches('|').count() >= 3 {
+        return true;
+    }
+    if trimmed
+        .chars()
+        .any(|ch| matches!(ch, '█' | '▓' | '▒' | '░'))
+    {
+        return true;
+    }
+    trimmed.chars().count() <= 96
+        && !trimmed.contains("http://")
+        && !trimmed.contains("https://")
+        && trimmed
+            .split("  ")
+            .filter(|col| !col.trim().is_empty())
+            .count()
+            >= 3
 }
 
 fn has_markdown_table(text: &str) -> bool {

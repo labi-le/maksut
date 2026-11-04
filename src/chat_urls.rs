@@ -81,11 +81,28 @@ impl ChatConfig {
 /// blob URLs while leaving existing `http(s)://` URLs untouched.
 pub(crate) fn expand_repo_blob_links(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    for word in text.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
+    let mut rest = text;
+    while !rest.is_empty() {
+        let ws_len: usize = rest
+            .chars()
+            .take_while(|ch| ch.is_whitespace())
+            .map(char::len_utf8)
+            .sum();
+        if ws_len > 0 {
+            out.push_str(rest.get(..ws_len).unwrap_or(""));
+            rest = rest.get(ws_len..).unwrap_or("");
+            if rest.is_empty() {
+                break;
+            }
         }
+        let word_len: usize = rest
+            .chars()
+            .take_while(|ch| !ch.is_whitespace())
+            .map(char::len_utf8)
+            .sum();
+        let word = rest.get(..word_len).unwrap_or("");
         push_expanded_repo_token(&mut out, word);
+        rest = rest.get(word_len..).unwrap_or("");
     }
     out
 }

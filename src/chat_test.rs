@@ -172,6 +172,15 @@ fn style_reply_keeps_fenced_code_blocks_on_their_own_lines() {
         render_telegram_html(&bold_and_heading).as_deref(),
         Some("<b>Заголовок</b>\n\n<b>Суть.</b> текст с <code>&lt;tag&gt;</code>")
     );
+    let aligned_table = style_reply(
+        "вот сводка:\n\nкто              запросов   вход      цена\nДенис               24     505 002   $0.0811\nДаня                 8     149 823   $0.0238\n\nи бары:\nДенис   ████████████ 24\nДаня    ████ 8",
+    );
+    assert_eq!(
+        render_telegram_html(&aligned_table).as_deref(),
+        Some(
+            "вот сводка:\n\n<pre><code>кто              запросов   вход      цена\nДенис               24     505 002   $0.0811\nДаня                 8     149 823   $0.0238</code></pre>\n\nи бары:\n<pre><code>Денис   ████████████ 24\nДаня    ████ 8</code></pre>"
+        )
+    );
 }
 
 #[test]

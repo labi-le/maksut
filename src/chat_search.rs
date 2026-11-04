@@ -125,7 +125,47 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// Semantic matches merged with the newest messages of the same chat.
+fn lexical_score(query_words: &[(&str, &str)], text: &str, author: &str) -> f32 {
+    let text_lower = text.to_lowercase();
+    let author_lower = author.to_lowercase();
+    let mut score = 0.0f32;
+    let mut matched = 0usize;
+    for &(word, stem) in query_words {
+        let exact_text = text_lower.contains(word);
+        let stem_text = !exact_text && text_lower.contains(stem);
+        let exact_author = author_lower.contains(word);
+        if exact_text {
+            score += 0.45;
+        } else if stem_text {
+            score += 0.30;
+        } else if exact_author {
+            score += 0.25;
+        }
+        if exact_text || stem_text || exact_author {
+            matched += 1;
+        }
+    }
+    if query_words.len() > 1 && matched == query_words.len() {
+        score += 0.35;
+    }
+    score.min(1.0)
+}
+
+fn stem_slice(word: &str) -> &str {
+    let count = word.chars().count();
+    if count < 5 {
+        return word;
+    }
+    let keep = count.saturating_sub(if count >= 6 { 2 } else { 1 });
+    word.char_indices()
+        .nth(keep)
+        .and_then(|(idx, _)| word.get(..idx))
+        .unwrap_or(word)
+}
+
+/// Semantic matches merged with the newest messages of the same chat, falling
+/// back to bounded lexical scoring over `chat_messages` when the embeddings
+/// endpoint is unavailable or no vectors are indexed for the current model.
 pub(crate) async fn search(
     chat: &ChatConfig,
     pool: &SqlitePool,
@@ -137,52 +177,112 @@ pub(crate) async fn search(
     if model.is_empty() {
         return Err("поиск по истории выключен: memory.embedding_model пуст".into());
     }
-    let query = embed_texts(chat, std::slice::from_ref(&request.query)).await?;
-    let query = query
-        .into_iter()
-        .next()
-        .and_then(unit_vector)
-        .ok_or_else(|| "модель вернула пустой вектор запроса".to_string())?;
-    let rows: Vec<(i64, i64, String, i64, String, Vec<u8>)> = sqlx::query_as(
-        "SELECT m.id, m.author_id, m.author_name, m.created_at, e.chunk_text, e.vector \
-         FROM chat_embeddings e JOIN chat_messages m ON m.id = e.message_id \
-         WHERE e.chat_id = ? AND e.model = ? AND m.flags = 0 \
-           AND (? IS NULL OR m.author_id = ?) \
-           AND (? IS NULL OR m.created_at >= ?) \
-           AND (? IS NULL OR m.created_at < ?) \
-         ORDER BY m.id DESC LIMIT ?",
+    let has_vectors: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM chat_embeddings WHERE chat_id = ? AND model = ? LIMIT 1",
     )
     .bind(chat_id.0)
     .bind(&model)
-    .bind(request.author_id)
-    .bind(request.author_id)
-    .bind(request.since)
-    .bind(request.since)
-    .bind(request.until)
-    .bind(request.until)
-    .bind(config().memory.search_scan_rows)
-    .fetch_all(pool)
+    .fetch_one(pool)
     .await
-    .map_err(|_| "database".to_string())?;
+    .unwrap_or(0);
+    let query_vec = if has_vectors > 0 {
+        embed_texts(chat, std::slice::from_ref(&request.query))
+            .await
+            .ok()
+            .and_then(|vecs| vecs.into_iter().next())
+            .and_then(unit_vector)
+    } else {
+        None
+    };
     let min_score = config().memory.search_min_score;
-    let mut hits: Vec<(f32, i64, i64, String, i64, String)> = rows
-        .into_iter()
-        .filter_map(|(id, author_id, author_name, created_at, text, bytes)| {
-            let vector = decode_vector(&bytes)?;
-            if vector.len() != query.len() {
-                return None;
-            }
-            let score = dot(&query, &vector);
-            (score.is_finite() && score >= min_score).then_some((
-                score,
-                id,
-                author_id,
-                author_name,
-                created_at,
-                text,
-            ))
-        })
-        .collect();
+    let mut hits: Vec<(f32, i64, i64, String, i64, String)> = Vec::new();
+    if let Some(query) = query_vec {
+        let rows: Vec<(i64, i64, String, i64, String, Vec<u8>)> = sqlx::query_as(
+            "SELECT m.id, m.author_id, m.author_name, m.created_at, e.chunk_text, e.vector \
+             FROM chat_embeddings e JOIN chat_messages m ON m.id = e.message_id \
+             WHERE e.chat_id = ? AND e.model = ? AND m.flags = 0 \
+               AND (? IS NULL OR m.author_id = ?) \
+               AND (? IS NULL OR m.created_at >= ?) \
+               AND (? IS NULL OR m.created_at < ?) \
+             ORDER BY m.id DESC LIMIT ?",
+        )
+        .bind(chat_id.0)
+        .bind(&model)
+        .bind(request.author_id)
+        .bind(request.author_id)
+        .bind(request.since)
+        .bind(request.since)
+        .bind(request.until)
+        .bind(request.until)
+        .bind(config().memory.search_scan_rows)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| "database".to_string())?;
+        hits = rows
+            .into_iter()
+            .filter_map(|(id, author_id, author_name, created_at, text, bytes)| {
+                let vector = decode_vector(&bytes)?;
+                if vector.len() != query.len() {
+                    return None;
+                }
+                let score = dot(&query, &vector);
+                (score.is_finite() && score >= min_score).then_some((
+                    score,
+                    id,
+                    author_id,
+                    author_name,
+                    created_at,
+                    text,
+                ))
+            })
+            .collect();
+    }
+    if hits.is_empty() {
+        let lowered = request.query.to_lowercase();
+        let words: Vec<(&str, &str)> = lowered
+            .split(|ch: char| !ch.is_alphanumeric())
+            .filter(|w| w.chars().count() >= 2)
+            .map(|w| (w, stem_slice(w)))
+            .collect();
+        if !words.is_empty() {
+            let raw_rows: Vec<(i64, i64, String, i64, String)> = sqlx::query_as(
+                "SELECT m.id, m.author_id, m.author_name, m.created_at, m.text \
+                 FROM chat_messages m \
+                 WHERE m.chat_id = ? AND m.flags = 0 AND trim(m.text) <> '' \
+                   AND (m.message_id IS NULL OR m.message_id != ?) \
+                   AND (? IS NULL OR m.author_id = ?) \
+                   AND (? IS NULL OR m.created_at >= ?) \
+                   AND (? IS NULL OR m.created_at < ?) \
+                 ORDER BY m.id DESC LIMIT ?",
+            )
+            .bind(chat_id.0)
+            .bind(i64::from(current_message_id))
+            .bind(request.author_id)
+            .bind(request.author_id)
+            .bind(request.since)
+            .bind(request.since)
+            .bind(request.until)
+            .bind(request.until)
+            .bind(config().memory.search_scan_rows)
+            .fetch_all(pool)
+            .await
+            .map_err(|_| "database".to_string())?;
+            hits = raw_rows
+                .into_iter()
+                .filter_map(|(id, author_id, author_name, created_at, text)| {
+                    let score = lexical_score(&words, &text, &author_name);
+                    (score >= min_score).then_some((
+                        score,
+                        id,
+                        author_id,
+                        author_name,
+                        created_at,
+                        text,
+                    ))
+                })
+                .collect();
+        }
+    }
     hits.sort_by(|left, right| right.0.total_cmp(&left.0));
     let mut seen = std::collections::HashSet::new();
     let mut seen_texts = std::collections::HashSet::new();
