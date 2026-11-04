@@ -1,0 +1,12 @@
+{
+  "chat_id": -1001234567890,
+  "bot_username": "maksut_bot",
+  "mcp_url": "http://127.0.0.1:8932/mcp",
+  "prompt": "ping",
+  "timeout_secs": 120,
+  "poll_secs": 2,
+  "media_url": "",
+  "media_timeout_secs": 300,
+  "sticker_prompt": "",
+  "require": false
+}

@@ -41,3 +41,13 @@ When a refutation is ITSELF disputed, neither side closes the finding unilateral
 - Avoidable allocations, unbounded reads (`take` / chunked size checks are required on every HTTP and subprocess pipe), and holding locks across `.await` are blocking findings.
 
 **Comments and docs are first-class review targets.** The recurring defect is the true-when-written claim: a doc or comment that still names Firefox cookie timers after [ADR 008](../adr/008-docker-cookie-refresh-service.md), `ALLOWED_TOOLS` after [ADR 015](../adr/015-tool-registry.md), or a 5-tool registry after `research`, `feature_status`, `feature_confirmation`, `inspect_code` and `read_url` landed. A review that approves the code and ignores the comments or guides its change falsified has not finished.
+
+## Live check through Telegram
+
+**A change that alters what the bot does in a chat is not done until a real chat answered it.** `tools/e2e_telegram.py` drives the deployed bot as a user through the `telegram-mcp` server and prints one line per check: `mcp`, `reply`, `formatting`, `secret-leak`, plus `media`/`media-audio` and `sticker` when configured. The driver is an MTProto user session, not a bot: Bot API never shows a bot the messages another bot sends, so a second bot cannot play the user. The session lives in the owner's nixos module (`/run/agenix/telegram-mcp`), which is why this repository stores no bot token, `api_id` or session string for it.
+
+Run it locally before opening the pull request and paste the transcript into the issue comment next to the build and test output. It cannot run in GitHub Actions: Actions cannot reach `http://192.168.1.2:8932/mcp`, and exposing the session to the internet is a worse trade than a local gate. Configuration is `self-improve/e2e.json` (`example.e2e.json`; `chat_id`, `bot_username`, `mcp_url`), overridable through `MAKSUT_E2E_CHAT_ID`, `MAKSUT_E2E_MCP_URL`, `MAKSUT_E2E_BOT_USERNAME`, `MAKSUT_E2E_MEDIA_URL` and `MAKSUT_E2E_STICKER_PROMPT`; with no `mcp_url` the harness uses `TELEGRAM_MCP_URL`, the same variable `tools/build_sticker_index.py` reads.
+
+A run without configuration or without a reachable MCP prints `SKIP` with the reason and exits 0, so the suite still runs on a host that has no session (`tools/test_e2e_telegram.py` exercises the whole client against a fake MCP server). For the run that gats a pull request, set `"require": true` or `MAKSUT_E2E_REQUIRE=1`: a skip then becomes a failure.
+
+Only assertions a model cannot vary belong here: the bot answered at all, its message carries no literal `parse_mode` markup, no token-shaped value, and a delivered video is downloadable and carries an audio stream (`ffprobe`). Asserting reply wording pins the model, not the feature, and fails on the next prompt tweak.

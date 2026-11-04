@@ -71,6 +71,7 @@ Every module is declared in `src/main.rs` and shares imports through `src/prelud
 - `tools/pr_review.py` (`test_pr_review.py`): GitHub Actions PR reviewer (`.github/workflows/pr-review.yml`) that posts automated architecture + performance reviews using `REVIEWER_TOKEN`
 - `tools/omp_worker.py` (`test_omp_worker.py`): standalone sandbox helper that runs an `omp` agent inside a disposable read-only Docker container connected only to `maksut-self-improve-internal` (`self_improve/proxy.Dockerfile` + `self_improve/proxy.py`); retained as an isolated utility while live feature intake routes through GitHub issues (`tools/self_improve_orchestrator.py`)
 - `tools/build_sticker_index.py`: host-side utility using Telegram MCP and a vision model to refresh `sticker_sets.txt` and `sticker_descriptions.json`
+- `tools/e2e_telegram.py` (`test_e2e_telegram.py`): local pre-PR live check that drives the deployed bot through the `telegram-mcp` user session (`self-improve/e2e.json`, `example.e2e.json`, `MAKSUT_E2E_*`); verifies the bot answered, its message carries no literal `parse_mode` markup and no token-shaped value, and — when configured — that a media link produced a downloadable message with an audio stream (`ffprobe`) and that a sticker request produced a sticker. It prints `SKIP` with a reason when the config or the MCP server is absent, so `python3 -m unittest discover -s tools` stays green on hosts without a Telegram session
 
 ## Other top-level paths
 
