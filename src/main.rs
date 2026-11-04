@@ -78,6 +78,9 @@ mod search_providers;
 pub(crate) use search::*;
 mod tool_registry;
 pub(crate) use tool_registry::*;
+mod github_dispatch;
+mod github_render;
+mod github_tools;
 mod memory;
 pub(crate) use memory::*;
 mod chat_embeddings;
@@ -276,6 +279,8 @@ mod download_test;
 mod download_videos_test;
 #[cfg(test)]
 mod feature_support;
+#[cfg(test)]
+mod github_tools_test;
 #[cfg(test)]
 mod handler_test;
 #[cfg(test)]

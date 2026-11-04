@@ -81,6 +81,16 @@ chat_search_calls_per_reply = 3
 usage_stats_calls_per_reply = 3
 research_status_calls_per_reply = 3
 research_cancel_calls_per_reply = 2
+github_calls_per_reply = 4
+github_comment_calls_per_reply = 1
+
+[github]
+# The only repository the GitHub tools may touch; a chat message cannot change it.
+repo = "labi-le/maxwell"
+api_base = "https://api.github.com"
+timeout_secs = 15
+max_response_bytes = 524288
+cache_ttl_secs = 60
 
 [llm]
 base_url = "https://llm.labile.cc/v1"

@@ -78,6 +78,22 @@ pub(crate) struct ChatSettings {
     pub(crate) usage_stats_calls_per_reply: usize,
     pub(crate) research_status_calls_per_reply: usize,
     pub(crate) research_cancel_calls_per_reply: usize,
+    pub(crate) github_calls_per_reply: usize,
+    pub(crate) github_comment_calls_per_reply: usize,
+}
+
+/// The GitHub tools talk to exactly one repository. `repo` and `api_base` are
+/// operator settings, never model input: a model-chosen `owner/repo` would turn
+/// the tool into an arbitrary outbound request and chat-memory exfiltration
+/// channel.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct GithubSettings {
+    pub(crate) repo: String,
+    pub(crate) api_base: String,
+    pub(crate) timeout_secs: u64,
+    pub(crate) max_response_bytes: usize,
+    pub(crate) cache_ttl_secs: u64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -400,6 +416,16 @@ defaults!(ChatSettings {
     usage_stats_calls_per_reply: 3,
     research_status_calls_per_reply: 3,
     research_cancel_calls_per_reply: 2,
+    github_calls_per_reply: 4,
+    github_comment_calls_per_reply: 1,
+});
+
+defaults!(GithubSettings {
+    repo: "labi-le/maxwell".into(),
+    api_base: "https://api.github.com".into(),
+    timeout_secs: 15,
+    max_response_bytes: 512 * 1024,
+    cache_ttl_secs: 60,
 });
 
 defaults!(LlmSettings {

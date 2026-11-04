@@ -10,6 +10,7 @@ impl Config {
         self.paths.validate()?;
         self.telegram.validate()?;
         self.chat.validate()?;
+        self.github.validate()?;
         self.llm.validate()?;
         self.router.validate()?;
         self.search.validate()?;
@@ -254,6 +255,11 @@ impl ChatSettings {
             (
                 "chat.research_cancel_calls_per_reply",
                 self.research_cancel_calls_per_reply,
+            ),
+            ("chat.github_calls_per_reply", self.github_calls_per_reply),
+            (
+                "chat.github_comment_calls_per_reply",
+                self.github_comment_calls_per_reply,
             ),
         ] {
             usize_count(key, value, 1, 64)?;
