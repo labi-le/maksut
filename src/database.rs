@@ -47,6 +47,16 @@ pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> 
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS chat_embeddings (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, chunk_text TEXT NOT NULL, vector BLOB NOT NULL, model TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(chat_id, message_id))",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS chat_embeddings_lookup ON chat_embeddings(message_id, model)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     )
     .execute(&pool)

@@ -201,7 +201,54 @@ impl MemorySettings {
             1,
             86_400,
         )?;
-        signed("memory.load_limit", self.load_limit, 1, 100_000)
+        signed("memory.load_limit", self.load_limit, 1, 100_000)?;
+        if self.embedding_model.chars().count() > 100 {
+            return Err("memory.embedding_model must be at most 100 characters".into());
+        }
+        usize_count("memory.embedding_dim", self.embedding_dim, 0, 8192)?;
+        usize_count("memory.embedding_batch", self.embedding_batch, 1, 128)?;
+        usize_count(
+            "memory.embedding_max_chars",
+            self.embedding_max_chars,
+            50,
+            4000,
+        )?;
+        usize_count(
+            "memory.embedding_max_response_bytes",
+            self.embedding_max_response_bytes,
+            64 * 1024,
+            32 * 1024 * 1024,
+        )?;
+        usize_count("memory.embedding_passes", self.embedding_passes, 1, 20)?;
+        count(
+            "memory.embedding_interval_secs",
+            self.embedding_interval_secs,
+            10,
+            86_400,
+        )?;
+        signed("memory.search_scan_rows", self.search_scan_rows, 1, 20_000)?;
+        usize_count("memory.search_limit", self.search_limit, 1, 20)?;
+        if !self.search_min_score.is_finite() || !(0.0..=1.0).contains(&self.search_min_score) {
+            return Err("memory.search_min_score must be between 0.0 and 1.0".into());
+        }
+        usize_count(
+            "memory.search_chunk_chars",
+            self.search_chunk_chars,
+            50,
+            2000,
+        )?;
+        usize_count(
+            "memory.search_max_chars",
+            self.search_max_chars,
+            200,
+            20_000,
+        )?;
+        usize_count(
+            "memory.search_recent_messages",
+            self.search_recent_messages,
+            0,
+            50,
+        )
     }
 }
 
