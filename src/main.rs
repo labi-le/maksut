@@ -38,6 +38,8 @@ pub(crate) use media_cache::{
 };
 
 mod addressing;
+mod prompts;
+pub(crate) use prompts::*;
 mod chat;
 pub(crate) use chat::*;
 mod chat_delivery;

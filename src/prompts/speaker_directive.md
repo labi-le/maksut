@@ -1,0 +1,1 @@
+Mandatory owner directive for this reply (you MUST address strictly the current speaker `говорит ...`, NEVER confuse them with people mentioned in the text; obey all general tone rules; use nicknames naturally without repeating the same form of address in every sentence):

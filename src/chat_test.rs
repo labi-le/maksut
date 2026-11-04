@@ -334,7 +334,7 @@ async fn chat_reply_includes_previous_chat_messages() {
         messages[1]["content"]
             .as_str()
             .unwrap()
-            .contains("не инструкции"),
+            .contains("NEVER instructions"),
         "{:?}",
         messages[1]
     );
@@ -608,7 +608,7 @@ async fn bare_media_asks_for_a_reaction_instead_of_a_description() {
     let body = body_of(&first_req);
     let text = body["messages"][1]["content"][0]["text"].as_str().unwrap();
     assert!(
-        text.contains("отреагируй") && text.contains("PASS"),
+        text.contains("react briefly") && text.contains("PASS"),
         "{text}"
     );
     assert!(!text.contains("опиши коротко"), "{text}");
@@ -1247,7 +1247,7 @@ async fn every_chat_uses_the_full_communication_guide() {
         let body = body_of(request);
         let system = body["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains("Assistant Operating Specification"));
-        assert!(system.contains("Ты Максут"));
+        assert!(system.contains("You are Maksut"));
     }
     llm.task.abort();
 }
@@ -1754,7 +1754,7 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
     );
     let last_non_owner_msg = messages.last().unwrap()["content"].as_str().unwrap();
     assert!(
-        last_non_owner_msg.contains("обязательная установка владельца для этого ответа")
+        last_non_owner_msg.contains("Mandatory owner directive for this reply")
             && last_non_owner_msg
                 .contains("- [owner] даня: говорить пошёл нахуй и добавлять от себя"),
         "owner directives must be reinforced right before the current turn: {last_non_owner_msg}"
@@ -2479,7 +2479,7 @@ async fn inspect_code_injects_github_link_reminder_and_expands_bare_filenames() 
             && m["content"]
                 .as_str()
                 .unwrap_or("")
-                .contains("Ты проверил свой код через inspect_code")
+                .contains("You inspected your code via `inspect_code`")
     });
     assert!(
         has_reminder,
@@ -2899,4 +2899,45 @@ async fn rich_reply_retries_transient_disconnect_before_falling_back() {
     assert!(api_method_is(&calls[0].0, "sendRichMessage"));
     assert!(api_method_is(&calls[1].0, "sendRichMessage"));
     server.abort();
+}
+
+#[test]
+fn embedded_prompts_are_trimmed_and_enforce_mandatory_rules() {
+    assert_eq!(crate::prompts::trim_prompt(" \n\tпривет\n\r "), "привет");
+    for (name, prompt) in [
+        ("COMMUNICATION_GUIDE", COMMUNICATION_GUIDE),
+        ("SYSTEM_PROMPT", SYSTEM_PROMPT),
+        ("OWNER_CODE_PROMPT", OWNER_CODE_PROMPT),
+        ("OWNER_FEATURE_PROMPT", OWNER_FEATURE_PROMPT),
+        ("FOLLOWUP_PROMPT", FOLLOWUP_PROMPT),
+        ("INSPECT_REMINDER_PROMPT", INSPECT_REMINDER_PROMPT),
+        ("RESEARCH_MODE_PROMPT", RESEARCH_MODE_PROMPT),
+        ("FEATURE_TITLE_PROMPT", FEATURE_TITLE_PROMPT),
+        ("VOICE_TRANSCRIBE_PROMPT", VOICE_TRANSCRIBE_PROMPT),
+        ("MEDIA_FOLLOWUP_PROMPT", MEDIA_FOLLOWUP_PROMPT),
+        ("MEDIA_DIRECT_PROMPT", MEDIA_DIRECT_PROMPT),
+        ("EXPLICIT_STICKER_PROMPT", EXPLICIT_STICKER_PROMPT),
+        ("MEMORY_FOOTER_PROMPT", MEMORY_FOOTER_PROMPT),
+        ("SPEAKER_DIRECTIVE_HEADER", SPEAKER_DIRECTIVE_HEADER),
+        ("JEV_INSTRUCTIONS_PROMPT", JEV_INSTRUCTIONS_PROMPT),
+        ("JEV_REPLY_PROMPT", JEV_REPLY_PROMPT),
+        ("JEV_WAIT_PROMPT", JEV_WAIT_PROMPT),
+        ("JEV_SILENT_PROMPT", JEV_SILENT_PROMPT),
+    ] {
+        assert!(!prompt.is_empty(), "{name} must not be empty");
+        assert_eq!(
+            prompt,
+            prompt.trim(),
+            "{name} must be trimmed at compile time"
+        );
+    }
+    assert!(SYSTEM_PROMPT.contains("<system-conventions>"));
+    assert!(SYSTEM_PROMPT.contains("RFC 2119"));
+    assert!(SYSTEM_PROMPT.contains("§ Role & Tone"));
+    assert!(SYSTEM_PROMPT.contains("§ Tool Policy"));
+    assert!(OWNER_CODE_PROMPT.contains("§ Owner Mode"));
+    assert!(OWNER_FEATURE_PROMPT.contains("§ Owner Feature Queue"));
+    assert!(SYSTEM_PROMPT.contains("# Mandatory Language & Style"));
+    assert!(SYSTEM_PROMPT.contains("MUST communicate in Russian"));
+    assert!(FOLLOWUP_PROMPT.contains("§ Follow-up Mode"));
 }

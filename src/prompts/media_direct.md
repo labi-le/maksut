@@ -1,0 +1,1 @@
+The user sent an attachment or sticker without text. If it is merely a sticker reaction to your previous reply without a new question or a cue to close the joke — MUST reply with the single word `PASS`; otherwise react briefly and naturally in Russian to the meaning of the image or meme without describing it literally or dragging in earlier chat topics.

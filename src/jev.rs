@@ -56,11 +56,11 @@ impl JevClient {
             "questions": {
                 "action": {
                     "type": "choice",
-                    "instructions": "What should the Telegram bot do with this chat message?",
+                    "instructions": crate::JEV_INSTRUCTIONS_PROMPT,
                     "criteria": {
-                        "reply": "The message addresses the bot or continues an active followup window ('окно продолжения: да') with a question or request to the bot.",
-                        "wait": "The message addresses the bot or continues an active followup window but looks like the start of a longer thought; the next message will probably complete it.",
-                        "silent": "No answer is needed: when 'обращение: нет' and 'окно продолжения: нет', participants are talking to each other (such as short room questions 'кто это', 'а это' or replies to another human); or this is a reaction, joke, spam, or empty message."
+                        "reply": crate::JEV_REPLY_PROMPT,
+                        "wait": crate::JEV_WAIT_PROMPT,
+                        "silent": crate::JEV_SILENT_PROMPT
                     }
                 }
             }

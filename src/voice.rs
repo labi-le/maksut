@@ -2,11 +2,6 @@ use crate::*;
 use serde_json::json;
 use teloxide::types::Audio;
 
-/// System prompt for the speech-to-text call: verbatim transcription in the
-/// original language, no commentary, a sentinel when the audio has no speech.
-/// The untrusted transcript is labelled by `format_block`.
-const TRANSCRIBE_PROMPT: &str = "Дословно расшифруй голосовое сообщение на языке оригинала без комментариев и кавычек. Если речи нет — верни [неразборчиво].";
-
 /// Substituted when the attachment cannot be downloaded or transcribed.
 pub(crate) const UNRECOGNISED: &str = "[не удалось распознать голосовое]";
 
@@ -396,7 +391,7 @@ pub(crate) async fn transcribe_bytes(
     let mut body = json!({
         "model": settings.model,
         "messages": [
-            {"role": "system", "content": TRANSCRIBE_PROMPT},
+            {"role": "system", "content": VOICE_TRANSCRIBE_PROMPT},
             {"role": "user", "content": [{
                 "type": "input_audio",
                 "input_audio": {"data": "", "format": format}
