@@ -2745,8 +2745,15 @@ fn telegraph_rejects_banter_as_title_and_renders_markdown_tables_in_pre() {
 
 #[test]
 fn rich_prefers_text_but_defers_explicit_articles() {
-    assert!(crate::rich_message::prefer_rich("привет", "ответ"));
-    assert!(!crate::rich_message::prefer_rich("напиши статью", "текст"));
+    assert!(!crate::rich_message::prefer_rich("привет", "ответ"));
+    assert!(crate::rich_message::prefer_rich(
+        "привет",
+        &"x".repeat(4000)
+    ));
+    assert!(!crate::rich_message::prefer_rich(
+        "напиши статью",
+        &"x".repeat(4000)
+    ));
     assert!(!crate::rich_message::prefer_rich("привет", "   "));
     assert!(!crate::rich_message::prefer_rich(
         "привет",
@@ -2797,8 +2804,10 @@ async fn rich_reply_sends_one_send_rich_message_instead_of_chunking() {
 #[tokio::test]
 async fn rich_reply_falls_back_to_send_message_when_bot_api_rejects_it() {
     let (bot, calls, server) = recording_bot_with_rich(true, true, false).await;
+    let long_bold = format!("**жирный** {}", "а".repeat(3950));
     let reply = ChatReply {
-        text: "**жирный** ответ".into(),
+        text: long_bold,
+        proposed_feature: true,
         ..Default::default()
     };
     let id = crate::rich_message::deliver_reply_text(
@@ -2814,11 +2823,12 @@ async fn rich_reply_falls_back_to_send_message_when_bot_api_rejects_it() {
     assert_eq!(id, Some((99, None)));
     let calls = calls.lock().await;
     let paths: Vec<_> = calls.iter().map(|(path, _)| path.as_str()).collect();
-    assert_eq!(paths.len(), 2, "{paths:?}");
+    assert_eq!(paths.len(), 3, "{paths:?}");
     assert!(api_method_is(&calls[0].0, "sendRichMessage"), "{paths:?}");
     assert!(api_method_is(&calls[1].0, "sendMessage"), "{paths:?}");
+    assert!(api_method_is(&calls[2].0, "sendMessage"), "{paths:?}");
     let body: Value = serde_json::from_str(&calls[1].1).unwrap();
-    assert_eq!(body["text"], "<b>жирный</b> ответ");
+    assert!(body["text"].as_str().unwrap().starts_with("<b>жирный</b> "));
     assert_eq!(body["parse_mode"], "HTML");
     server.abort();
 }
@@ -2856,7 +2866,7 @@ async fn rich_reply_retries_transient_disconnect_before_falling_back() {
     });
     let bot = Bot::new("123:dummy").set_api_url(Url::parse(&format!("http://{address}/")).unwrap());
     let reply = ChatReply {
-        text: "ответ после обрыва".into(),
+        text: "а".repeat(4000),
         ..Default::default()
     };
     let id = crate::rich_message::deliver_reply_text(

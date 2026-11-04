@@ -34,14 +34,18 @@ impl teloxide::requests::Payload for SendRichMessage {
     const NAME: &'static str = "sendRichMessage";
 }
 
-/// `true` when `text` takes the rich path: enabled by config, non-empty, within
+/// `true` when `text` takes the rich path: enabled by config, exceeding the
+/// single-message `SendMessage` limit (`chat.reply_max_chars`), within
 /// `chat.rich_max_chars`, and not an explicit article request (those keep going
-/// to `telegra.ph`).
+/// to `telegra.ph`). Replies that fit `chat.reply_max_chars` use `SendMessage`
+/// with `ParseMode::Html` so standard Telegram entities and line breaks survive.
 pub(crate) fn prefer_rich(prompt: &str, text: &str) -> bool {
     let chat = &crate::config::config().chat;
+    let len = text.chars().count();
     chat.rich_messages
         && !text.trim().is_empty()
-        && text.chars().count() <= chat.rich_max_chars
+        && len > chat.reply_max_chars
+        && len <= chat.rich_max_chars
         && !crate::telegraph::explicit_article_request(prompt)
 }
 
@@ -68,6 +72,28 @@ pub(crate) fn retryable_telegram_error(error: &teloxide::RequestError) -> Option
     }
 }
 
+/// Converts bare newlines outside `<pre>...</pre>` into `<br>\n` so Bot API's
+/// `sendRichMessage` HTML parser does not collapse prose lines into spaces.
+fn preserve_rich_linebreaks(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + 32);
+    let mut rest = html;
+    while let Some(pre_start) = rest.find("<pre>") {
+        let before = rest.get(..pre_start).unwrap_or("");
+        out.push_str(&before.replace('\n', "<br>\n"));
+        let from_pre = rest.get(pre_start..).unwrap_or("");
+        if let Some(pre_end) = from_pre.find("</pre>") {
+            let end = pre_end + "</pre>".len();
+            out.push_str(from_pre.get(..end).unwrap_or(""));
+            rest = from_pre.get(end..).unwrap_or("");
+        } else {
+            out.push_str(from_pre);
+            return out;
+        }
+    }
+    out.push_str(&rest.replace('\n', "<br>\n"));
+    out
+}
+
 /// Sends `text` as one rich message whose HTML comes from
 /// `render_telegram_html`, or from an escaped copy of `text` when it carries no
 /// Telegram markup. Returns the message id, or `None` on any API error so the
@@ -79,8 +105,9 @@ pub(crate) async fn send_rich_reply(
     text: &str,
     markup: Option<teloxide::types::InlineKeyboardMarkup>,
 ) -> Option<i32> {
-    let html = crate::chat_text::render_telegram_html(text)
+    let raw_html = crate::chat_text::render_telegram_html(text)
         .unwrap_or_else(|| crate::chat_text::escape_html(text));
+    let html = preserve_rich_linebreaks(&raw_html);
     for attempt in 0..2u8 {
         let payload = SendRichMessage {
             chat_id,
