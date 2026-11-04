@@ -542,8 +542,9 @@ async fn chat_reply_attaches_an_image_without_reasoning() {
     assert_eq!(reply.text, "на картинке мем");
     let requests = llm.requests.lock().unwrap();
     let body = body_of(&requests[0]);
-    assert!(
-        body.get("reasoning_effort").is_none(),
+    assert_eq!(
+        body.get("reasoning_effort").and_then(Value::as_str),
+        Some("none"),
         "vision turns must not ask for deliberation: {body}"
     );
     assert_eq!(
@@ -1609,7 +1610,12 @@ async fn empty_reasoning_reply_retries_without_reasoning() {
             .and_then(Value::as_str),
         expected.as_deref()
     );
-    assert!(body_of(&requests[1]).get("reasoning_effort").is_none());
+    assert_eq!(
+        body_of(&requests[1])
+            .get("reasoning_effort")
+            .and_then(Value::as_str),
+        Some("none")
+    );
     llm.task.abort();
 }
 
@@ -2505,16 +2511,25 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
         "retry without reasoning must return full unclipped article: {}",
         reply.text.chars().count()
     );
-    let requests = llm.requests.lock().unwrap();
+    let requests = llm.requests.lock().unwrap().clone();
     assert_eq!(
         requests.len(),
         2,
         "length-clipped reasoning reply must retry once without reasoning"
     );
     let second = body_of(&requests[1]);
+    assert_eq!(
+        second.get("reasoning_effort").and_then(Value::as_str),
+        Some("none"),
+        "retry must explicitly disable reasoning_effort: {second}"
+    );
+    let msgs = [serde_json::json!({"role": "user", "content": "привет"})];
+    let req_default = crate::CompletionRequest::new(&msgs, true, 100);
+    let _ = config.complete_with(&req_default, false, false).await;
+    let third = body_of(&llm.requests.lock().unwrap()[2]);
     assert!(
-        second.get("reasoning_effort").is_none(),
-        "retry must omit reasoning_effort: {second}"
+        third.get("reasoning_effort").is_none(),
+        "fallback when request.reasoning is true but with_reasoning is false must omit reasoning_effort completely"
     );
     assert!(crate::telegraph::explicit_article_request(
         "напиши три статьи про тайлинг"

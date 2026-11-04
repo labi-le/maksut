@@ -265,9 +265,17 @@ class ApprovalTests(unittest.TestCase):
             title = module.issue_title(
                 {"goal": "  первые   слова заявки " * 20}
             )
-            self.assertLessEqual(len(title), 70)
+            self.assertLessEqual(len(title), 120)
             self.assertFalse(title.endswith(" "))
             self.assertTrue(title.startswith("первые слова заявки"))
+            self.assertEqual(
+                module.issue_title(
+                    {
+                        "goal": "Дать боту инструмент чтения собственных логов: новый owner-only tool read_logs в src/logging.rs"
+                    }
+                ),
+                "Дать боту инструмент чтения собственных логов",
+            )
             self.assertEqual(module.issue_title({"goal": "x", "title": " short "}), "short")
 
     def test_queue_sort_key_orders_priority_then_name(self):

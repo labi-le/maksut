@@ -271,11 +271,13 @@ impl ChatConfig {
         request: &CompletionRequest<'_>,
     ) -> Result<Value, CompleteError> {
         match self.complete_with(request, true, request.reasoning).await {
-            Err(CompleteError::Rejected)
-                if request.reasoning && self.reasoning_effort.is_some() =>
-            {
-                match self.complete_with(request, true, false).await {
-                    Err(CompleteError::Rejected) => self.complete_with(request, false, false).await,
+            Err(CompleteError::Rejected) if self.reasoning_effort.is_some() => {
+                let mut fallback = *request;
+                fallback.reasoning = true;
+                match self.complete_with(&fallback, true, false).await {
+                    Err(CompleteError::Rejected) => {
+                        self.complete_with(&fallback, false, false).await
+                    }
                     other => other,
                 }
             }
@@ -299,6 +301,8 @@ impl ChatConfig {
             if let Some(effort) = self.reasoning_effort.as_deref() {
                 body.insert("reasoning_effort".to_owned(), json!(effort));
             }
+        } else if !request.reasoning && self.reasoning_effort.is_some() {
+            body.insert("reasoning_effort".to_owned(), json!("none"));
         }
         if with_tools {
             if let Some(tools) = self.tools.payload_for_mode(request.tool_mode()) {
@@ -413,6 +417,7 @@ impl ChatConfig {
 }
 
 /// Everything that shapes one completion request.
+#[derive(Clone, Copy)]
 pub(crate) struct CompletionRequest<'a> {
     pub(crate) messages: &'a [Value],
     pub(crate) owner: bool,

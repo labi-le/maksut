@@ -483,6 +483,8 @@ async fn approve_asks_the_model_for_the_issue_title() {
     .unwrap();
     assert_eq!(marker["title"], "кнопка отмены");
     assert_eq!(marker["id"], "propose-bob");
+    let req_body = body_of(&llm.requests.lock().unwrap()[0]);
+    assert_eq!(req_body["reasoning_effort"], "none");
     llm.task.abort();
 }
 

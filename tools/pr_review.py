@@ -571,8 +571,10 @@ class Reviewer:
             raise ReviewError("pull request has no head sha")
         if pull.get("draft"):
             return self._skip("draft pull request")
-        login = self.github.viewer_login()
         author = str((pull.get("user") or {}).get("login") or "")
+        if author.lower() == "dependabot[bot]":
+            return self._skip("dependabot pull request")
+        login = self.github.viewer_login()
         if login and author and login.lower() == author.lower():
             return self._skip("reviewer is the pull request author")
         reviews = self.github.reviews(self.number)

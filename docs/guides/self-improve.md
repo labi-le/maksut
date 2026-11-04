@@ -19,7 +19,7 @@ The self-improvement intake is split across two isolated processes so the Telegr
 2. **Owner decision (`approvals/` or `rejections/`) and GitHub issue creation (`issue_created`):**
    - Decisions are recorded only from an owner inline button press (`DecisionGate::Issue`) or an explicit owner command in private chat (`одобри #id`, `отклони #id`, or `/improve approve|reject <id>`). Group messages and forwarded messages never approve or reject.
    - On approve, the bot asks the model for a short issue title (≤70 chars) and writes it into `approvals/<id>.json` as `title`. The host orchestrator stays agent-free: it only reads that field.
-   - When approved, the orchestrator runs `gh issue create` with the summarized title (falling back to the first 70 characters of the goal) and a body built from `предложение от @<username>` (numeric `proposed_by` when the proposer has no username), `время` from `created_at` in UTC, the full goal, and any refinement feedback. It then writes `status: "issue_created"` and `issue_url` to `outbox/<id>.json`.
+   - When approved, the orchestrator runs `gh issue create` with the summarized title (falling back to the leading clause or first 120 characters of the goal) and a body built from `предложение от @<username>` (numeric `proposed_by` when the proposer has no username), `время` from `created_at` in UTC, the full goal, and any refinement feedback. It then writes `status: "issue_created"` and `issue_url` to `outbox/<id>.json`.
    - The bot notifies the chat with the created GitHub issue URL so users can continue discussion in the issue.
    - Rejecting a proposal removes the marker and marks the task `rejected` without creating an issue.
 

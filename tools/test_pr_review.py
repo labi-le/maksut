@@ -366,9 +366,11 @@ class RunTests(unittest.TestCase):
         self.assertFalse(reviewer(github).run()["submitted"])
         self.assertEqual(github.submitted, [])
 
-    def test_draft_and_self_authored_and_already_reviewed_are_skipped(self):
+    def test_draft_and_dependabot_and_self_authored_and_already_reviewed_are_skipped(self):
         draft = reviewer(FakeGitHub(pull_value=pull(draft=True)))
         self.assertIn("draft", draft.run()["skipped"])
+        dependabot = reviewer(FakeGitHub(pull_value=pull(user={"login": "dependabot[bot]"})))
+        self.assertIn("dependabot", dependabot.run()["skipped"])
         own = reviewer(FakeGitHub(login="int8-ptr"))
         self.assertIn("author", own.run()["skipped"])
         seen = reviewer(FakeGitHub(reviews=[{"user": {"login": "Maksut-Reviewer"}, "commit_id": "a" * 40}]))

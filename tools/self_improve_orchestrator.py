@@ -116,16 +116,18 @@ def status(task: dict, state: str, summary: str = "", **extra) -> None:
     log(f"task {task['id']}: {state}")
 
 
-TITLE_LIMIT = 70
+TITLE_LIMIT = 120
 
 
 def issue_title(task: dict) -> str:
     title = " ".join(str(task.get("title") or "").split())
     if not title:
-        title = " ".join(str(task.get("goal") or "").split())
-        if len(title) > TITLE_LIMIT:
-            cut = title[:TITLE_LIMIT]
-            title = cut[: cut.rfind(" ")] if " " in cut else cut
+        goal = " ".join(str(task.get("goal") or "").split())
+        clause = re.split(r"(?<=[.!?])\s+|\s+[—–-]\s+|;\s*|\s*:\s+", goal, maxsplit=1)[0].strip()
+        title = clause if 10 <= len(clause) <= TITLE_LIMIT else goal
+    if len(title) > TITLE_LIMIT:
+        cut = title[:TITLE_LIMIT]
+        title = cut[: cut.rfind(" ")] if " " in cut else cut
     return title[:TITLE_LIMIT].rstrip(" .,:;—-")
 
 

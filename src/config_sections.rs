@@ -325,7 +325,7 @@ defaults!(ChatSettings {
     max_tokens: 4000,
     status_max_tokens: 1500,
     research_max_tokens: 4000,
-    feature_title_max_tokens: 100,
+    feature_title_max_tokens: 500,
     typing_keepalive_secs: 4,
     cooldown_ms: 3000,
     followup_window_secs: 180,

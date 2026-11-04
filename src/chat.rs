@@ -410,6 +410,7 @@ pub(crate) async fn chat_reply_with_proposal(
         }
         let mut reply = chat.complete(&request).await.map_err(|e| e.reason())?;
         if request.reasoning && reply_is_empty(&reply) {
+            request = request.without_reasoning();
             if let Ok(r) = chat.complete_with(&request, true, false).await {
                 if !reply_is_empty(&r) {
                     reply = r;
