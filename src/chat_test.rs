@@ -1418,14 +1418,6 @@ fn moscow_time_and_emotion_and_stop_helpers_behave_deterministically() {
         format_moscow_time(1_793_538_240),
         "2026-11-01 (вс) 16:04 МСК (UTC+3)"
     );
-    assert!(!sticker_emotion_hint("сука пошёл нахуй тупорылый"));
-    assert!(!sticker_emotion_hint("глаза вытекают пизда"));
-    assert!(!sticker_emotion_hint("это бля вопрос"));
-    assert!(!sticker_emotion_hint("архитектура и это база данных"));
-    assert!(!sticker_emotion_hint("ты дурак или кекс печёшь, продавец"));
-    assert!(sticker_emotion_hint("ору с этого деплоя"));
-    assert!(sticker_emotion_hint("ахаха это кринж и имба"));
-    assert!(sticker_emotion_hint("ура, прод ожил, лол"));
     assert!(is_stop_followup("сука да завали ебало"));
     assert!(is_stop_followup("пошёл нахуй тупорылый"));
     let sticker_reply: Message = serde_json::from_value(serde_json::json!({
@@ -1968,6 +1960,7 @@ async fn research_request_marks_the_message_with_eyes() {
         prompt: "сделай ресерч по rust",
         image: None,
         followup: false,
+        sticker_mode: false,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2039,6 +2032,7 @@ async fn plain_reply_does_not_react_to_the_message() {
         prompt: "привет",
         image: None,
         followup: false,
+        sticker_mode: false,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2104,6 +2098,7 @@ async fn web_search_marks_the_message_on_every_pass() {
         prompt: "погугли rust",
         image: None,
         followup: false,
+        sticker_mode: false,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2185,6 +2180,7 @@ async fn read_url_marks_the_message_on_every_pass() {
         prompt: &prompt,
         image: None,
         followup: false,
+        sticker_mode: false,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2921,8 +2917,10 @@ fn embedded_prompts_are_trimmed_and_enforce_mandatory_rules() {
         ("SPEAKER_DIRECTIVE_HEADER", SPEAKER_DIRECTIVE_HEADER),
         ("JEV_INSTRUCTIONS_PROMPT", JEV_INSTRUCTIONS_PROMPT),
         ("JEV_REPLY_PROMPT", JEV_REPLY_PROMPT),
+        ("JEV_STICKER_PROMPT", JEV_STICKER_PROMPT),
         ("JEV_WAIT_PROMPT", JEV_WAIT_PROMPT),
         ("JEV_SILENT_PROMPT", JEV_SILENT_PROMPT),
+        ("STICKER_MODE_PROMPT", STICKER_MODE_PROMPT),
     ] {
         assert!(!prompt.is_empty(), "{name} must not be empty");
         assert_eq!(
@@ -2940,4 +2938,102 @@ fn embedded_prompts_are_trimmed_and_enforce_mandatory_rules() {
     assert!(SYSTEM_PROMPT.contains("# Mandatory Language & Style"));
     assert!(SYSTEM_PROMPT.contains("MUST communicate in Russian"));
     assert!(FOLLOWUP_PROMPT.contains("§ Follow-up Mode"));
+    assert!(STICKER_MODE_PROMPT.contains("§ Sticker Reaction Mode"));
+}
+
+#[tokio::test]
+async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![tool_response(
+        "send_sticker",
+        serde_json::json!({"query": "девушка"}),
+    )])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let catalog = StickerCatalog::for_tests(&[(
+        "girl-1",
+        "pack",
+        "девушки",
+        "😂",
+        "девушка смеется в камеру",
+    )]);
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(2),
+        sender_name: "tester",
+        username: None,
+        message_id: 1,
+        reply_user_id: None,
+        owner: false,
+        prompt: "ору с этого деплоя",
+        image: None,
+        followup: false,
+        sticker_mode: true,
+        reply_context: None,
+        bot: None,
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reply.sticker.as_ref().map(|id| id.0.as_str()),
+        Some("girl-1")
+    );
+    assert!(
+        reply.text.is_empty(),
+        "sticker_mode must not force a text round: {:?}",
+        reply.text
+    );
+    assert_eq!(llm.requests.lock().unwrap().len(), 1);
+    llm.task.abort();
+
+    let llm_pass = mock_server(vec![reply_response("PASS")]).await;
+    let pass_config = ChatConfig::new(
+        llm_pass.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm_pass.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let pass_reply = chat_reply_with_proposal(
+        &pass_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        pass_reply.sticker.as_ref().map(|id| id.0.as_str()),
+        Some("girl-1")
+    );
+    assert!(
+        pass_reply.text.is_empty(),
+        "sticker_mode PASS fallback must not leak PASS text: {:?}",
+        pass_reply.text
+    );
+    llm_pass.task.abort();
 }

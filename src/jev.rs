@@ -4,9 +4,9 @@ use crate::router::Decision;
 use crate::sanitize_text;
 
 /// Client for the TypeSafe System One (`Jev`) decisions API: one `choice`
-/// question with three named answers. Any failure — transport, status, size,
-/// JSON shape, low confidence — returns `None`, and the caller falls back to
-/// the deterministic rules table.
+/// question with four named answers (`reply`, `sticker`, `wait`, `silent`).
+/// Any failure — transport, status, size, JSON shape, low confidence — returns
+/// `None`, and the caller falls back to the deterministic rules table.
 #[derive(Clone)]
 pub(crate) struct JevClient {
     http: reqwest::Client,
@@ -59,6 +59,7 @@ impl JevClient {
                     "instructions": crate::JEV_INSTRUCTIONS_PROMPT,
                     "criteria": {
                         "reply": crate::JEV_REPLY_PROMPT,
+                        "sticker": crate::JEV_STICKER_PROMPT,
                         "wait": crate::JEV_WAIT_PROMPT,
                         "silent": crate::JEV_SILENT_PROMPT
                     }
@@ -140,6 +141,7 @@ impl JevClient {
         }
         let decision = match choice {
             "reply" => Some(Decision::Reply),
+            "sticker" => Some(Decision::Sticker),
             "wait" => Some(Decision::Wait),
             "silent" => Some(Decision::Silent),
             _ => None,

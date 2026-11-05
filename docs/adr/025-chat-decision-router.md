@@ -15,12 +15,12 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
 
 ## Decision
 
-- Add a `[router]` configuration section with `mode = "off" | "rules" | "jev"`
+- Add a `[router]` configuration section with `mode = "off" | "jev"`
   (`off` by default), `jev_url`, `jev_model`, `jev_timeout_ms`,
   `jev_max_response_bytes`, `jev_min_confidence`. The API key is the
   `JEV_API_KEY` environment variable, like `LLM_API_KEY`; `mode = "jev"`
   without it fails startup instead of degrading silently.
-- One decision type, `Decision::{Silent, Wait, Reply}` (`src/router.rs`), fed by
+- One decision type, `Decision::{Silent, Wait, Reply, Sticker}` (`src/router.rs`), fed by
   `RouterInput` (prompt text, `AddressKind`, followup flag, stop phrase, chat
   kind, reply context). `src/chat_media.rs` classifies addressing once and may
   surface an unaddressed group message to the router when a router mode is on;
@@ -41,7 +41,7 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
 - Jev backend (`src/jev.rs`): `POST router.jev_url` with `model`, `state`
   (chat kind, addressing, followup flag, message text, reply context, each
   truncated to 2000 characters), and one `choice` question named `action` whose
-  criteria are `reply`, `wait`, `silent`. The client requires the answer's
+  criteria are `reply`, `sticker`, `wait`, `silent`. The client requires the answer's
   `probabilities[choice]` (or `confidence`) to reach `router.jev_min_confidence`
   and bounds the response by `router.jev_max_response_bytes`, accumulating
   decoded chunks and aborting when the cap is crossed. `router.jev_concurrency`
@@ -49,11 +49,14 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
   instead of queueing. Timeout, non-2xx, oversized body, malformed JSON,
   unknown choice, or low confidence fall back to the rules table; a
   low-confidence model answer never becomes a reply.
-- Explicit addressing is sticky in every mode: private chat, a reply to the bot,
-  and `@username` return `Reply` without an HTTP call, so the router can never
-  make the bot ignore a direct mention. A stop phrase is the exception: in the
-  router modes it returns `Silent` and closes the window. `mode = "off"` keeps
-  the historical behavior, including the post-model stop-phrase handling.
+- Explicit addressing is never ignored: questions/requests (`expects_answer`),
+  long messages (`> 140` chars), and captionless media/sticker turns return
+  `Reply` without an HTTP call, while shorter addressed remarks consult `Jev`
+  so emotional banter can select `Decision::Sticker` (any non-sticker `Jev`
+  answer on an addressed message still resolves to `Reply`). A stop phrase is
+  the exception: in `jev` mode it returns `Silent` and closes the window.
+  `mode = "off"` keeps the historical behavior, including the post-model
+  stop-phrase handling.
 - `Wait` vs `Silent` is the only state change: both skip the heavy model, and
   the difference is whether the followup window survives. The decision does not
   extend the window, so repeated `Wait` answers cannot keep a chat alive forever.
@@ -71,13 +74,13 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
 ## Consequences
 
 - With `mode = "off"` nothing changes: no new HTTP calls, no extra latency.
-- With `mode = "rules"` the bot answers exactly where it did before, except that
-  followup reactions and media turns are decided before the heavy model instead
-  of by its `PASS` reply, and a bare name form inside an active window waits
-  instead of paying for a completion.
-- With `mode = "jev"` the model may wake the bot on an unaddressed group
-  message; that is the intended recall gain and the reason it is not the
-  default. A direct mention still always answers.
+- With `mode = "jev"`, `decide_rules` serves as the zero-cost deterministic
+  fallback whenever `Jev` is saturated or fails, and short emotional banter can
+  enter `Decision::Sticker` (`turn.sticker_mode`) so the bot responds with a
+  sticker in a single round instead of generating a verbose text reply.
+- With `mode = "jev"` the router may also wake the bot on an unaddressed group
+  message (`Reply` or `Sticker`); that is the intended recall gain and the
+  reason it is not the default. A direct mention still always answers.
 - The router state is the current message plus reply context, not chat history:
   persisting history for the router would add a database read on every group
   message. This keeps the decision O(1) plus one bounded HTTP call.

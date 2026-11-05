@@ -1,0 +1,1 @@
+The message is an emotionally charged reaction, joke, roast, taunt, complaint, celebration, laugh, or banter (addressed to the bot or in an active conversation) where slapping a fitting sticker reaction is sharper and more natural than writing a text explanation.

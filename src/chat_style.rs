@@ -327,46 +327,6 @@ pub(crate) fn sticker_request_query(text: &str) -> &'static str {
     }
 }
 
-pub(crate) fn sticker_emotion_hint(text: &str) -> bool {
-    let text = text.to_lowercase();
-    const STEMS: &[&str] = &[
-        "устал",
-        "устала",
-        "заколеб",
-        "достал",
-        "кайф",
-        "радост",
-        "смешн",
-        "ржака",
-        "груст",
-        "деплой",
-        "ахах",
-        "хаха",
-        "кринж",
-        "заебись",
-        "ахуен",
-        "охуен",
-        "скучн",
-        "бесит",
-        "горит",
-        "плак",
-        "жесть",
-        "капец",
-        "имба",
-        "скуф",
-        "лалк",
-        "ботяр",
-        "красав",
-        "спизд",
-        "угор",
-        "ржу",
-    ];
-    STEMS.iter().any(|stem| text.contains(stem))
-        || text
-            .split(|ch: char| !ch.is_alphanumeric())
-            .any(|w| matches!(w, "ору" | "прод" | "лол" | "кек" | "ура" | "топ" | "жиза"))
-}
-
 pub(crate) fn display_author_name(user: &teloxide::types::User) -> String {
     match user.username.as_deref().map(str::trim) {
         Some(username)

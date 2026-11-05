@@ -13,6 +13,7 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) prompt: &'a str,
     pub(crate) image: Option<&'a ChatImage>,
     pub(crate) followup: bool,
+    pub(crate) sticker_mode: bool,
     pub(crate) reply_context: Option<&'a str>,
     pub(crate) bot: Option<&'a Bot>,
 }
@@ -56,7 +57,8 @@ pub(crate) async fn reply_with_chat(
         tracing::debug!(reason = "group disabled", "chat skipped");
         return;
     }
-    if cfg.router.gate(chat, message, &input).await != Decision::Reply {
+    let decision = cfg.router.gate(chat, message, &input).await;
+    if !matches!(decision, Decision::Reply | Decision::Sticker) {
         return;
     }
     chat.pace(sender.id).await;
@@ -91,6 +93,7 @@ pub(crate) async fn reply_with_chat(
         prompt: effective_prompt,
         image: downloaded_image.as_ref(),
         followup: input.followup,
+        sticker_mode: decision == Decision::Sticker,
         reply_context: input.reply_context.as_deref(),
         bot: Some(bot),
     };
@@ -183,7 +186,6 @@ pub(crate) async fn chat_reply_with_proposal(
         .flatten();
     let router_mode = match config().router.mode {
         RouterMode::Off => "off",
-        RouterMode::Rules => "rules",
         RouterMode::Jev => "jev",
     };
     let mut system_prompt = format!(
@@ -207,6 +209,9 @@ pub(crate) async fn chat_reply_with_proposal(
     if explicit_sticker_request(prompt) {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(EXPLICIT_STICKER_PROMPT);
+    } else if turn.sticker_mode {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(STICKER_MODE_PROMPT);
     }
     if turn.followup {
         system_prompt.push_str("\n\n");
@@ -304,7 +309,7 @@ pub(crate) async fn chat_reply_with_proposal(
     let user_msg_idx = messages.len();
     messages.push(json!({"role": "user", "content": turn.image.map_or_else(|| json!(user_text), |img| json!([{"type": "text", "text": user_text}, {"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", img.mime, base64_encode(&img.bytes))}}]))}));
     chat.remember_urls(turn.chat_id, &fresh_urls).await;
-    let allow_sticker = explicit_sticker_request(prompt);
+    let allow_sticker = explicit_sticker_request(prompt) || turn.sticker_mode;
     let allow_feature = explicit_feature_request(prompt);
     let ctx = ToolContext {
         chat,
@@ -349,7 +354,7 @@ pub(crate) async fn chat_reply_with_proposal(
             usage,
         } = chat.complete(&request).await.map_err(|e| e.reason())?;
         usage_site.record(pool, &chat.model, KIND_CHAT, usage).await;
-        if request.reasoning && reply_is_empty(&reply) {
+        if request.reasoning && state.sticker.is_none() && reply_is_empty(&reply) {
             tracing::warn!(round, "empty reply, retrying without reasoning");
             request = request.without_reasoning();
             if let Ok(Completion {
@@ -377,10 +382,16 @@ pub(crate) async fn chat_reply_with_proposal(
                 .unwrap_or("")
                 .trim()
                 .to_owned();
+            let content = if turn.sticker_mode && is_pass_reply(&content) {
+                String::new()
+            } else {
+                content
+            };
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;
             let bare_prompt = turn.prompt.trim().is_empty();
-            if (turn.followup || bare_prompt) && is_pass_reply(&content) {
+            if (turn.followup || bare_prompt || state.sticker.is_some()) && is_pass_reply(&content)
+            {
                 tracing::debug!(round, "model chose PASS");
                 return Ok(ChatReply {
                     sticker: state.sticker,
@@ -433,6 +444,31 @@ pub(crate) async fn chat_reply_with_proposal(
         for call in &calls {
             let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
             messages.push(json!({"role": "tool", "tool_call_id": id, "content": run_tool_call(call, &ctx, &mut state).await}));
+        }
+        if turn.sticker_mode
+            && state.sticker.is_some()
+            && calls.iter().all(|c| {
+                c.pointer("/function/name").and_then(Value::as_str) == Some("send_sticker")
+            })
+        {
+            let raw = reply
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let text = if raw.is_empty() || is_pass_reply(raw) {
+                String::new()
+            } else {
+                style_chat_reply(raw)
+            };
+            chat.remember_urls(turn.chat_id, &state.discovered_urls)
+                .await;
+            return Ok(ChatReply {
+                text,
+                sticker: state.sticker,
+                decision: state.decision,
+                proposed_feature: state.proposed_feature,
+            });
         }
         if state.inspect_calls > 0 && !state.inspect_announced {
             state.inspect_announced = true;

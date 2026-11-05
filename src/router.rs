@@ -9,8 +9,10 @@ pub(crate) enum Decision {
     Silent,
     /// Do not answer now, but keep listening for the next message.
     Wait,
-    /// Continue into the heavy chat model.
+    /// Continue into the heavy chat model for a normal reply.
     Reply,
+    /// Continue into the chat model in emotional sticker-reaction mode.
+    Sticker,
 }
 
 /// Everything the decision may look at. No database reads: the router runs on
@@ -65,7 +67,7 @@ impl Router {
                     Some(Arc::new(Semaphore::new(settings.jev_concurrency))),
                 )
             }
-            RouterMode::Off | RouterMode::Rules => (None, None),
+            RouterMode::Off => (None, None),
         };
         Ok(Self::new(settings.mode, jev, jev_slots))
     }
@@ -115,57 +117,48 @@ impl Router {
     pub(crate) async fn decide(&self, input: &RouterInput<'_>) -> Decision {
         if input.stop {
             // `off` keeps the historical path, where stop phrases are handled
-            // after the model turn; the router modes close the window at once.
+            // after the model turn; `jev` closes the window at once.
             return match self.mode {
                 RouterMode::Off => Decision::Reply,
-                RouterMode::Rules | RouterMode::Jev => Decision::Silent,
+                RouterMode::Jev => Decision::Silent,
             };
         }
-        if input.address == AddressKind::Explicit {
-            return Decision::Reply;
-        }
-        // A name form with content is already an unconditional `Reply` below;
-        // spending a jev round trip on it could only downgrade that answer.
-        if input.address == AddressKind::Named && !input.text.trim().is_empty() {
-            return Decision::Reply;
-        }
+        let addressed = input.address == AddressKind::Explicit
+            || (input.address == AddressKind::Named && !input.text.trim().is_empty());
         if self.mode == RouterMode::Off {
             return Decision::Reply;
         }
-        let rules = decide_rules(input);
-        if input.followup && rules == Decision::Reply {
+        let text = input.text.trim();
+        // Direct questions, requests, long addressed messages, or captionless
+        // addressed media/sticker turns (`text.is_empty()` with `Explicit`) go
+        // straight to the model; short emotional addressed remarks consult Jev
+        // so it can pick `Decision::Sticker` instead of a verbose text reply.
+        if addressed && (text.is_empty() || expects_answer(text) || text.chars().count() > 140) {
             return Decision::Reply;
         }
-        let decision = match self.mode {
-            RouterMode::Off | RouterMode::Rules => rules,
-            RouterMode::Jev => {
-                let slot = self.jev_slots.as_ref().map(|slots| slots.try_acquire());
-                if matches!(&slot, Some(Err(_))) {
-                    rules
-                } else {
-                    match &self.jev {
-                        Some(client) => match client.decide(&jev_state(input)).await {
-                            Some(Decision::Silent) if input.followup && rules == Decision::Wait => {
-                                Decision::Wait
-                            }
-                            Some(decision) => decision,
-                            None => rules,
-                        },
-                        None => rules,
-                    }
-                }
-            }
-        };
-        // A router answer without text cannot be delivered as a chat reply.
-        // `off` never lands here with empty text: media and sticker turns are
-        // explicit and return above, and ambient candidates require text.
-        let decision = if self.mode != RouterMode::Off
-            && decision == Decision::Reply
-            && input.text.trim().is_empty()
-        {
-            Decision::Silent
+        if text.is_empty() {
+            return Decision::Silent;
+        }
+        let rules = decide_rules(input);
+        if !addressed && input.followup && rules == Decision::Reply {
+            return Decision::Reply;
+        }
+        let slot = self.jev_slots.as_ref().map(|slots| slots.try_acquire());
+        let decision = if matches!(&slot, Some(Err(_))) {
+            rules
         } else {
-            decision
+            match &self.jev {
+                Some(client) => match client.decide(&jev_state(input)).await {
+                    Some(Decision::Sticker) => Decision::Sticker,
+                    Some(_) if addressed => Decision::Reply,
+                    Some(Decision::Silent) if input.followup && rules == Decision::Wait => {
+                        Decision::Wait
+                    }
+                    Some(decision) => decision,
+                    None => rules,
+                },
+                None => rules,
+            }
         };
         tracing::debug!(
             mode = ?self.mode,

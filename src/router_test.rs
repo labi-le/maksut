@@ -264,8 +264,9 @@ fn choice_body(choice: &str, confidence: f64) -> String {
         }
     };
     format!(
-        r#"{{"model":"jev-latest","answers":{{"action":{{"type":"choice","choice":"{choice}","confidence":{confidence},"probabilities":{{"reply":{},"wait":{},"silent":{}}}}}}},"usage":{{"input_tokens":10,"output_tokens":1}}}}"#,
+        r#"{{"model":"jev-latest","answers":{{"action":{{"type":"choice","choice":"{choice}","confidence":{confidence},"probabilities":{{"reply":{},"sticker":{},"wait":{},"silent":{}}}}}}},"usage":{{"input_tokens":10,"output_tokens":1}}}}"#,
         probability("reply"),
+        probability("sticker"),
         probability("wait"),
         probability("silent")
     )
@@ -294,6 +295,7 @@ async fn jev_choices_map_to_decisions_and_send_state() {
     let ambient = input("а что думаешь про новые видеокарты?", AddressKind::None);
     for (choice, expected) in [
         ("reply", Decision::Reply),
+        ("sticker", Decision::Sticker),
         ("wait", Decision::Wait),
         ("silent", Decision::Silent),
     ] {
@@ -312,6 +314,7 @@ async fn jev_choices_map_to_decisions_and_send_state() {
     let body = bodies.first().expect("captured request body");
     assert!(body.contains("\"action\""));
     assert!(body.contains("\"reply\""));
+    assert!(body.contains("\"sticker\""));
     assert!(body.contains("\"wait\""));
     assert!(body.contains("\"silent\""));
     assert!(body.contains("сообщение: а что думаешь?"));
@@ -319,13 +322,9 @@ async fn jev_choices_map_to_decisions_and_send_state() {
 }
 
 #[tokio::test]
-async fn explicit_address_never_calls_jev() {
+async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
     let stub = jev_stub("200 OK", choice_body("silent", 0.99), Duration::ZERO).await;
     let router = jev_router(&stub, Duration::from_secs(2), 0.6);
-    assert_eq!(
-        router.decide(&input("привет", AddressKind::Explicit)).await,
-        Decision::Reply
-    );
     assert_eq!(
         router
             .decide(&input("максут, что нового?", AddressKind::Named))
@@ -341,11 +340,28 @@ async fn explicit_address_never_calls_jev() {
         Decision::Reply
     );
     assert_eq!(stub.requests.load(Ordering::SeqCst), 0);
+    // A short addressed remark without a question consults Jev, but a
+    // non-sticker Jev answer (`silent`/`wait`) still resolves to `Reply`
+    // so an explicit mention is never ignored.
+    assert_eq!(
+        router.decide(&input("привет", AddressKind::Explicit)).await,
+        Decision::Reply
+    );
+    assert_eq!(stub.requests.load(Ordering::SeqCst), 1);
     assert_eq!(
         router
             .decide(&followup("обычная реплика без вопроса"))
             .await,
         Decision::Wait
+    );
+
+    let sticker_stub = jev_stub("200 OK", choice_body("sticker", 0.95), Duration::ZERO).await;
+    let sticker_router = jev_router(&sticker_stub, Duration::from_secs(2), 0.6);
+    assert_eq!(
+        sticker_router
+            .decide(&input("ору с этого деплоя", AddressKind::Explicit))
+            .await,
+        Decision::Sticker
     );
 }
 
@@ -383,6 +399,14 @@ async fn reply_without_text_is_silent() {
     let router = jev_router(&stub, Duration::from_secs(2), 0.6);
     let named_empty = input("   ", AddressKind::Named);
     assert_eq!(router.decide(&named_empty).await, Decision::Silent);
+    // Explicit empty-caption turns (bare photo/sticker in private chat or
+    // reply to bot) must still reach the model via `Decision::Reply` without
+    // calling Jev.
+    assert_eq!(
+        router.decide(&input("", AddressKind::Explicit)).await,
+        Decision::Reply
+    );
+    assert_eq!(stub.requests.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -437,7 +461,7 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
     let chat_id = ChatId(7);
     chat.note_reply(chat_id).await;
     assert!(chat.followup_active(chat_id).await);
-    let router = Router::new(RouterMode::Rules, None, None);
+    let router = Router::new(RouterMode::Jev, None, None);
     let message: Message = serde_json::from_value(serde_json::json!({
         "message_id": 1,
         "date": 1700000000,

@@ -1,1 +1,1 @@
-No answer is needed: when 'обращение: нет' and 'окно продолжения: нет', participants are talking to each other (such as short room questions 'кто это', 'а это' or replies to another human); or this is a reaction, joke, spam, or empty message.
+No answer is needed: when 'обращение: нет' and 'окно продолжения: нет', participants are talking to each other (such as short room questions 'кто это', 'а это' or replies to another human), or the message is an acknowledgement closing the topic ('ок', 'понял', 'спасибо'), spam, or empty.

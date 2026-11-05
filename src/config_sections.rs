@@ -121,13 +121,12 @@ pub(crate) struct LlmSettings {
 }
 
 /// Where the pre-model reply decision comes from. `off` keeps the historical
-/// behavior, `rules` is the deterministic table in `src/router.rs`, and `jev`
-/// asks the TypeSafe System One API with a rules fallback.
+/// behavior, and `jev` asks the TypeSafe System One API with a deterministic
+/// fallback.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum RouterMode {
     #[default]
     Off,
-    Rules,
     Jev,
 }
 
@@ -135,14 +134,13 @@ impl RouterMode {
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "off" => Self::Off,
-            "rules" => Self::Rules,
             "jev" => Self::Jev,
             _ => return None,
         })
     }
 
     pub(crate) fn names() -> &'static [&'static str] {
-        &["off", "rules", "jev"]
+        &["off", "jev"]
     }
 }
 

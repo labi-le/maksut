@@ -260,8 +260,6 @@ pub(crate) fn format_moscow_time(unix_secs: i64) -> String {
 pub(crate) fn sticker_turn_hint(prompt: &str) -> &'static str {
     if crate::chat_style::explicit_sticker_request(prompt) {
         "пользователь просит стикер или спрашивает про стикеры — обязательно вызови send_sticker в этом ответе\n"
-    } else if crate::chat_style::sticker_emotion_hint(prompt) {
-        "в реплике яркая эмоция, подкол или живой диалог — если это не research и не длинный разбор кода, вызови send_sticker (с коротким query по смыслу или через find_stickers) вместе с ответом\n"
     } else {
         ""
     }

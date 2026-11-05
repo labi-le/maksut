@@ -55,8 +55,12 @@ embed_prompts! {
     JEV_INSTRUCTIONS_PROMPT => "prompts/jev_instructions.md",
     /// Jev router `reply` criterion.
     JEV_REPLY_PROMPT => "prompts/jev_reply.md",
+    /// Jev router `sticker` criterion.
+    JEV_STICKER_PROMPT => "prompts/jev_sticker.md",
     /// Jev router `wait` criterion.
     JEV_WAIT_PROMPT => "prompts/jev_wait.md",
     /// Jev router `silent` criterion.
     JEV_SILENT_PROMPT => "prompts/jev_silent.md",
+    /// System prompt block injected when the Jev router selects `Decision::Sticker`.
+    STICKER_MODE_PROMPT => "prompts/sticker_mode.md",
 }
