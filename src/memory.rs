@@ -231,7 +231,7 @@ pub(crate) async fn load_memory(
             .fetch_optional(pool)
             .await?;
     let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT author_id, author_name, role, text FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
+        "SELECT CASE WHEN role = 'assistant' THEN 0 ELSE author_id END, author_name, role, text FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
     )
     .bind(chat_id.0)
     .bind(i64::from(current_id))
@@ -269,6 +269,37 @@ pub(crate) async fn load_memory(
         "memory loaded"
     );
     Ok((summary, selected))
+}
+
+pub(crate) async fn burst_already_answered(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+    user_id: UserId,
+    message_id: i32,
+    now: i64,
+) -> bool {
+    let Ok(rows) = sqlx::query_as::<_, (i64, String, Option<i64>, i64)>(
+        "SELECT author_id, role, message_id, created_at FROM chat_messages \
+         WHERE chat_id = ? AND compacted_at IS NULL AND (flags = 0 OR role = 'assistant') \
+         ORDER BY id DESC LIMIT 4",
+    )
+    .bind(chat_id.0)
+    .fetch_all(pool)
+    .await
+    else {
+        return false;
+    };
+    let (uid, mid) = (user_id.0 as i64, i64::from(message_id));
+    let fresh = |t: i64| now.saturating_sub(t) <= 30;
+    rows.first()
+        .is_some_and(|(a, r, _, t)| r == "assistant" && *a == uid && fresh(*t))
+        && rows
+            .iter()
+            .skip(1)
+            .any(|(a, r, m, t)| *a == uid && r == "user" && *m == Some(mid) && fresh(*t))
+        && rows.iter().skip(1).any(|(a, r, m, t)| {
+            *a == uid && r == "user" && m.is_some_and(|id| id < mid && mid - id <= 3) && fresh(*t)
+        })
 }
 
 pub(crate) fn format_line(author_name: &str, author_id: i64, text: &str) -> String {
@@ -322,8 +353,8 @@ pub(crate) fn validate_summary(summary: &str) -> Result<String, String> {
 }
 
 pub(crate) async fn compact_chat(pool: &SqlitePool, chat_id: i64) -> Result<bool, String> {
-    let rows: Vec<(i64, i64, String, String, i64)> = sqlx::query_as(
-        "SELECT id, author_id, author_name, text, created_at FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 ORDER BY id DESC LIMIT ?",
+    let rows: Vec<(i64, i64, String, String, String, i64)> = sqlx::query_as(
+        "SELECT id, author_id, author_name, role, text, created_at FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 ORDER BY id DESC LIMIT ?",
     )
     .bind(chat_id)
     .bind(config().memory.load_limit)
@@ -346,10 +377,10 @@ pub(crate) async fn compact_chat(pool: &SqlitePool, chat_id: i64) -> Result<bool
         .into_iter()
         .filter(|row| !keep_ids.contains(&row.0))
         .filter(|row| {
-            if row.4 < cutoff_old {
+            if row.5 < cutoff_old {
                 true
             } else {
-                keep == config().memory.keep_fresh && row.4 < cutoff_fresh
+                keep == config().memory.keep_fresh && row.5 < cutoff_fresh
             }
         })
         .collect();
@@ -359,12 +390,13 @@ pub(crate) async fn compact_chat(pool: &SqlitePool, chat_id: i64) -> Result<bool
     candidates.reverse();
     let mut selected = Vec::new();
     let mut log = String::new();
-    for (id, author_id, author_name, text, _created_at) in candidates {
+    for (id, author_id, author_name, role, text, _created_at) in candidates {
         let text: String = text
             .chars()
             .take(config().memory.compact_message_chars)
             .collect();
-        let line = format_line(&author_name, author_id, &text);
+        let shown_id = if role == "assistant" { 0 } else { author_id };
+        let line = format_line(&author_name, shown_id, &text);
         if selected.len() >= config().memory.compact_batch_messages
             || (!log.is_empty()
                 && log.chars().count() + line.chars().count() + 1

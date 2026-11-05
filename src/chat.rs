@@ -65,6 +65,20 @@ pub(crate) async fn reply_with_chat(
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
     let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
     let (_chat_guard, _user_guard) = (chat_lock.read().await, user_lock.write().await);
+    if input.followup
+        && message.forward_origin().is_some()
+        && crate::memory::burst_already_answered(
+            &cfg.database,
+            message.chat.id,
+            sender.id,
+            message.id.0,
+            crate::memory::unix_now(),
+        )
+        .await
+    {
+        tracing::debug!("skip: forwarded burst continuation already answered");
+        return;
+    }
     // Hold the image permit across `chat.acquire()` so downloaded bytes stay
     // bounded without occupying a model slot while Telegram serves the file.
     let (downloaded_image, image_permit) =
@@ -128,25 +142,7 @@ pub(crate) async fn reply_with_chat(
                 elapsed_ms = elapsed_ms(turn_started),
                 "Chat reply failed"
             );
-            if message.chat.is_private() || !turn.followup {
-                let msg = match (message.chat.is_private(), reason.strip_prefix("http_")) {
-                    (true, _) => "Не получилось ответить, попробуй ещё раз.".to_owned(),
-                    (false, Some(code)) => format!("лпмка вернула ошибку {code}, повтори ещё раз"),
-                    (false, None) if reason == "timeout" => {
-                        "лпмка отвалилась по таймауту, повтори ещё раз".to_owned()
-                    }
-                    (false, None) => "лпмка временно отвалилась, повтори ещё раз".to_owned(),
-                };
-                let _ = crate::rich_message::send_chat_chunk(
-                    bot,
-                    message.chat.id,
-                    message.id,
-                    &msg,
-                    true,
-                    None,
-                )
-                .await;
-            }
+            send_turn_error_reply(bot, message, turn.followup, &reason).await;
         }
     }
 }
@@ -382,7 +378,10 @@ pub(crate) async fn chat_reply_with_proposal(
                 .unwrap_or("")
                 .trim()
                 .to_owned();
-            let content = if turn.sticker_mode && is_pass_reply(&content) {
+            if is_sticker_placeholder(&content) && state.sticker.is_none() {
+                state.allow_sticker = true;
+            }
+            let content = if is_pass_reply(&content) {
                 String::new()
             } else {
                 content
@@ -390,7 +389,10 @@ pub(crate) async fn chat_reply_with_proposal(
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;
             let bare_prompt = turn.prompt.trim().is_empty();
-            if (turn.followup || bare_prompt || state.sticker.is_some()) && is_pass_reply(&content)
+            if (turn.followup || bare_prompt || state.sticker.is_some())
+                && content.is_empty()
+                && !state.allow_sticker
+                && state.status_fallback.is_none()
             {
                 tracing::debug!(round, "model chose PASS");
                 return Ok(ChatReply {
@@ -399,7 +401,9 @@ pub(crate) async fn chat_reply_with_proposal(
                     ..Default::default()
                 });
             }
-            let text = if state.research.used && !state.research.sources.is_empty() {
+            let text = if content.is_empty() && state.status_fallback.is_none() {
+                String::new()
+            } else if state.research.used && !state.research.sources.is_empty() {
                 style_research_reply(&content, &state.research.sources)?
             } else {
                 let st = resolve_status_reply(

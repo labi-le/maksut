@@ -376,3 +376,63 @@ fn special_site_rewrites_and_json_renderers_format_cleanly() {
         .links
         .contains(&Url::parse("https://github.com/teloxide/teloxide").unwrap()));
 }
+
+#[test]
+fn telegram_channel_post_rewrite_and_extractor_isolate_target_post_media() {
+    let post_url = Url::parse("https://t.me/cheatsheetsvalka/203").unwrap();
+    let (rewritten, method) = rewrite_special_target(&post_url).unwrap();
+    assert_eq!(method, "telegram");
+    assert_eq!(rewritten.as_str(), "https://t.me/s/cheatsheetsvalka/203");
+
+    let channel_url = Url::parse("https://t.me/public_consumer").unwrap();
+    let (ch_rewritten, ch_method) = rewrite_special_target(&channel_url).unwrap();
+    assert_eq!(ch_method, "telegram");
+    assert_eq!(ch_rewritten.as_str(), "https://t.me/s/public_consumer");
+
+    let invite_url = Url::parse("https://t.me/joinchat/abc123").unwrap();
+    assert!(rewrite_special_target(&invite_url).is_none());
+
+    let html = r#"<html><head><title>Telegram: Contact @cheatsheetsvalka</title></head><body>
+        <div class="tgme_channel_info">
+          <div class="tgme_channel_info_header_title"><span>svalka</span></div>
+          <div class="tgme_channel_info_header_username"><a href="https://t.me/cheatsheetsvalka">@cheatsheetsvalka</a></div>
+          <div class="tgme_channel_info_description">лалковских будней обзор</div>
+        </div>
+        <div class="tgme_widget_message roundvideo_media" data-post="cheatsheetsvalka/193">
+          <div class="tgme_widget_message_roundvideo_player">
+            <time class="tgme_widget_message_roundvideo_duration">0:13</time>
+          </div>
+          <div class="tgme_widget_message_footer">
+            <span class="tgme_widget_message_views">55</span>
+            <a class="tgme_widget_message_date"><time datetime="2026-10-01T12:00:00+00:00">12:00</time></a>
+          </div>
+        </div>
+        <div class="tgme_widget_message" data-post="cheatsheetsvalka/201">
+          <div class="js-message_text">ситуация дерьмо, все ру ноды фильтруются</div>
+          <div class="tgme_widget_message_footer">
+            <span class="tgme_widget_message_views">76</span>
+            <a class="tgme_widget_message_date"><time datetime="2026-10-10T17:05:24+00:00">17:05</time></a>
+          </div>
+        </div>
+        <div class="tgme_widget_message sticker_media" data-post="cheatsheetsvalka/203">
+          <div class="tgme_widget_message_forwarded_from">Forwarded from <a class="tgme_widget_message_forwarded_from_name">Maksut</a></div>
+          <div class="tgme_widget_message_sticker_wrap"><i class="tgme_widget_message_sticker"></i></div>
+          <div class="tgme_widget_message_footer">
+            <span class="tgme_widget_message_views">3</span>
+            <a class="tgme_widget_message_date"><time datetime="2026-11-05T20:42:13+00:00">20:42</time></a>
+          </div>
+        </div>
+    </body></html>"#;
+    let page = render_page(&rewritten, "text/html", html.as_bytes()).unwrap();
+    let pos_203 = page.text.find("## [ЦЕЛЕВОЙ ПОСТ #203]").unwrap();
+    let pos_193 = page.text.find("### [Пост #193]").unwrap();
+    assert!(
+        pos_203 < pos_193,
+        "target post #203 must be rendered before older feed items: {}",
+        page.text
+    );
+    let slice_203 = &page.text[pos_203..pos_193];
+    assert!(slice_203.contains("Медиа: [стикер]"), "{slice_203}");
+    assert!(slice_203.contains("Forwarded from Maksut"), "{slice_203}");
+    assert!(!slice_203.contains("0:13"), "{slice_203}");
+}

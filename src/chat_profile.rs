@@ -127,11 +127,11 @@ struct RecentAuthor {
 }
 
 /// Distinct authors of this chat's uncompacted history, newest first, bounded
-/// by `memory.recent_messages`. Bot rows (`author_id = 0`) are dropped.
+/// by `memory.recent_messages`. Assistant rows are dropped.
 async fn recent_authors(pool: &SqlitePool, chat_id: ChatId) -> Vec<RecentAuthor> {
     let rows: Vec<(i64, String)> = match sqlx::query_as(
         "SELECT author_id, author_name FROM chat_messages \
-         WHERE chat_id = ? AND author_id > 0 AND flags = 0 AND compacted_at IS NULL \
+         WHERE chat_id = ? AND role = 'user' AND author_id > 0 AND flags = 0 AND compacted_at IS NULL \
          ORDER BY id DESC LIMIT ?",
     )
     .bind(chat_id.0)
@@ -256,7 +256,7 @@ async fn fetch(
 /// closed with a log line instead of silently looking like a refusal.
 async fn author_wrote_in_chat(pool: &SqlitePool, chat_id: ChatId, user_id: UserId) -> bool {
     let row: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
-        "SELECT 1 FROM chat_messages WHERE chat_id = ? AND author_id = ? \
+        "SELECT 1 FROM chat_messages WHERE chat_id = ? AND role = 'user' AND author_id = ? \
          AND flags = 0 AND compacted_at IS NULL LIMIT 1",
     )
     .bind(chat_id.0)

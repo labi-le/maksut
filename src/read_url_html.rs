@@ -15,6 +15,17 @@ pub(crate) fn extract_html_with_links(
     // synchronously: its tendril-backed Article is not Send.
     let document = dom_query::Document::from(html);
     collect_document_links(&document, url, links);
+    if let Some((tg_title, tg_text)) =
+        crate::read_url_telegram::extract_telegram_channel(&document, url)
+    {
+        tracing::debug!(
+            method = "telegram",
+            chars = tg_text.chars().count(),
+            links = links.len(),
+            "html extraction"
+        );
+        return Ok((tg_title, tg_text));
+    }
     let document = strip_chrome(document);
     let title = document.select_single("title").text().to_string();
     let title = title.trim().to_owned();

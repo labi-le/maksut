@@ -114,6 +114,7 @@ mod read_url;
 mod read_url_cache;
 mod read_url_html;
 mod read_url_sites;
+mod read_url_telegram;
 mod read_url_text;
 pub(crate) use media::*;
 mod process;

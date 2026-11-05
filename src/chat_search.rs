@@ -198,10 +198,10 @@ pub(crate) async fn search(
     let mut hits: Vec<(f32, i64, i64, String, i64, String)> = Vec::new();
     if let Some(query) = query_vec {
         let rows: Vec<(i64, i64, String, i64, String, Vec<u8>)> = sqlx::query_as(
-            "SELECT m.id, m.author_id, m.author_name, m.created_at, e.chunk_text, e.vector \
+            "SELECT m.id, CASE WHEN m.role = 'assistant' THEN 0 ELSE m.author_id END, m.author_name, m.created_at, e.chunk_text, e.vector \
              FROM chat_embeddings e JOIN chat_messages m ON m.id = e.message_id \
              WHERE e.chat_id = ? AND e.model = ? AND m.flags = 0 \
-               AND (? IS NULL OR m.author_id = ?) \
+               AND (? IS NULL OR (m.role = 'user' AND m.author_id = ?)) \
                AND (? IS NULL OR m.created_at >= ?) \
                AND (? IS NULL OR m.created_at < ?) \
              ORDER BY m.id DESC LIMIT ?",
@@ -246,11 +246,11 @@ pub(crate) async fn search(
             .collect();
         if !words.is_empty() {
             let raw_rows: Vec<(i64, i64, String, i64, String)> = sqlx::query_as(
-                "SELECT m.id, m.author_id, m.author_name, m.created_at, m.text \
+                "SELECT m.id, CASE WHEN m.role = 'assistant' THEN 0 ELSE m.author_id END, m.author_name, m.created_at, m.text \
                  FROM chat_messages m \
                  WHERE m.chat_id = ? AND m.flags = 0 AND trim(m.text) <> '' \
                    AND (m.message_id IS NULL OR m.message_id != ?) \
-                   AND (? IS NULL OR m.author_id = ?) \
+                   AND (? IS NULL OR (m.role = 'user' AND m.author_id = ?)) \
                    AND (? IS NULL OR m.created_at >= ?) \
                    AND (? IS NULL OR m.created_at < ?) \
                  ORDER BY m.id DESC LIMIT ?",
@@ -313,7 +313,7 @@ pub(crate) async fn search(
         }
     }
     let recent: Vec<(i64, i64, String, i64, String)> = sqlx::query_as(
-        "SELECT m.id, m.author_id, m.author_name, m.created_at, m.text \
+        "SELECT m.id, CASE WHEN m.role = 'assistant' THEN 0 ELSE m.author_id END, m.author_name, m.created_at, m.text \
          FROM chat_messages m WHERE m.chat_id = ? AND m.flags = 0 \
            AND (m.message_id IS NULL OR m.message_id != ?) \
          ORDER BY m.id DESC LIMIT ?",

@@ -151,9 +151,9 @@ pub(crate) fn apply_url_selector(page: ReadPage, selector: &UrlSelector) -> Read
     }
 }
 
-/// Rewrites recognized site URLs (GitHub blob, Reddit post/subreddit, Wikipedia
-/// article, crates.io crate, PyPI package) to their public raw/JSON API
-/// endpoints when appropriate.
+/// Rewrites recognized site URLs (GitHub blob/issue, Reddit post/subreddit,
+/// Wikipedia article, crates.io crate, PyPI package, Hacker News item, public
+/// Telegram channel/post) to their public raw/JSON/web preview endpoints.
 pub(crate) fn rewrite_special_target(url: &Url) -> Option<(Url, &'static str)> {
     let host = url.host_str()?.to_ascii_lowercase();
     let path = url.path();
@@ -236,6 +236,14 @@ pub(crate) fn rewrite_special_target(url: &Url) -> Option<(Url, &'static str)> {
             if let Ok(parsed) = Url::parse(&api) {
                 return Some((parsed, "hackernews"));
             }
+        }
+    }
+    if matches!(
+        host.as_str(),
+        "t.me" | "www.t.me" | "telegram.me" | "www.telegram.me"
+    ) {
+        if let Some(rewritten) = crate::read_url_telegram::rewrite_telegram_url(url, path) {
+            return Some((rewritten, "telegram"));
         }
     }
     None

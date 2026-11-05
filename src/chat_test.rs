@@ -1804,8 +1804,8 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
     );
     assert!(
         owner_replying_to_danya.contains("(@crudoshlepa)")
-            && owner_replying_to_danya.contains("(@newmdoupdate)"),
-        "{owner_replying_to_danya}"
+            && !owner_replying_to_danya.contains("(@newmdoupdate)"),
+        "replying to another participant must not attach their nickname directive to the owner: {owner_replying_to_danya}"
     );
     let non_owner_replying_to_danya = crate::code_inspect::speaker_owner_directives(
         sample,
@@ -2938,6 +2938,7 @@ fn embedded_prompts_are_trimmed_and_enforce_mandatory_rules() {
     assert!(OWNER_FEATURE_PROMPT.contains("§ Owner Feature Queue"));
     assert!(SYSTEM_PROMPT.contains("# Mandatory Language & Style"));
     assert!(SYSTEM_PROMPT.contains("MUST communicate in Russian"));
+    assert!(SYSTEM_PROMPT.contains("# Focus & Epistemic Grounding (MANDATORY)"));
     assert!(FOLLOWUP_PROMPT.contains("§ Follow-up Mode"));
     assert!(STICKER_MODE_PROMPT.contains("§ Sticker Reaction Mode"));
 }
@@ -3049,6 +3050,137 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     assert!(empty_catalog_reply.sticker.is_none());
     assert!(empty_catalog_reply.text.is_empty());
     llm_pass.task.abort();
+}
+
+#[tokio::test]
+async fn normal_turn_sticker_placeholder_picks_sticker_and_burst_dedup_detects_answered_burst() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let catalog = StickerCatalog::for_tests(&[("gachi-1", "pack", "гачи", "💪", "гачимучи билли")]);
+    let llm = mock_server(vec![reply_response("[стикер]")]).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(-100),
+        user_id: UserId(1),
+        sender_name: "Денис",
+        username: Some("crudoshlepa"),
+        message_id: 50,
+        reply_user_id: None,
+        owner: true,
+        prompt: "давай гачимучи",
+        image: None,
+        followup: false,
+        sticker_mode: false,
+        reply_context: None,
+        bot: None,
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reply.sticker.as_ref().map(|id| id.0.as_str()),
+        Some("gachi-1"),
+        "normal turn returning [стикер] must pick a catalog sticker instead of leaking text"
+    );
+    assert!(
+        reply.text.is_empty(),
+        "normal turn returning [стикер] must clear text: {:?}",
+        reply.text
+    );
+    llm.task.abort();
+
+    assert!(crate::chat_style::explicit_sticker_request(
+        "найди стикер пися"
+    ));
+    assert!(crate::chat_style::explicit_sticker_request(
+        "давай гачимучи"
+    ));
+    assert_eq!(
+        crate::chat_style::sticker_request_query("давай гачимучи"),
+        "гачимучи"
+    );
+    assert_eq!(
+        crate::chat_style::sticker_request_query("найди стикер пися"),
+        "пися"
+    );
+
+    let chat_id = ChatId(-1002045081420);
+    let uid = UserId(395448554);
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(chat_id, uid.0 as i64, "Денис", "user", "реши капчу")
+            .with_message_id(Some(219741)),
+    )
+    .await
+    .unwrap();
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(chat_id, uid.0 as i64, "Денис", "user", "(10 + 10)")
+            .with_message_id(Some(219742)),
+    )
+    .await
+    .unwrap();
+    let now = crate::memory::unix_now();
+    assert!(
+        !crate::memory::burst_already_answered(&pool, chat_id, uid, 219742, now).await,
+        "before assistant replies, burst is not yet answered"
+    );
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(chat_id, 999, "максут", "assistant", "чужой ответ")
+            .with_message_id(Some(219743)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !crate::memory::burst_already_answered(&pool, chat_id, uid, 219742, now).await,
+        "assistant reply to another participant must not suppress user's burst"
+    );
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(chat_id, uid.0 as i64, "максут", "assistant", "[стикер]")
+            .with_message_id(Some(219744))
+            .with_flags(crate::memory::FLAG_JUNK),
+    )
+    .await
+    .unwrap();
+    assert!(
+        crate::memory::burst_already_answered(&pool, chat_id, uid, 219742, now).await,
+        "once assistant replies to #219741 (including sticker FLAG_JUNK), forwarded #219742 in the same burst is already answered"
+    );
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(chat_id, uid.0 as i64, "максут", "assistant", "20")
+            .with_message_id(Some(219745)),
+    )
+    .await
+    .unwrap();
+    let (_, loaded) = crate::memory::load_memory(&pool, chat_id, 0).await.unwrap();
+    let last = loaded.last().unwrap();
+    assert_eq!(last.role, "assistant");
+    assert_eq!(
+        last.author_id, 0,
+        "load_memory must normalize assistant author_id to 0"
+    );
 }
 
 #[test]

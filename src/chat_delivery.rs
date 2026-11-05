@@ -1,10 +1,18 @@
 use crate::*;
 
-async fn record_assistant_reply(pool: &SqlitePool, chat_id: ChatId, text: &str, message_id: i32) {
+async fn record_assistant_reply(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+    user_id: UserId,
+    text: &str,
+    message_id: i32,
+    flags: i64,
+) {
     let _ = crate::memory::record_message(
         pool,
-        RecordMessage::new(chat_id, 0, "максут", "assistant", text)
-            .with_message_id(Some(message_id)),
+        RecordMessage::new(chat_id, user_id.0 as i64, "максут", "assistant", text)
+            .with_message_id(Some(message_id))
+            .with_flags(flags),
     )
     .await;
 }
@@ -33,8 +41,16 @@ pub(crate) async fn deliver_chat_reply(
             {
                 Ok(s) => {
                     delivered = true;
-                    record_assistant_reply(&cfg.database, message.chat.id, "[стикер]", s.id.0)
-                        .await;
+                    let uid = message.from.as_ref().map_or(UserId(0), |u| u.id);
+                    record_assistant_reply(
+                        &cfg.database,
+                        message.chat.id,
+                        uid,
+                        "[стикер]",
+                        s.id.0,
+                        crate::memory::FLAG_JUNK,
+                    )
+                    .await;
                     break;
                 }
                 Err(err) => {
@@ -54,7 +70,7 @@ pub(crate) async fn deliver_chat_reply(
         .as_ref()
         .and_then(crate::self_improve::decision_markup);
     let p = message.text().or_else(|| message.caption()).unwrap_or("");
-    let skip_text = followup && is_pass_reply(&reply.text);
+    let skip_text = is_pass_reply(&reply.text);
     let delivered_text = crate::rich_message::deliver_reply_text(
         bot,
         message.chat.id,
@@ -73,7 +89,8 @@ pub(crate) async fn deliver_chat_reply(
             None if reply.text.trim().is_empty() => "жми кнопку",
             None => &reply.text,
         };
-        record_assistant_reply(&cfg.database, message.chat.id, rec, id).await;
+        let uid = message.from.as_ref().map_or(UserId(0), |u| u.id);
+        record_assistant_reply(&cfg.database, message.chat.id, uid, rec, id, 0).await;
     }
     if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 4) {
         chat.clear_followup(message.chat.id).await;
@@ -81,4 +98,26 @@ pub(crate) async fn deliver_chat_reply(
         chat.note_reply(message.chat.id).await;
     }
     chat_reply_delivered(&reply, delivered, delivered_text_present);
+}
+
+pub(crate) async fn send_turn_error_reply(
+    bot: &Bot,
+    message: &Message,
+    followup: bool,
+    reason: &str,
+) {
+    if !message.chat.is_private() && followup {
+        return;
+    }
+    let msg = match (message.chat.is_private(), reason.strip_prefix("http_")) {
+        (true, _) => "Не получилось ответить, попробуй ещё раз.".to_owned(),
+        (false, Some(code)) => format!("лпмка вернула ошибку {code}, повтори ещё раз"),
+        (false, None) if reason == "timeout" => {
+            "лпмка отвалилась по таймауту, повтори ещё раз".to_owned()
+        }
+        (false, None) => "лпмка временно отвалилась, повтори ещё раз".to_owned(),
+    };
+    let _ =
+        crate::rich_message::send_chat_chunk(bot, message.chat.id, message.id, &msg, true, None)
+            .await;
 }

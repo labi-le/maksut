@@ -312,3 +312,14 @@ pub(crate) fn strip_url_schemes(text: &str) -> String {
     }
     output
 }
+
+pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal: bool) -> String {
+    let names = tools.names(false).join(", ");
+    let available = if names.is_empty() { "нет" } else { &names };
+    let scope = if has_proposal && tools.find("feature_status", false).is_some() {
+        " feature_status показывает только ваши заявки; очередь владельца недоступна, не выдумывай её статусы."
+    } else {
+        ""
+    };
+    format!("Это не владелец бота. Доступные инструменты: {available}.{scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки».")
+}

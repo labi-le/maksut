@@ -231,19 +231,19 @@ fn style_reply_bounded(text: &str, max_chars: usize) -> String {
     }
 }
 
+pub(crate) fn is_sticker_placeholder(text: &str) -> bool {
+    let t = text.trim().trim_matches(|ch: char| !ch.is_alphanumeric());
+    ["стикер", "sticker"]
+        .iter()
+        .any(|w| t.eq_ignore_ascii_case(w))
+}
+
 pub(crate) fn is_pass_reply(text: &str) -> bool {
     let t = text.trim().trim_matches(|ch: char| !ch.is_alphanumeric());
-    [
-        "pass",
-        "пас",
-        "молчу",
-        "пропуск",
-        "skip",
-        "стикер",
-        "sticker",
-    ]
-    .iter()
-    .any(|w| t.eq_ignore_ascii_case(w))
+    ["pass", "пас", "молчу", "пропуск", "skip"]
+        .iter()
+        .any(|w| t.eq_ignore_ascii_case(w))
+        || is_sticker_placeholder(text)
 }
 
 pub(crate) fn is_stop_followup(text: &str) -> bool {
@@ -351,10 +351,21 @@ fn normalize_spam_text(text: &str) -> String {
 }
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
     let t = text.to_lowercase();
-    ["скинь", "покажи", "добавь", "кинь", "перестал", "не шл"]
-        .iter()
-        .any(|v| t.contains(v))
-        && ["стикер", "пак", "девоч", "девуш"]
+    [
+        "скинь",
+        "покажи",
+        "добавь",
+        "кинь",
+        "перестал",
+        "не шл",
+        "найди",
+        "отправь",
+        "пришли",
+        "давай",
+    ]
+    .iter()
+    .any(|v| t.contains(v))
+        && ["стикер", "пак", "девоч", "девуш", "гачи", "пися", "котик"]
             .iter()
             .any(|k| t.contains(k))
 }
@@ -373,6 +384,10 @@ pub(crate) fn sticker_request_query(text: &str) -> &'static str {
     let t = text.to_lowercase();
     if t.contains("девоч") || t.contains("девуш") {
         "девушка"
+    } else if t.contains("гачи") {
+        "гачимучи"
+    } else if t.contains("пися") || t.contains("член") {
+        "пися"
     } else if t.contains("кот") {
         "кот"
     } else if t.contains("собак") {
@@ -469,16 +484,7 @@ pub(crate) fn resolve_addressed_chat(
     (addressed, bare_sticker_reply)
 }
 
-pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal: bool) -> String {
-    let names = tools.names(false).join(", ");
-    let available = if names.is_empty() { "нет" } else { &names };
-    let scope = if has_proposal && tools.find("feature_status", false).is_some() {
-        " feature_status показывает только ваши заявки; очередь владельца недоступна, не выдумывай её статусы."
-    } else {
-        ""
-    };
-    format!("Это не владелец бота. Доступные инструменты: {available}.{scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки».")
-}
+pub(crate) use crate::chat_urls::non_owner_system_notice;
 
 pub(crate) fn reply_is_empty(r: &serde_json::Value) -> bool {
     let no_calls = r
