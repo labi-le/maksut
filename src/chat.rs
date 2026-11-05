@@ -213,7 +213,7 @@ pub(crate) async fn chat_reply_with_proposal(
         system_prompt.push_str("\n\n");
         system_prompt.push_str(STICKER_MODE_PROMPT);
     }
-    if turn.followup {
+    if turn.followup && !turn.sticker_mode {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(FOLLOWUP_PROMPT);
     }
@@ -418,7 +418,8 @@ pub(crate) async fn chat_reply_with_proposal(
                 .or_else(|| state.allow_sticker.then(|| catalog.pick(q)).flatten())
                 .or_else(|| state.allow_sticker.then(|| catalog.pick("")).flatten());
             let empty = text.is_empty() && sticker.is_none() && state.decision.is_none();
-            if !state.research.used && empty && !turn.followup && !bare_prompt {
+            if !state.research.used && empty && !turn.followup && !bare_prompt && !turn.sticker_mode
+            {
                 return Err("empty".into());
             }
             return Ok(ChatReply {

@@ -193,9 +193,17 @@ fn style_reply_bounded(text: &str, max_chars: usize) -> String {
 
 pub(crate) fn is_pass_reply(text: &str) -> bool {
     let t = text.trim().trim_matches(|ch: char| !ch.is_alphanumeric());
-    ["pass", "пас", "молчу", "пропуск", "skip"]
-        .iter()
-        .any(|w| t.eq_ignore_ascii_case(w))
+    [
+        "pass",
+        "пас",
+        "молчу",
+        "пропуск",
+        "skip",
+        "стикер",
+        "sticker",
+    ]
+    .iter()
+    .any(|w| t.eq_ignore_ascii_case(w))
 }
 
 pub(crate) fn is_stop_followup(text: &str) -> bool {

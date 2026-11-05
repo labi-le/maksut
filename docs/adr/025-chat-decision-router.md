@@ -27,7 +27,8 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
   `src/chat.rs` applies the decision before pacing, chat locks, the typing
   keepalive, and any media download, and logs a structured `tracing::info!`
   event (`router decision`) when `mode != "off"`. `Silent` closes the followup
-  window, `Wait` leaves it as is, `Reply` continues into `chat_reply_with_proposal`.
+  window, `Wait` leaves it as is, and `Reply` / `Sticker` continue into
+  `chat_reply_with_proposal` (`Sticker` sets `turn.sticker_mode = true`).
 - Rules table (`decide_rules`): stop phrase -> `Silent`; explicit address ->
   `Reply`; name form with content -> `Reply`; name form without content ->
   `Silent`; followup turn with a question mark, question word, or request stem

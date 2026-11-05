@@ -3007,7 +3007,7 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     assert_eq!(llm.requests.lock().unwrap().len(), 1);
     llm.task.abort();
 
-    let llm_pass = mock_server(vec![reply_response("PASS")]).await;
+    let llm_pass = mock_server(vec![reply_response("[стикер]"), reply_response("PASS")]).await;
     let pass_config = ChatConfig::new(
         llm_pass.url.clone(),
         "key".into(),
@@ -3032,8 +3032,20 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     );
     assert!(
         pass_reply.text.is_empty(),
-        "sticker_mode PASS fallback must not leak PASS text: {:?}",
+        "sticker_mode [стикер]/PASS fallback must not leak literal [стикер] text: {:?}",
         pass_reply.text
     );
+    let empty_catalog_reply = chat_reply_with_proposal(
+        &pass_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(empty_catalog_reply.sticker.is_none());
+    assert!(empty_catalog_reply.text.is_empty());
     llm_pass.task.abort();
 }
