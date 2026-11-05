@@ -282,6 +282,13 @@ const REQUEST_STEMS: &[&str] = &[
     "откро",
     "разбер",
     "поясн",
+    "проресерч",
+    "заресерч",
+    "ресерч",
+    "ресерчн",
+    "загугл",
+    "погугл",
+    "нагугл",
 ];
 
 /// Followup turns answer only when they look like a real request; a plain

@@ -201,7 +201,7 @@ pub(crate) async fn read(raw: &str) -> Result<ReadPage, ReadUrlError> {
         if remaining.is_zero() {
             return Err(ReadUrlError::Timeout);
         }
-        let body = match time::timeout(remaining, read_body(response)).await {
+        let body = match time::timeout(remaining, read_body(response, &content_type)).await {
             Ok(Ok(body)) => body,
             Ok(Err(error @ (ReadUrlError::TooLarge | ReadUrlError::Empty))) => {
                 tracing::warn!(error = ?error, "read_url body rejected");
@@ -364,10 +364,23 @@ async fn pinned_public_client(url: &Url) -> Result<reqwest::Client, ReadUrlError
     builder.build().map_err(|_| ReadUrlError::Network)
 }
 
-async fn read_body(mut response: reqwest::Response) -> Result<Vec<u8>, ReadUrlError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > config().read_url.max_bytes as u64)
+async fn read_body(
+    mut response: reqwest::Response,
+    content_type: &str,
+) -> Result<Vec<u8>, ReadUrlError> {
+    let max_bytes = config().read_url.max_bytes;
+    let kind = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let mut truncatable = kind.contains("html") || kind.starts_with("text/");
+    if !truncatable
+        && !kind.is_empty()
+        && response
+            .content_length()
+            .is_some_and(|length| length > max_bytes as u64)
     {
         return Err(ReadUrlError::TooLarge);
     }
@@ -379,7 +392,17 @@ async fn read_body(mut response: reqwest::Response) -> Result<Vec<u8>, ReadUrlEr
             ReadUrlError::Network
         }
     })? {
-        if body.len().saturating_add(chunk.len()) > config().read_url.max_bytes {
+        if body.is_empty() && kind.is_empty() && chunk.starts_with(b"<") {
+            truncatable = true;
+        }
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            if truncatable {
+                let take = max_bytes.saturating_sub(body.len());
+                if let Some(prefix) = chunk.get(..take) {
+                    body.extend_from_slice(prefix);
+                }
+                break;
+            }
             return Err(ReadUrlError::TooLarge);
         }
         body.extend_from_slice(&chunk);

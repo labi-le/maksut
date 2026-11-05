@@ -251,6 +251,7 @@ async fn duckduckgo_search_sends_browser_navigation_headers() {
         provider: SearchProvider::DuckDuckGo,
         tavily_key: None,
         http: reqwest::Client::new(),
+        engine_cooldowns: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
     let hits = client
         .search_hits_with_recency("rust", 5, None)
@@ -3048,4 +3049,52 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     assert!(empty_catalog_reply.sticker.is_none());
     assert!(empty_catalog_reply.text.is_empty());
     llm_pass.task.abort();
+}
+
+#[test]
+fn style_research_reply_strips_duplicate_model_sources_block_and_cools_down_engines() {
+    let sources = vec![
+        crate::research::ResearchSource {
+            id: 1,
+            title: "First Source".into(),
+            url: "https://example.com/1".into(),
+            domain: "example.com".into(),
+            snippet: "s1".into(),
+            queries: vec![1],
+            best_position: 1,
+        },
+        crate::research::ResearchSource {
+            id: 2,
+            title: "Second Source".into(),
+            url: "https://example.com/2".into(),
+            domain: "example.com".into(),
+            snippet: "s2".into(),
+            queries: vec![1],
+            best_position: 2,
+        },
+    ];
+    let raw = "Вывод по тестам [1][2].\n\nисточники:\n[1] Hallucinated - https://example.com/fake1\n[2] Other - https://example.com/fake2";
+    let styled = style_research_reply(raw, &sources).unwrap();
+    assert_eq!(styled.matches("источники:").count(), 1, "{styled}");
+    assert!(!styled.contains("fake1"), "{styled}");
+    assert!(
+        styled.contains("[1] First Source - https://example.com/1"),
+        "{styled}"
+    );
+
+    assert!(is_stop_followup("пошёл нахуй"));
+    assert!(is_stop_followup("завали ебало"));
+    assert!(!is_stop_followup("пошёл нахуй он мне ресерчит сначала"));
+
+    let client = SearchClient {
+        url: Url::parse("https://html.duckduckgo.com/html/").unwrap(),
+        provider: SearchProvider::Auto,
+        tavily_key: None,
+        http: reqwest::Client::new(),
+        engine_cooldowns: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    };
+    assert!(!client.is_engine_cooled_down(SearchProvider::Parallel));
+    client.note_engine_cooldown(SearchProvider::Parallel, 403);
+    assert!(client.is_engine_cooled_down(SearchProvider::Parallel));
+    assert!(!client.is_engine_cooled_down(SearchProvider::DuckDuckGo));
 }

@@ -11,7 +11,7 @@ pub(crate) const DEFAULT_STARTPAGE_URL: &str = "https://www.startpage.com/sp/sea
 pub(crate) const DEFAULT_MOJEEK_URL: &str = "https://www.mojeek.com/search";
 pub(crate) const DEFAULT_ECOSIA_URL: &str = "https://www.ecosia.org/search";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum SearchProvider {
     Auto,
     Public,
@@ -95,6 +95,8 @@ impl SearchFailure {
     }
 }
 
+const ENGINE_COOLDOWN_SECS: u64 = 300;
+
 /// `Clone` so `JoinSet` tasks can own it instead of borrowing `ChatConfig`.
 #[derive(Clone)]
 pub(crate) struct SearchClient {
@@ -102,9 +104,31 @@ pub(crate) struct SearchClient {
     pub(crate) provider: SearchProvider,
     pub(crate) tavily_key: Option<String>,
     pub(crate) http: reqwest::Client,
+    pub(crate) engine_cooldowns: Arc<std::sync::Mutex<HashMap<SearchProvider, time::Instant>>>,
 }
 
 impl SearchClient {
+    pub(crate) fn is_engine_cooled_down(&self, engine: SearchProvider) -> bool {
+        let Ok(mut map) = self.engine_cooldowns.lock() else {
+            return false;
+        };
+        let now = time::Instant::now();
+        map.retain(|_, until| *until > now);
+        map.get(&engine).is_some_and(|until| *until > now)
+    }
+
+    pub(crate) fn note_engine_cooldown(&self, engine: SearchProvider, status: u16) {
+        if !matches!(status, 401 | 403 | 429) {
+            return;
+        }
+        let Ok(mut map) = self.engine_cooldowns.lock() else {
+            return;
+        };
+        let now = time::Instant::now();
+        map.retain(|_, until| *until > now);
+        map.insert(engine, now + Duration::from_secs(ENGINE_COOLDOWN_SECS));
+    }
+
     pub(crate) async fn search_hits_with_recency(
         &self,
         query: &str,
@@ -187,7 +211,11 @@ impl SearchClient {
             time::Instant::now() + Duration::from_secs(config().search.auto_deadline_secs);
         let mut last_error = SearchFailure::Unavailable;
         let mut saw_empty = false;
-        if let Some(key) = self.tavily_key.as_deref() {
+        let tavily_key = self
+            .tavily_key
+            .as_deref()
+            .filter(|_| !self.is_engine_cooled_down(SearchProvider::Tavily));
+        if let Some(key) = tavily_key {
             if let Ok(url) = Url::parse("https://api.tavily.com/search") {
                 let remaining = deadline.saturating_duration_since(time::Instant::now());
                 match time::timeout(
@@ -212,6 +240,9 @@ impl SearchClient {
             SearchProvider::Mojeek,
             SearchProvider::Ecosia,
         ] {
+            if self.is_engine_cooled_down(engine) {
+                continue;
+            }
             let remaining = deadline.saturating_duration_since(time::Instant::now());
             if remaining.is_zero() {
                 return if saw_empty {
@@ -298,6 +329,9 @@ impl SearchClient {
         ];
         let mut tasks = tokio::task::JoinSet::new();
         for (engine_idx, engine) in engines.into_iter().enumerate() {
+            if self.is_engine_cooled_down(engine) {
+                continue;
+            }
             let client = self.clone();
             let query = query.to_owned();
             let recency = recency.map(str::to_owned);
@@ -362,6 +396,9 @@ impl SearchClient {
                     Url::parse(DEFAULT_FIRECRAWL_URL).map_err(|_| SearchFailure::Unavailable)?;
                 match self.firecrawl_search(&url, query, limit, recency).await {
                     Ok(hits) if !hits.is_empty() => Ok(hits),
+                    _ if self.is_engine_cooled_down(SearchProvider::Firecrawl) => {
+                        Err(SearchFailure::Unavailable)
+                    }
                     _ => {
                         let v1 = Url::parse(DEFAULT_FIRECRAWL_V1_URL)
                             .map_err(|_| SearchFailure::Unavailable)?;

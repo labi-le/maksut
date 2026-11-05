@@ -142,6 +142,11 @@ fn followup_questions_and_requests_reply() {
         )),
         Decision::Reply
     );
+    assert_eq!(
+        decide_rules(&followup("проресерчи сколько у лунтика ушей")),
+        Decision::Reply
+    );
+    assert_eq!(decide_rules(&followup("загугли это")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
 }
 

@@ -70,6 +70,7 @@ impl ChatConfig {
                 provider: search_provider,
                 tavily_key,
                 http: search_http,
+                engine_cooldowns: Arc::new(std::sync::Mutex::new(HashMap::new())),
             }),
             tools: ToolRegistry::builtin(),
             http,

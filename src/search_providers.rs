@@ -62,6 +62,7 @@ impl SearchClient {
 
     async fn get_html(
         &self,
+        engine: crate::search::SearchProvider,
         url: Url,
         referer: &str,
         blocked_markers: &[&str],
@@ -78,7 +79,12 @@ impl SearchClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
-            tracing::warn!(status = status.as_u16(), "search response rejected");
+            self.note_engine_cooldown(engine, status.as_u16());
+            tracing::debug!(
+                ?engine,
+                status = status.as_u16(),
+                "search response rejected"
+            );
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
@@ -121,7 +127,12 @@ impl SearchClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
-            tracing::warn!(status = status.as_u16(), "search response rejected");
+            self.note_engine_cooldown(crate::search::SearchProvider::Tavily, status.as_u16());
+            tracing::debug!(
+                engine = "tavily",
+                status = status.as_u16(),
+                "search response rejected"
+            );
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
@@ -191,7 +202,12 @@ impl SearchClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
-            tracing::warn!(status = status.as_u16(), "search response rejected");
+            self.note_engine_cooldown(crate::search::SearchProvider::Firecrawl, status.as_u16());
+            tracing::debug!(
+                engine = "firecrawl",
+                status = status.as_u16(),
+                "search response rejected"
+            );
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
@@ -276,7 +292,12 @@ impl SearchClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
-            tracing::warn!(status = status.as_u16(), "search response rejected");
+            self.note_engine_cooldown(crate::search::SearchProvider::Parallel, status.as_u16());
+            tracing::debug!(
+                engine = "parallel",
+                status = status.as_u16(),
+                "search response rejected"
+            );
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
@@ -317,7 +338,12 @@ impl SearchClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
-            tracing::warn!(status = status.as_u16(), "search response rejected");
+            self.note_engine_cooldown(crate::search::SearchProvider::Exa, status.as_u16());
+            tracing::debug!(
+                engine = "exa",
+                status = status.as_u16(),
+                "search response rejected"
+            );
             return Err(SearchFailure::Unavailable);
         }
         let bytes = Self::response_bytes(response).await?;
@@ -344,6 +370,7 @@ impl SearchClient {
         search_request("duckduckgo", &url, query);
         let html = self
             .get_html(
+                crate::search::SearchProvider::DuckDuckGo,
                 url,
                 "https://html.duckduckgo.com/",
                 &["anomaly-modal", "anomaly.js"],
@@ -377,6 +404,7 @@ impl SearchClient {
         search_request("startpage", &url, query);
         let html = self
             .get_html(
+                crate::search::SearchProvider::Startpage,
                 url,
                 "https://www.startpage.com/",
                 &["/sp/captcha", "anubis_challenge"],
@@ -405,6 +433,7 @@ impl SearchClient {
         search_request("mojeek", &url, query);
         let html = self
             .get_html(
+                crate::search::SearchProvider::Mojeek,
                 url,
                 "https://www.mojeek.com/",
                 &["altcha-widget", "sending automated queries"],
@@ -424,6 +453,7 @@ impl SearchClient {
         search_request("ecosia", &url, query);
         let html = self
             .get_html(
+                crate::search::SearchProvider::Ecosia,
                 url,
                 "https://www.ecosia.org/",
                 &["Ecosia Firewall", "_cf_chl_opt"],

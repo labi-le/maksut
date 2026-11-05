@@ -42,7 +42,8 @@ pub(crate) fn style_research_reply(
     text: &str,
     sources: &[ResearchSource],
 ) -> Result<String, String> {
-    let normalized = text.replace('\r', "");
+    let cleaned = text.replace('\r', "");
+    let normalized = strip_trailing_sources_block(&cleaned);
     let mut body = String::new();
     let mut blank = 0;
     for line in normalized.lines() {
@@ -76,6 +77,45 @@ pub(crate) fn style_research_reply(
     let selected = citation_ids(cited, sources.len());
     let block = render_sources_block(&selected, sources, config().chat.research_sources_chars);
     Ok(format!("{body}\n\n{block}"))
+}
+
+fn strip_trailing_sources_block(text: &str) -> &str {
+    let mut cut = None;
+    let mut offset = 0usize;
+    for raw_line in text.split('\n') {
+        let clean = raw_line
+            .trim()
+            .trim_matches(['*', '#', '_', ':', '-'])
+            .trim();
+        if clean.eq_ignore_ascii_case("источники") || clean.eq_ignore_ascii_case("sources")
+        {
+            let tail = text.get(offset + raw_line.len()..).unwrap_or("");
+            let all_source_lines = tail.lines().filter(|l| !l.trim().is_empty()).all(|l| {
+                let t = l.trim_start();
+                let numbered = t.find(['.', ')']).is_some_and(|i| {
+                    i > 0
+                        && t.get(..i)
+                            .is_some_and(|p| p.chars().all(|c| c.is_ascii_digit()))
+                });
+                t.starts_with('[')
+                    || t.starts_with('-')
+                    || t.starts_with('*')
+                    || t.starts_with("•")
+                    || numbered
+                    || t.contains("http://")
+                    || t.contains("https://")
+            });
+            if all_source_lines {
+                cut = Some(offset);
+                break;
+            }
+        }
+        offset += raw_line.len() + 1;
+    }
+    match cut {
+        Some(idx) => text.get(..idx).unwrap_or(text).trim_end(),
+        None => text,
+    }
 }
 
 fn citation_ids(cited: Vec<usize>, source_count: usize) -> Vec<usize> {
@@ -207,7 +247,16 @@ pub(crate) fn is_pass_reply(text: &str) -> bool {
 }
 
 pub(crate) fn is_stop_followup(text: &str) -> bool {
+    if text.split_whitespace().count() > 4 {
+        return false;
+    }
     let lower = text.to_lowercase();
+    if [" он ", " он,", " ему ", " него ", " мне ", " сначала"]
+        .iter()
+        .any(|third| lower.contains(third))
+    {
+        return false;
+    }
     [
         "завали ебало",
         "завали ебал",
