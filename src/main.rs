@@ -98,6 +98,7 @@ mod improve_store;
 mod improve_views;
 mod memory_guard;
 mod self_improve;
+mod self_memory;
 mod settings;
 pub(crate) use settings::*;
 mod cookies;

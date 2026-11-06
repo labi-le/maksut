@@ -2,10 +2,11 @@ use crate::*;
 use serde_json::json;
 use teloxide::types::Audio;
 
-/// Substituted when the attachment cannot be downloaded or transcribed.
+/// Substituted when a voice or audio attachment cannot be downloaded or transcribed.
 pub(crate) const UNRECOGNISED: &str = "[не удалось распознать голосовое]";
 
-/// A voice note or audio file that can be sent to the transcription model.
+/// A voice note, audio file, or video attachment whose speech can be sent to
+/// the transcription model.
 #[derive(Clone, Debug)]
 pub(crate) struct VoiceAttachment {
     pub(crate) file_id: FileId,
@@ -17,7 +18,6 @@ pub(crate) struct VoiceAttachment {
     /// quoted speech to the person quoting it.
     pub(crate) author: Option<String>,
 }
-
 /// The attachment chosen for this message plus where it came from.
 pub(crate) struct VoiceCandidate {
     pub(crate) attachment: VoiceAttachment,
@@ -51,8 +51,14 @@ static VOICE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
 /// One client for attachment download and transcription; both are bounded by
 /// `voice.timeout_secs` instead of the longer model timeout.
 static VOICE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(config().voice.timeout_secs))
+    let cfg = config();
+    let builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(cfg.telegram.connect_timeout_secs))
+        .timeout(Duration::from_secs(cfg.voice.timeout_secs))
+        .pool_idle_timeout(Duration::from_secs(cfg.telegram.pool_idle_timeout_secs))
+        .tcp_keepalive(Duration::from_secs(cfg.telegram.tcp_keepalive_secs))
+        .tcp_nodelay(true);
+    crate::apply_telegram_dns_fallback(builder)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });
@@ -62,8 +68,8 @@ pub(crate) fn enabled() -> bool {
     voice.enabled && !voice.model.trim().is_empty()
 }
 
-/// The current message's voice note or audio, else the voice note it replies
-/// to. Audio with an unknown container is not offered a provider format.
+/// The current message's voice note, audio, or addressed video, else the
+/// attachment it replies to. Audio with an unknown container is skipped.
 pub(crate) fn candidate(message: &Message) -> Option<VoiceCandidate> {
     if let Some(attachment) = attachment(message) {
         return Some(VoiceCandidate {
@@ -72,7 +78,7 @@ pub(crate) fn candidate(message: &Message) -> Option<VoiceCandidate> {
         });
     }
     let reply = message.reply_to_message()?;
-    let mut attachment = attachment(reply)?;
+    let mut attachment = reply_attachment(reply, message)?;
     attachment.author = reply
         .from
         .as_ref()
@@ -83,26 +89,55 @@ pub(crate) fn candidate(message: &Message) -> Option<VoiceCandidate> {
     })
 }
 
-fn attachment(message: &Message) -> Option<VoiceAttachment> {
-    if let Some(voice) = message.voice() {
-        return Some(VoiceAttachment {
-            file_id: voice.file.id.clone(),
-            duration_secs: voice.duration.seconds(),
-            format: "ogg",
-            label: "голосовое",
-            author: None,
-        });
-    }
-    let audio = message.audio()?;
-    Some(VoiceAttachment {
-        file_id: audio.file.id.clone(),
-        duration_secs: audio.duration.seconds(),
-        format: audio_format(audio)?,
-        label: "аудио",
-        author: None,
-    })
+fn fits_voice_limit(size: u32) -> bool {
+    u64::from(size) <= config().voice.max_bytes
 }
 
+fn new_att(id: &FileId, secs: u32, format: &'static str, label: &'static str) -> VoiceAttachment {
+    VoiceAttachment {
+        file_id: id.clone(),
+        duration_secs: secs,
+        format,
+        label,
+        author: None,
+    }
+}
+
+fn msg_text(m: &Message) -> &str {
+    m.text().or_else(|| m.caption()).unwrap_or("").trim()
+}
+
+fn reply_attachment(reply: &Message, parent: &Message) -> Option<VoiceAttachment> {
+    if let Some(att) = attachment(reply) {
+        return Some(att);
+    }
+    let v = reply
+        .video()
+        .filter(|v| !msg_text(parent).is_empty() && fits_voice_limit(v.file.size))?;
+    Some(new_att(&v.file.id, v.duration.seconds(), "m4a", "видео"))
+}
+
+fn attachment(message: &Message) -> Option<VoiceAttachment> {
+    if let Some(v) = message.voice() {
+        let secs = v.duration.seconds();
+        return Some(new_att(&v.file.id, secs, "ogg", "голосовое"));
+    }
+    if let Some(a) = message.audio() {
+        let (secs, fmt) = (a.duration.seconds(), audio_format(a)?);
+        return Some(new_att(&a.file.id, secs, fmt, "аудио"));
+    }
+    if let Some(n) = message
+        .video_note()
+        .filter(|n| fits_voice_limit(n.file.size))
+    {
+        let secs = n.duration.seconds();
+        return Some(new_att(&n.file.id, secs, "m4a", "видеокружок"));
+    }
+    let v = message.video().filter(|v| fits_voice_limit(v.file.size))?;
+    let t = msg_text(message);
+    (!t.is_empty() && crate::links::first_link(t).is_none())
+        .then(|| new_att(&v.file.id, v.duration.seconds(), "m4a", "видео"))
+}
 fn audio_format(audio: &Audio) -> Option<&'static str> {
     if let Some(name) = audio.file_name.as_deref() {
         let extension = name.rsplit('.').next().unwrap_or_default();
@@ -123,18 +158,13 @@ fn audio_format(audio: &Audio) -> Option<&'static str> {
     }
 }
 
-fn known_format(extension: &str) -> Option<&'static str> {
-    match extension
-        .trim_start_matches('.')
-        .to_ascii_lowercase()
-        .as_str()
-    {
+fn known_format(ext: &str) -> Option<&'static str> {
+    match ext.trim_start_matches('.').to_ascii_lowercase().as_str() {
         "ogg" | "oga" | "opus" => Some("ogg"),
-        "mp3" | "mpga" => Some("mp3"),
+        "mp3" | "mpga" | "mpeg" => Some("mp3"),
         "wav" | "wave" => Some("wav"),
         "flac" => Some("flac"),
         "m4a" | "mp4" | "aac" => Some("m4a"),
-        "mpeg" => Some("mp3"),
         "webm" => Some("webm"),
         _ => None,
     }
@@ -142,7 +172,6 @@ fn known_format(extension: &str) -> Option<&'static str> {
 
 /// Downloads the attachment, transcribes it, and returns the prompt block with
 /// its duration, the untrusted-input label, and the provider-reported usage.
-/// Every failure is the caller's cue to substitute [`UNRECOGNISED`].
 pub(crate) async fn transcribe(
     bot: &Bot,
     attachment: &VoiceAttachment,
@@ -174,14 +203,12 @@ pub(crate) async fn transcribe(
     Ok((format_block(attachment, &transcript), usage))
 }
 
-pub(crate) fn format_block(attachment: &VoiceAttachment, transcript: &str) -> String {
+pub(crate) fn format_block(att: &VoiceAttachment, transcript: &str) -> String {
     let max = config().voice.max_transcript_chars;
-    let head = match attachment.author.as_deref() {
-        Some(author) => format!(
-            "[{} {}с, {author}]: ",
-            attachment.label, attachment.duration_secs
-        ),
-        None => format!("[{} {}с]: ", attachment.label, attachment.duration_secs),
+    let (lbl, s) = (att.label, att.duration_secs);
+    let head = match att.author.as_deref() {
+        Some(author) => format!("[{lbl} {s}с, {author}]: "),
+        None => format!("[{lbl} {s}с]: "),
     };
     format!("{head}{}", truncate_chars(transcript, max))
 }
@@ -217,6 +244,21 @@ pub(crate) async fn transcription(
     {
         return None;
     }
+    let typed = msg_text(message);
+    if matches!(candidate.attachment.label, "видео" | "видеокружок")
+        && !message.chat.is_private()
+        && crate::addressing::address_kind(message, typed, &cfg.bot_username)
+            == crate::addressing::AddressKind::None
+    {
+        let followup_allowed = candidate.from_reply
+            && match cfg.chat.as_ref() {
+                Some(chat) => chat.followup_active(message.chat.id).await,
+                None => false,
+            };
+        if !followup_allowed {
+            return None;
+        }
+    }
     if !message.chat.is_private()
         && !group_enabled(&cfg.database, message.chat.id)
             .await
@@ -230,6 +272,9 @@ pub(crate) async fn transcription(
             Ok(pair) => pair,
             Err(error) => {
                 tracing::warn!("Voice transcription failed: {error}");
+                if matches!(candidate.attachment.label, "видео" | "видеокружок") {
+                    return None;
+                }
                 (UNRECOGNISED.to_owned(), None)
             }
         };
@@ -266,27 +311,21 @@ pub(crate) async fn turn(
     sender_ignored: bool,
     reply_ignored: bool,
 ) -> VoiceTurn {
-    let Some(block) = transcription(bot, message, cfg, owner, sender_ignored, reply_ignored).await
-    else {
-        return VoiceTurn {
-            text: None,
-            quoted: false,
-        };
-    };
-    let quoted = block.from_reply;
+    let block = transcription(bot, message, cfg, owner, sender_ignored, reply_ignored).await;
+    let quoted = block.as_ref().is_some_and(|b| b.from_reply);
     VoiceTurn {
-        text: append_transcript(typed, Some(block)),
+        text: append_transcript(typed, block),
         quoted,
     }
 }
 
 /// Original typed text plus the transcript, typed text first.
 pub(crate) fn append_transcript(text: &str, block: Option<VoiceBlock>) -> Option<String> {
-    let block = block?;
+    let b = block?;
     Some(if text.trim().is_empty() {
-        block.text
+        b.text
     } else {
-        format!("{text}\n{}", block.text)
+        format!("{text}\n{}", b.text)
     })
 }
 
@@ -339,7 +378,7 @@ async fn download_once(bot: &Bot, attachment: &VoiceAttachment) -> Result<Vec<u8
         .api_url()
         .join(&format!("file/bot{}/{}", bot.token(), file.path))
         .map_err(|_| DownloadError::Permanent)?;
-    let mut response = VOICE_CLIENT
+    let response = VOICE_CLIENT
         .get(url)
         .send()
         .await
@@ -352,11 +391,17 @@ async fn download_once(bot: &Bot, attachment: &VoiceAttachment) -> Result<Vec<u8
             Err(DownloadError::Permanent)
         };
     }
-    let max_bytes = config().voice.max_bytes;
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_bytes)
-    {
+    let bytes = read_bounded_body(response, config().voice.max_bytes).await?;
+    (!bytes.is_empty())
+        .then_some(bytes)
+        .ok_or(DownloadError::Permanent)
+}
+
+async fn read_bounded_body(
+    mut response: reqwest::Response,
+    max_bytes: u64,
+) -> Result<Vec<u8>, DownloadError> {
+    if response.content_length().is_some_and(|len| len > max_bytes) {
         return Err(DownloadError::Permanent);
     }
     let mut bytes = Vec::new();
@@ -369,9 +414,6 @@ async fn download_once(bot: &Bot, attachment: &VoiceAttachment) -> Result<Vec<u8
             return Err(DownloadError::Permanent);
         }
         bytes.extend_from_slice(&chunk);
-    }
-    if bytes.is_empty() {
-        return Err(DownloadError::Permanent);
     }
     Ok(bytes)
 }
@@ -406,7 +448,7 @@ pub(crate) async fn transcribe_bytes(
         Some(slot) => *slot = Value::String(base64_encode(bytes)),
         None => return Err(VoiceError::Transcription),
     }
-    let mut response = VOICE_CLIENT
+    let response = VOICE_CLIENT
         .post(endpoint)
         .bearer_auth(api_key)
         .header("content-type", "application/json")
@@ -418,24 +460,10 @@ pub(crate) async fn transcribe_bytes(
         tracing::warn!("Voice transcription HTTP {}", response.status().as_u16());
         return Err(VoiceError::Transcription);
     }
-    let max_response_bytes = u64::try_from(config().llm.max_response_bytes).unwrap_or(u64::MAX);
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_response_bytes)
-    {
-        return Err(VoiceError::Transcription);
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    let max_resp = u64::try_from(config().llm.max_response_bytes).unwrap_or(u64::MAX);
+    let bytes = read_bounded_body(response, max_resp)
         .await
-        .map_err(|_| VoiceError::Transcription)?
-    {
-        if bytes.len() as u64 + chunk.len() as u64 > max_response_bytes {
-            return Err(VoiceError::Transcription);
-        }
-        bytes.extend_from_slice(&chunk);
-    }
+        .map_err(|_| VoiceError::Transcription)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| VoiceError::Transcription)?;
     let usage = Usage::from_response(&value);
     let text = transcript_from_response(&value).ok_or(VoiceError::Transcription)?;

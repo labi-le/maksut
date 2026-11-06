@@ -3230,3 +3230,93 @@ fn style_research_reply_strips_duplicate_model_sources_block_and_cools_down_engi
     assert!(client.is_engine_cooled_down(SearchProvider::Parallel));
     assert!(!client.is_engine_cooled_down(SearchProvider::DuckDuckGo));
 }
+
+#[test]
+fn expand_repo_blob_links_ignores_nonexistent_paths_inline_code_and_unmatched_backticks() {
+    let text = "в omp сабпроцесс `<python> -u tools/runner.py`, в режиме python.kernelMode = \"session\"` и в прозе tools/runner.py не разворачивается, а src/chat.rs#L10 разворачивается.";
+    let styled = style_reply(text);
+    assert!(
+        !styled.contains("blob/main/tools/runner.py"),
+        "non-existent tools/runner.py must not become a maxwell link: {styled}"
+    );
+    assert!(
+        styled.contains(
+            "[src/chat.rs#L10](https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10)"
+        ),
+        "{styled}"
+    );
+    let html = render_telegram_html(&styled).unwrap();
+    assert!(
+        html.contains("<code>&lt;python&gt; -u tools/runner.py</code>"),
+        "{html}"
+    );
+    assert!(
+        !html.contains('`'),
+        "unmatched stray backtick must be stripped: {html}"
+    );
+}
+
+#[tokio::test]
+async fn final_tool_round_forces_tool_free_synthesis_instead_of_tools_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let max_rounds = crate::config::config().chat.tool_rounds;
+    let mut responses = Vec::new();
+    for idx in 0..max_rounds - 1 {
+        responses.push(format!(
+            r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"c{idx}","type":"function","function":{{"name":"inspect_code","arguments":"{{\"query\":\"nonexistent_xyz\"}}"}}}}]}}}}]}}"#
+        ));
+    }
+    responses.push(
+        r#"{"choices":[{"message":{"role":"assistant","content":"итоговый синтез после тулов"}}]}"#
+            .into(),
+    );
+    let llm = mock_server(responses).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(1),
+        sender_name: "Денис",
+        username: Some("crudoshlepa"),
+        message_id: 1,
+        reply_user_id: None,
+        owner: true,
+        prompt: "изучи",
+        image: None,
+        followup: false,
+        sticker_mode: false,
+        reply_context: None,
+        bot: None,
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "итоговый синтез после тулов");
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(requests.len(), max_rounds);
+    let last_body = body_of(requests.last().unwrap());
+    assert!(
+        last_body.get("tools").is_none(),
+        "final round must omit tools to force synthesis: {last_body}"
+    );
+    llm.task.abort();
+}

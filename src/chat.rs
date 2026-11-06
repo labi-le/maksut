@@ -329,7 +329,8 @@ pub(crate) async fn chat_reply_with_proposal(
         author_name: turn.sender_name.to_owned(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);
-    for round in 0..config().chat.tool_rounds {
+    let max_rounds = config().chat.tool_rounds;
+    for round in 0..max_rounds {
         let c = &config().chat;
         let max_tokens = match (state.research.used, state.status_fallback.is_some()) {
             (true, _) => c.research_max_tokens,
@@ -344,11 +345,18 @@ pub(crate) async fn chat_reply_with_proposal(
         if turn.image.is_some() || snap_msg_idx.is_some() {
             request = request.without_reasoning();
         }
+        let force_synthesis = max_rounds > 1 && round + 1 == max_rounds;
         llm_round(round, max_tokens, request.reasoning, state.research.used);
         let Completion {
             message: mut reply,
             usage,
-        } = chat.complete(&request).await.map_err(|e| e.reason())?;
+        } = if force_synthesis {
+            chat.complete_with(&request, false, false)
+                .await
+                .map_err(|e| e.reason())?
+        } else {
+            chat.complete(&request).await.map_err(|e| e.reason())?
+        };
         usage_site.record(pool, &chat.model, KIND_CHAT, usage).await;
         if request.reasoning && state.sticker.is_none() && reply_is_empty(&reply) {
             tracing::warn!(round, "empty reply, retrying without reasoning");
@@ -356,7 +364,7 @@ pub(crate) async fn chat_reply_with_proposal(
             if let Ok(Completion {
                 message: retry,
                 usage,
-            }) = chat.complete_with(&request, true, false).await
+            }) = chat.complete_with(&request, !force_synthesis, false).await
             {
                 usage_site
                     .record(pool, &chat.model, KIND_CHAT_RETRY, usage)
@@ -366,11 +374,15 @@ pub(crate) async fn chat_reply_with_proposal(
                 }
             }
         }
-        let calls = reply
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let calls = if force_synthesis {
+            Vec::new()
+        } else {
+            reply
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
         if calls.is_empty() {
             let content = reply
                 .get("content")

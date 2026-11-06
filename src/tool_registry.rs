@@ -339,8 +339,8 @@ fn inspect_code_parameters() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Text to search for; empty only when path is set"},
-            "path": {"type": "string", "description": "Optional relative file to read instead of searching"}
+            "query": {"type": "string", "description": "Text to search for; empty when reading a file or listing a directory via path"},
+            "path": {"type": "string", "description": "Optional relative file or directory to read, list, or scope the search to"}
         },
         "required": ["query"],
     })

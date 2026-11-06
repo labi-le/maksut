@@ -293,7 +293,7 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
         return Err("план не найден".to_owned());
     }
     let status = parent.get("status").and_then(Value::as_str).unwrap_or("");
-    if !matches!(status, "proposed" | "failed") {
+    if !matches!(status, "proposed" | "failed" | "rejected") {
         return Err("план уже закрыт".to_owned());
     }
     let parent_goal = parent
@@ -313,7 +313,9 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
     let previous_review = parent.get("review").and_then(Value::as_str).unwrap_or("");
     // The orchestrator only shows `feedback` next to a previous spec, so a
     // remark on a spec-less failed plan has to ride in the child goal.
-    let child_goal = if previous_spec.trim().is_empty() {
+    let child_goal = if previous_spec.trim().is_empty()
+        || (status == "rejected" && goal.chars().count() >= parent_goal.chars().count() / 2)
+    {
         truncate_chars(goal, config().improve.goal_max_chars)
     } else {
         parent_goal.to_owned()

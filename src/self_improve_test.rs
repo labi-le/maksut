@@ -1029,6 +1029,32 @@ async fn propose_feature_refines_links_parent_without_rejection() {
         .join("approvals")
         .join("plan-1.json")
         .exists());
+    write_outbox(
+        &cfg.self_improve_dir,
+        "rejected-1.json",
+        json!({
+            "id": "rejected-1", "status": "rejected", "requested_by": cfg.owner_id.0,
+            "goal": "интегрировать mcp ленты", "created_at": 2,
+        }),
+    );
+    let recreated =
+        crate::self_improve::queue_feature_refined(crate::self_improve::RefineProposal {
+            dir: &cfg.self_improve_dir,
+            owner: cfg.owner_id,
+            source_chat_id: 10,
+            proposed_by: cfg.owner_id,
+            proposer: "Owner",
+            username: Some("owner_tag"),
+            message_id: 78,
+            goal: "интегрировать mcp ленты и оплату",
+            refines: Some("rejected-1"),
+        })
+        .unwrap();
+    assert!(cfg
+        .self_improve_dir
+        .join("inbox")
+        .join(format!("{recreated}.json"))
+        .exists());
 }
 
 #[cfg(unix)]

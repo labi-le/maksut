@@ -179,12 +179,9 @@ printf '%s\n' "$dir/finished.{extension}" > "$manifest"
             }
             assert!(video.1.contains("HTML"));
         }
-        if !delete_ok {
-            assert!(requests
-                .iter()
-                .any(|(path, body)| api_method_is(path, "sendMessage")
-                    && body.contains("can_delete_messages")));
-        }
+        assert!(!requests.iter().any(|(path, body)| {
+            api_method_is(path, "sendMessage") && body.contains("can_delete_messages")
+        }));
         let messages: Vec<_> = requests
             .iter()
             .filter(|(path, _)| api_method_is(path, "sendMessage"))
@@ -192,8 +189,7 @@ printf '%s\n' "$dir/finished.{extension}" > "$manifest"
         assert_eq!(
             messages.len(),
             usize::from(
-                !delete_ok
-                    || !expect_delete
+                !expect_delete
                     || !video_ok
                     || contents == "unsupported pair"
                     || contents == "partial"

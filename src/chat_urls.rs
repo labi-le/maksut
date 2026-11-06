@@ -78,10 +78,27 @@ impl ChatConfig {
 
 /// Expands repository paths (`src/foo.rs#L10`, `chat_client.rs#L275-277`,
 /// `tools/omp_worker.py:12`, `/docs/adr/012-free-chat.md:8`) into full GitHub
-/// blob URLs while leaving existing `http(s)://` URLs untouched.
+/// blob URLs while leaving inline code spans and `http(s)://` URLs untouched.
 pub(crate) fn expand_repo_blob_links(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        expand_prose_repo_tokens(&mut out, rest.get(..open).unwrap_or(""));
+        let after_prefix = rest.get(open..).unwrap_or("");
+        let ticks = after_prefix.len() - after_prefix.trim_start_matches('`').len();
+        let after_open = after_prefix.get(ticks..).unwrap_or("");
+        if let Some(close) = crate::chat_text::find_closing_ticks(after_open, ticks) {
+            out.push_str(after_prefix.get(..ticks + close + ticks).unwrap_or(""));
+            rest = after_open.get(close + ticks..).unwrap_or("");
+        } else {
+            rest = after_open;
+        }
+    }
+    expand_prose_repo_tokens(&mut out, rest);
+    out
+}
+
+fn expand_prose_repo_tokens(out: &mut String, mut rest: &str) {
     while !rest.is_empty() {
         let ws_len: usize = rest
             .chars()
@@ -101,10 +118,9 @@ pub(crate) fn expand_repo_blob_links(text: &str) -> String {
             .map(char::len_utf8)
             .sum();
         let word = rest.get(..word_len).unwrap_or("");
-        push_expanded_repo_token(&mut out, word);
+        push_expanded_repo_token(out, word);
         rest = rest.get(word_len..).unwrap_or("");
     }
-    out
 }
 
 fn push_expanded_repo_token(out: &mut String, word: &str) {
@@ -204,10 +220,31 @@ pub(crate) fn resolve_repo_target(core: &str) -> Option<String> {
     } else {
         return None;
     };
+    if !repo_file_exists(&repo_path) {
+        return None;
+    }
     Some(match anchor {
         Some(a) => format!("{repo_path}#{a}"),
         None => repo_path,
     })
+}
+
+static REPO_FILES: std::sync::LazyLock<std::collections::HashSet<String>> =
+    std::sync::LazyLock::new(|| {
+        let code_dir = Path::new(&config().paths.code_dir);
+        if code_dir.is_dir() {
+            crate::code_inspect::snapshot_relative_files(code_dir)
+        } else {
+            crate::code_inspect::snapshot_relative_files(Path::new("."))
+        }
+    });
+
+pub(crate) fn warm_repo_files() {
+    let _ = &*REPO_FILES;
+}
+
+fn repo_file_exists(repo_path: &str) -> bool {
+    REPO_FILES.contains(repo_path)
 }
 
 fn is_safe_ident(s: &str) -> bool {

@@ -71,3 +71,39 @@ fn filter_self_memory_hides_unscoped_owner_directives_from_non_owners() {
     );
     assert_eq!(owner_view, raw);
 }
+
+#[tokio::test]
+async fn inspect_supports_directory_paths_and_delete_self_fact_matches_fuzzy_topic() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/chat.rs"), "fn alpha_needle() {}\n").unwrap();
+    std::fs::write(dir.path().join("src/voice.rs"), "fn beta_needle() {}\n").unwrap();
+    let list_view = inspect(dir.path(), "", Some("src"));
+    assert!(list_view.contains("src/chat.rs"), "{list_view}");
+    assert!(list_view.contains("src/voice.rs"), "{list_view}");
+    let dir_search = inspect(dir.path(), "alpha_needle", Some("src/"));
+    assert!(dir_search.contains("src/chat.rs:1"), "{dir_search}");
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".git/config.toml"), "secret = 1\n").unwrap();
+    assert!(!inspect(dir.path(), "", Some(".git")).contains("Файлы:"));
+    let pool = crate::database::open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    crate::code_inspect::record_self_fact(
+        &pool,
+        dir.path(),
+        "обращение к денису",
+        "обращаться император",
+        "",
+    )
+    .await
+    .unwrap();
+    crate::code_inspect::record_self_fact(&pool, dir.path(), "денис", "", "")
+        .await
+        .unwrap();
+    let loaded = crate::code_inspect::load_self_memory(&pool).await.unwrap();
+    assert!(loaded.is_none(), "{loaded:?}");
+}

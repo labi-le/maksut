@@ -286,7 +286,6 @@ fn render_inline_code_html(line: &str) -> (String, bool) {
             }
             rest = after_open.get(close + ticks..).unwrap_or("");
         } else {
-            out.extend(std::iter::repeat_n('`', ticks));
             rest = after_open;
         }
     }
@@ -418,7 +417,7 @@ fn push_escaped_html_attr(out: &mut String, text: &str) {
     }
 }
 
-fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
+pub(crate) fn find_closing_ticks(text: &str, ticks: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {

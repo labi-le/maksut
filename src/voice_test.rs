@@ -667,3 +667,49 @@ async fn disabled_group_voice_is_not_downloaded_or_transcribed() {
         .all(|request| request.method != "getfile"));
     llm.task.abort();
 }
+
+#[test]
+fn reply_to_video_with_question_is_a_voice_candidate_while_bare_video_is_not() {
+    let bare_video = message(serde_json::json!({
+        "message_id": 80,
+        "date": 1_700_000_000,
+        "chat": {"id": -100, "type": "supergroup"},
+        "video": {
+            "file_id": "video-file",
+            "file_unique_id": "video-unique",
+            "width": 720,
+            "height": 1280,
+            "duration": 25,
+            "file_size": 500_000,
+            "mime_type": "video/mp4"
+        }
+    }));
+    assert!(candidate(&bare_video).is_none());
+
+    let reply_video = message(serde_json::json!({
+        "message_id": 81,
+        "date": 1_700_000_000,
+        "chat": {"id": -100, "type": "supergroup"},
+        "text": "максут просмотри фулл видео и дай описание",
+        "reply_to_message": {
+            "message_id": 80,
+            "date": 1_700_000_000,
+            "chat": {"id": -100, "type": "supergroup"},
+            "from": {"id": 8399828471u64, "is_bot": true, "first_name": "Maksut"},
+            "video": {
+                "file_id": "video-file",
+                "file_unique_id": "video-unique",
+                "width": 720,
+                "height": 1280,
+                "duration": 25,
+                "file_size": 500_000,
+                "mime_type": "video/mp4"
+            }
+        }
+    }));
+    let found = candidate(&reply_video).expect("replied video candidate");
+    assert!(found.from_reply);
+    assert_eq!(found.attachment.label, "видео");
+    assert_eq!(found.attachment.format, "m4a");
+    assert_eq!(found.attachment.duration_secs, 25);
+}

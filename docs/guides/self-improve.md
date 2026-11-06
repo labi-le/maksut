@@ -13,7 +13,7 @@ The self-improvement intake is split across two isolated processes so the Telegr
 
 1. **Proposal (`inbox/` -> `outbox/` with `status: "proposed"`):**
    - Created via `/improve <goal>` (owner in private chat) or the `propose_feature` function tool (stage `"plan"`).
-   - `propose_feature` with `refines=<id>` queues a revision of an existing `proposed` or `failed` request, passing `feedback` (`goal`) without marking the previous request rejected.
+   - `propose_feature` with `refines=<id>` queues a revision of an existing `proposed`, `failed`, or `rejected` request, passing `feedback` (`goal`) without marking the previous request rejected.
    - The orchestrator validates the request and writes `status: "proposed"` to `outbox/<id>.json`.
    - The bot notifies the owner with the proposer, goal, and two inline buttons (`В issue` / `В помойку`).
 2. **Owner decision (`approvals/` or `rejections/`) and GitHub issue creation (`issue_created`):**

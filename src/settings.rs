@@ -48,6 +48,7 @@ impl Settings {
         if let Some(path) = &cookies_file {
             check_cookies(path).await?;
         }
+        let _ = tokio::task::spawn_blocking(crate::chat_urls::warm_repo_files).await;
         let chat = match env::var("LLM_API_KEY") {
             Ok(key) if !key.trim().is_empty() => {
                 let base = parse_http_endpoint(&cfg.llm.base_url, "llm.base_url")?;
