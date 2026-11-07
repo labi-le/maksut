@@ -1,6 +1,17 @@
-use crate::prelude::*;
+//! Owner memory: `bot_self_memory` is canonical, Qdrant is a write-through
+//! index for code facts only. Owner directives (`source_url` empty) stay fully
+//! injected on every turn; ranking them could drop a directive that does not
+//! match the current query, which the owner prompt forbids.
+//!
+//! A Qdrant or embedding failure never loses a write: the row is committed
+//! first, the mirror is logged, and the indexer's idempotent backfill repairs
+//! the point later.
+
+use crate::qdrant::QdrantClient;
+use crate::*;
 
 pub(crate) async fn record_self_fact(
+    chat: &ChatConfig,
     pool: &SqlitePool,
     base: &Path,
     topic: &str,
@@ -39,7 +50,13 @@ pub(crate) async fn record_self_fact(
         if !source_url.is_empty() {
             return Err("укажи fact".into());
         }
-        return delete_self_fact(pool, &topic).await;
+        let deleted = delete_self_fact(pool, &topic).await?;
+        if let Some(client) = QdrantClient::from_config() {
+            if let Err(reason) = crate::qdrant_index::delete_self_points(&client, &deleted).await {
+                tracing::warn!("self memory qdrant delete failed: {reason}");
+            }
+        }
+        return Ok(());
     }
     let mask = crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET;
     if source_url.is_empty() {
@@ -80,26 +97,44 @@ pub(crate) async fn record_self_fact(
     .execute(pool)
     .await
     .map_err(|_| "не удалось сохранить факт".to_string())?;
-    let _ = sqlx::query(
-        "DELETE FROM bot_self_memory WHERE topic NOT IN (SELECT topic FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?)",
+    // Eviction is part of the write, so the index must drop the same topics;
+    // otherwise a later read could still surface an evicted fact from Qdrant.
+    let evicted: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM bot_self_memory WHERE topic NOT IN (SELECT topic FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?) RETURNING topic",
     )
     .bind(config().code.memory_max_rows)
-    .execute(pool)
-    .await;
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    if let Some(client) = QdrantClient::from_config() {
+        if !evicted.is_empty() {
+            if let Err(reason) = crate::qdrant_index::delete_self_points(&client, &evicted).await {
+                tracing::warn!("self memory qdrant eviction failed: {reason}");
+            }
+        }
+        if !source_url.is_empty() {
+            match crate::qdrant_index::index_self_fact(chat, &client, &topic, &fact, source_url)
+                .await
+            {
+                Ok(()) => {}
+                Err(reason) => tracing::warn!("self memory qdrant write failed: {reason}"),
+            }
+        }
+    }
     Ok(())
 }
 
 /// Deletes a topic from `bot_self_memory`. When the exact topic key is absent,
 /// falls back to a case-insensitive or stem match over existing topic keys so
 /// `remember_self(topic="денис", fact="")` removes `"обращение к денису"`.
-async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<(), String> {
+async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<Vec<String>, String> {
     let exact = sqlx::query("DELETE FROM bot_self_memory WHERE topic = ?")
         .bind(topic)
         .execute(pool)
         .await
         .map_err(|_| "не удалось обновить память".to_string())?;
     if exact.rows_affected() > 0 {
-        return Ok(());
+        return Ok(vec![topic.to_owned()]);
     }
     let rows: Vec<(String,)> = sqlx::query_as("SELECT topic FROM bot_self_memory")
         .fetch_all(pool)
@@ -137,19 +172,10 @@ async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<(), String> 
             .await
             .map_err(|_| "не удалось обновить память".to_string())?;
     }
-    Ok(())
+    Ok(doomed)
 }
 
-pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>, sqlx::Error> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT topic, fact, source_url FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?",
-    )
-    .bind(config().code.memory_max_rows)
-    .fetch_all(pool)
-    .await?;
-    if rows.is_empty() {
-        return Ok(None);
-    }
+fn render_self_memory(rows: impl Iterator<Item = (String, String, String)>) -> Option<String> {
     let mut out = String::new();
     for (topic, fact, source_url) in rows {
         let topic = topic.replace("[owner]", "[ owner ]");
@@ -166,7 +192,99 @@ pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>
         }
         out.push_str(&line);
     }
-    Ok((!out.trim().is_empty()).then_some(out.trim_end().to_owned()))
+    (!out.trim().is_empty()).then_some(out.trim_end().to_owned())
+}
+
+pub(crate) async fn load_self_memory(pool: &SqlitePool) -> Result<Option<String>, sqlx::Error> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT topic, fact, source_url FROM bot_self_memory ORDER BY updated_at DESC, topic ASC LIMIT ?",
+    )
+    .bind(config().code.memory_max_rows)
+    .fetch_all(pool)
+    .await?;
+    Ok(render_self_memory(rows.into_iter()))
+}
+
+/// Memory for one chat turn. Owner directives (`source_url` empty) are always
+/// injected in full; only code facts are ranked through Qdrant, and the
+/// fallback is the complete SQLite set, so a failed index never drops a fact.
+pub(crate) async fn load_self_memory_for(
+    chat: &ChatConfig,
+    pool: &SqlitePool,
+    query: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let client = QdrantClient::from_config();
+    load_self_memory_with(chat, pool, query, client.as_ref()).await
+}
+
+/// Same selection with an explicit index client, so a test can exercise the
+/// ranked path without installing the process-wide configuration.
+pub(crate) async fn load_self_memory_with(
+    chat: &ChatConfig,
+    pool: &SqlitePool,
+    query: &str,
+    client: Option<&QdrantClient>,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(client) = client else {
+        return load_self_memory(pool).await;
+    };
+    let directives: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT topic, fact, source_url FROM bot_self_memory \
+         WHERE trim(source_url) = '' ORDER BY updated_at DESC, topic ASC LIMIT ?",
+    )
+    .bind(config().code.memory_max_rows)
+    .fetch_all(pool)
+    .await?;
+    let fact_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM bot_self_memory WHERE trim(source_url) <> ''")
+            .fetch_one(pool)
+            .await?;
+    // Ranking only pays for itself when facts exceed what the prompt can hold.
+    let facts = if fact_count > 0 {
+        if fact_count as usize <= config().memory.self_fact_limit {
+            load_self_facts(pool).await?
+        } else {
+            match ranked_self_facts(chat, client, query, fact_count as usize).await {
+                Some(rows) => rows,
+                None => load_self_facts(pool).await?,
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    Ok(render_self_memory(directives.into_iter().chain(facts)))
+}
+
+async fn load_self_facts(pool: &SqlitePool) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT topic, fact, source_url FROM bot_self_memory \
+         WHERE trim(source_url) <> '' ORDER BY updated_at DESC, topic ASC LIMIT ?",
+    )
+    .bind(config().code.memory_max_rows)
+    .fetch_all(pool)
+    .await
+}
+
+async fn ranked_self_facts(
+    chat: &ChatConfig,
+    client: &QdrantClient,
+    query: &str,
+    fact_count: usize,
+) -> Option<Vec<(String, String, String)>> {
+    let limit = config().memory.self_fact_limit.min(fact_count.max(1));
+    match crate::qdrant_index::search_self_facts(chat, client, query, limit).await {
+        Ok(facts) if !facts.is_empty() => Some(
+            facts
+                .into_iter()
+                .map(|fact| (fact.topic, fact.fact, fact.source_url))
+                .collect(),
+        ),
+        Ok(_) => None,
+        Err(reason) => {
+            tracing::warn!("self memory qdrant search failed: {reason}");
+            None
+        }
+    }
 }
 
 fn extract_at_handles(text: &str) -> Vec<String> {

@@ -7,7 +7,8 @@
 //!
 //! Only `flags = 0` rows are indexed, matching the memory guarantee that
 //! injection and secret messages never reach the model. Retrieval lives in
-//! [`crate::chat_search`].
+//! [`crate::chat_search`]. When `memory.qdrant_url` is set, the indexer also
+//! mirrors these stored vectors into Qdrant through [`crate::qdrant_index`].
 
 use crate::*;
 use serde_json::json;
@@ -22,6 +23,20 @@ fn encode_vector(vector: &[f32]) -> Vec<u8> {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     bytes
+}
+
+/// Little-endian `f32` blob from `chat_embeddings.vector`; a trailing partial
+/// word means the row is corrupt and is skipped rather than misread.
+pub(crate) fn decode_vector(bytes: &[u8]) -> Option<Vec<f32>> {
+    let (chunks, remainder) = bytes.as_chunks::<4>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    let mut vector = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        vector.push(f32::from_le_bytes(*chunk));
+    }
+    Some(vector)
 }
 
 /// Unit vector for dot-product scoring; `None` for an empty, zero, or
@@ -342,6 +357,21 @@ pub(crate) async fn chat_indexer(cfg: Arc<Settings>) {
                             tracing::warn!("Chat embedding index failed: {reason}");
                             break;
                         }
+                    }
+                }
+            }
+            if let Some(client) = crate::qdrant::QdrantClient::from_config() {
+                match crate::qdrant_index::sync_chat_points(&cfg.database, &client).await {
+                    Ok(0) => {}
+                    Ok(count) => tracing::debug!(count, "chat vectors synced to qdrant"),
+                    Err(reason) => tracing::warn!("Qdrant chat sync failed: {reason}"),
+                }
+                if !auth_failed {
+                    match crate::qdrant_index::sync_self_points(chat, &cfg.database, &client).await
+                    {
+                        Ok(0) => {}
+                        Ok(count) => tracing::debug!(count, "self facts synced to qdrant"),
+                        Err(reason) => tracing::warn!("Qdrant self memory sync failed: {reason}"),
                     }
                 }
             }

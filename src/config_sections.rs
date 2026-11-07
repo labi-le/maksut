@@ -270,6 +270,13 @@ pub(crate) struct MemorySettings {
     pub(crate) search_chunk_chars: usize,
     pub(crate) search_max_chars: usize,
     pub(crate) search_recent_messages: usize,
+    pub(crate) qdrant_url: String,
+    pub(crate) qdrant_collection: String,
+    pub(crate) qdrant_timeout_secs: u64,
+    pub(crate) qdrant_max_response_bytes: usize,
+    pub(crate) qdrant_sync_batch: usize,
+    pub(crate) qdrant_sync_batches: usize,
+    pub(crate) self_fact_limit: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -558,6 +565,13 @@ defaults!(MemorySettings {
     search_chunk_chars: 400,
     search_max_chars: 4000,
     search_recent_messages: 5,
+    qdrant_url: String::new(),
+    qdrant_collection: "maksut_memory".into(),
+    qdrant_timeout_secs: 5,
+    qdrant_max_response_bytes: 1024 * 1024,
+    qdrant_sync_batch: 128,
+    qdrant_sync_batches: 4,
+    self_fact_limit: 10,
 });
 
 defaults!(MediaCacheSettings {

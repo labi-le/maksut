@@ -72,6 +72,7 @@ class FakeGitAndDocker:
         archive_ok: bool = True,
         up_ok: bool = True,
         container: dict | None = None,
+        qdrant_container: dict | None = None,
     ):
         self.branch = branch
         self.dirty = dirty
@@ -84,6 +85,7 @@ class FakeGitAndDocker:
         self.archive_ok = archive_ok
         self.up_ok = up_ok
         self.container = container
+        self.qdrant_container = qdrant_container
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
@@ -107,13 +109,17 @@ class FakeGitAndDocker:
             self.head_sha = self.remote_sha
             return subprocess.CompletedProcess(args, 0, stdout="Fast-forward\n", stderr="")
         if args[:2] == ["docker", "inspect"]:
-            if self.container is None:
+            name = args[-1]
+            source = self.container
+            if name == "maksut-qdrant-1":
+                source = self.qdrant_container if self.qdrant_container is not None else self.container
+            if source is None:
                 return subprocess.CompletedProcess(
-                    args, 1, stdout="", stderr=f"Error: No such object: {args[-1]}"
+                    args, 1, stdout="", stderr=f"Error: No such object: {name}"
                 )
             # Plain `docker inspect` prints a list of documents; the deploy only
             # parses the single object its `--format` template emits.
-            payload = self.container if args[2:3] == ["--format"] else [self.container]
+            payload = source if args[2:3] == ["--format"] else [source]
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
         if args[:3] == ["docker", "pull", "--quiet"]:
             code = 0 if self.pull_ok else 1
@@ -166,6 +172,7 @@ class AutoDeployTests(unittest.TestCase):
             ups = fake.named(["docker", "compose"])
             self.assertEqual(len(ups), 1)
             self.assertIn("--no-build", ups[0])
+            self.assertIn("qdrant", ups[0])
             self.assertTrue(ups[0][3].endswith(module.COMPOSE_OVERRIDE))
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], "b" * 40)
@@ -279,6 +286,7 @@ class AutoDeployTests(unittest.TestCase):
             module.write_deployed_sha(state, sha)
             fake = install(module, FakeGitAndDocker(remote_sha=sha, head_sha=sha))
             self.assertTrue(module.deploy_once(repo, state))
+            # The maksut check short-circuits before qdrant is inspected.
             inspect = fake.named(["docker", "inspect"])
             self.assertEqual(len(inspect), 1)
             self.assertEqual(inspect[0][-1], "maksut-maksut-1")
@@ -426,6 +434,32 @@ class AutoDeployTests(unittest.TestCase):
             self.assertFalse(module.deploy_once(repo, state))
             self.assertEqual(fake.calls, [])
 
+
+    def test_stopped_qdrant_container_recreates_the_service(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            code_dir = str(state / "code" / sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", code_dir),
+                    qdrant_container=container_state("qdrant/qdrant:v1.20.0", code_dir, running=False),
+                ),
+            )
+            with mock.patch.object(module, "log") as logged:
+                self.assertTrue(module.deploy_once(repo, state))
+            reasons = [call.args[0] for call in logged.call_args_list]
+            self.assertTrue(
+                any("maksut-qdrant-1 is not running" in reason for reason in reasons),
+                reasons,
+            )
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            self.assertIn("qdrant", ups[0])
 
 if __name__ == "__main__":
     unittest.main()

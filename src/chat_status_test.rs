@@ -1906,6 +1906,7 @@ async fn lookup_in_tasks_matches_github_issue_number_and_strips_duplicate_self_f
     let (_dir, pool) = crate::test_support::test_pool().await;
     let code_dir = tempfile::tempdir().unwrap();
     crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "вадик (@cptidea)",
@@ -1914,7 +1915,7 @@ async fn lookup_in_tasks_matches_github_issue_number_and_strips_duplicate_self_f
     )
     .await
     .unwrap();
-    let mem = crate::code_inspect::load_self_memory(&pool)
+    let mem = crate::self_memory::load_self_memory(&pool)
         .await
         .unwrap()
         .unwrap();

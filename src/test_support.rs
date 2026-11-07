@@ -705,6 +705,20 @@ pub(crate) async fn mock_server_with_statuses(responses: Vec<(u16, String)>) -> 
     }
 }
 
+/// Chat config that never reaches the network, for tests that only exercise
+/// SQLite-side storage.
+pub(crate) fn offline_chat() -> ChatConfig {
+    let url = Url::parse("http://127.0.0.1:9/").unwrap();
+    ChatConfig::new(
+        url.clone(),
+        "key".into(),
+        "test".into(),
+        url,
+        SearchProvider::DuckDuckGo,
+        None,
+    )
+}
+
 pub(crate) fn body_of(request: &str) -> Value {
     let (_, body) = request.split_once("\r\n\r\n").unwrap_or(("", ""));
     serde_json::from_str(body).unwrap_or(Value::Null)

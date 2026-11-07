@@ -302,7 +302,7 @@ pub(crate) fn valid_self_source_url(base: &Path, url: &str) -> bool {
 }
 
 pub(crate) use crate::self_memory::{
-    filter_self_memory, load_self_memory, record_self_fact, speaker_owner_directives,
+    filter_self_memory, load_self_memory_for, record_self_fact, speaker_owner_directives,
 };
 
 pub(crate) fn snapshot_relative_files(base: &Path) -> std::collections::HashSet<String> {

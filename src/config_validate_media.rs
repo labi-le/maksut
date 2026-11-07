@@ -255,7 +255,41 @@ impl MemorySettings {
             self.search_recent_messages,
             0,
             50,
-        )
+        )?;
+        if !self.qdrant_url.trim().is_empty() {
+            parse_http_endpoint(&self.qdrant_url, "memory.qdrant_url")?;
+        }
+        if self.qdrant_collection.trim().is_empty()
+            || self.qdrant_collection.chars().count() > 128
+            || !self
+                .qdrant_collection
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            return Err(
+                "memory.qdrant_collection must be 1..=128 characters of [A-Za-z0-9_-]".into(),
+            );
+        }
+        count(
+            "memory.qdrant_timeout_secs",
+            self.qdrant_timeout_secs,
+            1,
+            60,
+        )?;
+        usize_count(
+            "memory.qdrant_max_response_bytes",
+            self.qdrant_max_response_bytes,
+            64 * 1024,
+            16 * 1024 * 1024,
+        )?;
+        usize_count("memory.qdrant_sync_batch", self.qdrant_sync_batch, 1, 512)?;
+        usize_count(
+            "memory.qdrant_sync_batches",
+            self.qdrant_sync_batches,
+            1,
+            32,
+        )?;
+        usize_count("memory.self_fact_limit", self.self_fact_limit, 1, 50)
     }
 }
 

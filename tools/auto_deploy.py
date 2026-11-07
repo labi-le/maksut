@@ -27,6 +27,7 @@ BRANCH = os.environ.get("AUTO_DEPLOY_BRANCH", "main")
 IMAGE_REPO = os.environ.get("AUTO_DEPLOY_IMAGE_REPO", "ghcr.io/labi-le/maxwell")
 COMPOSE_FILE = os.environ.get("AUTO_DEPLOY_COMPOSE_FILE", "compose.yaml")
 SERVICE = os.environ.get("AUTO_DEPLOY_SERVICE", "maksut")
+QDRANT_SERVICE = os.environ.get("AUTO_DEPLOY_QDRANT_SERVICE", "qdrant")
 GIT_TIMEOUT = 60
 PULL_TIMEOUT = 300
 UP_TIMEOUT = 120
@@ -39,6 +40,7 @@ UNPUBLISHED_IMAGE_MARKERS = ("manifest unknown", "not found")
 # `compose.yaml` names the project `maksut`, so the single service container keeps
 # this name no matter which directory the file is read from.
 CONTAINER = os.environ.get("AUTO_DEPLOY_CONTAINER", "maksut-maksut-1")
+QDRANT_CONTAINER = os.environ.get("AUTO_DEPLOY_QDRANT_CONTAINER", "maksut-qdrant-1")
 CODE_MOUNT = "/var/lib/maksut/code/src"
 INSPECT_TIMEOUT = 30
 # `docker inspect` without a template prints the whole config, including the
@@ -123,19 +125,19 @@ def image_ref(sha: str) -> str:
     return f"{IMAGE_REPO}:{sha}"
 
 
-def inspect_container() -> dict | None:
-    """Return `{running, image, mounts}` for the `maksut` container, None when absent."""
+def inspect_container(name: str = CONTAINER) -> dict | None:
+    """Return `{running, image, mounts}` for `name`, None when absent."""
     try:
         proc = run(
-            ["docker", "inspect", "--format", INSPECT_FORMAT, CONTAINER], timeout=INSPECT_TIMEOUT
+            ["docker", "inspect", "--format", INSPECT_FORMAT, name], timeout=INSPECT_TIMEOUT
         )
     except (OSError, subprocess.SubprocessError) as error:
-        log(f"docker inspect {CONTAINER} failed: {type(error).__name__}")
+        log(f"docker inspect {name} failed: {type(error).__name__}")
         return None
     if proc.returncode != 0:
         detail = last_stderr_line(proc)
         if "no such object" not in detail.lower():
-            log(f"docker inspect {CONTAINER} failed: {detail}")
+            log(f"docker inspect {name} failed: {detail}")
         return None
     try:
         container = json.loads(proc.stdout or "")
@@ -168,6 +170,13 @@ def container_drift(sha: str, state_dir: Path) -> str | None:
             break
     if not source or os.path.realpath(source) != os.path.realpath(expected):
         return f"code mount {source or 'missing'} != {expected}"
+    # The deploy brings qdrant up alongside maksut; a missing or stopped vector
+    # service is drift even when the bot's own image and mount are correct.
+    qdrant = inspect_container(QDRANT_CONTAINER)
+    if qdrant is None:
+        return f"no {QDRANT_CONTAINER} container"
+    if qdrant.get("running") is not True:
+        return f"{QDRANT_CONTAINER} is not running"
     return None
 
 
@@ -284,6 +293,7 @@ def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path)
                 "-d",
                 "--no-build",
                 SERVICE,
+                QDRANT_SERVICE,
             ],
             timeout=UP_TIMEOUT,
             cwd=repo,

@@ -1,7 +1,7 @@
 # 026: Chat history search over `chat_messages` embeddings
 
 Date: 2026-11-03
-Status: implemented
+Status: implemented; extended with the Qdrant index on 2026-11-07
 Supersedes: the "no vector search" non-goal in
 [`docs/superpowers/specs/2026-10-28-chat-memory-design.md`](../superpowers/specs/2026-10-28-chat-memory-design.md)
 
@@ -44,8 +44,9 @@ chat HTTP client, API key, and `config().retry.llm` policy: transport errors and
 `retry.llm.retry_statuses` get exponential backoff inside one deadline, exactly
 like `complete_with`. A provider-supplied `index` orders the result; every
 vector must match `memory.embedding_dim` when it is nonzero. Setting
-`memory.embedding_model = ""` disables the whole feature and both tools report
-that plainly. The transport lives in `src/chat_embeddings.rs` (`embed_texts`),
+`memory.embedding_model = ""` disables embedding and indexing; `chat_index`
+reports it plainly and `chat_search` stays available through the lexical
+fallback, marked `degraded`. The transport lives in `src/chat_embeddings.rs` (`embed_texts`),
 retrieval in `src/chat_search.rs`, so `src/chat_client.rs` stays inside the
 500-line module bound.
 
@@ -106,7 +107,11 @@ still filtered at query time.
   `memory.embedding_max_chars`.
 - Output: `memory.search_chunk_chars` per row, `memory.search_max_chars` total,
   `chat.chat_search_calls_per_reply` (default 3) calls per reply.
-- Work per worker tick: `memory.embedding_passes` batches.
+- Work per worker tick: `memory.embedding_passes` batches, plus
+  `memory.qdrant_sync_batches` bounded Qdrant mirror batches.
+- Qdrant request: `memory.qdrant_timeout_secs` deadline and
+  `memory.qdrant_max_response_bytes` response cap per call; self-fact ranking
+  returns at most `memory.self_fact_limit` rows.
 
 ## Failure handling
 
@@ -119,15 +124,68 @@ still filtered at query time.
 - Foreign model rows: re-embedded, never compared.
 - Missing table rows or an empty chat: empty result set, which the tool reports
   as empty arrays.
+- Qdrant down or rejecting: the indexer logs one warning and the tick retries;
+  `chat_search` reports `degraded` and serves the SQLite semantic or lexical
+  path; `remember_self` keeps the SQLite row and the backfill repairs the
+  point later.
+
+## Qdrant index (2026-11-07)
+
+Qdrant becomes the ANN layer: `qdrant/qdrant:v1.20.0` joins `compose.yaml`
+with REST 6333 / gRPC 6334 on the compose network and storage under the
+existing `maksut_data` volume. This client uses the REST API only: a gRPC
+client would add `tonic`/`prost` and a second HTTP stack for the same
+upsert/query/delete operations, so the transport is `src/qdrant.rs` over the
+existing `reqwest` stack.
+
+SQLite stays canonical. `src/qdrant_index.rs` only mirrors it:
+
+- Chat points are pushed from the stored `chat_embeddings.vector` blobs, never
+  re-embedded, in `memory.qdrant_sync_batch` (default 128) batches bounded by
+  `memory.qdrant_sync_batches` (default 4) per `chat_indexer` tick. A
+  per-model cursor in `memory_meta` makes the sweep resumable and idempotent;
+  a restart continues instead of rescanning the log.
+- A code fact (`source_url` non-empty) is embedded and upserted when
+  `remember_self` writes it; a failed write is logged and repaired by the same
+  tick's backfill. The backfill scrolls `kind = "self"` once and re-embeds a
+  fact whose mirror is missing or whose payload `model`, `fact`, or
+  `source_url` differs from SQLite. Owner directives (`source_url` empty) are
+  never indexed and stay fully injected.
+- Point ids are the first 63 bits of `SHA-256` over `chat:<chat_id>:<row_id>`
+  or `self:<topic>`, so an upsert is idempotent and a delete needs no lookup.
+- One collection (`memory.qdrant_collection`, default `maksut_memory`) with
+  unnamed cosine vectors and payload indexes on `kind`, `chat_id`,
+  `author_id`, `created_at`, `model`, `topic`, and `source_url`. An empty
+  `memory.qdrant_url` (or `QDRANT_URL`, set by compose) disables the index and
+  restores the SQLite-only path.
+
+Retrieval order in `chat_search`: Qdrant query with mandatory `kind=chat`,
+`chat_id`, and `model` filters plus the existing author/date filters, then the
+SQLite dot-product scan, then lexical scoring. Every Qdrant hit is re-checked
+against `chat_messages` for `flags = 0`, role/author, date bounds, and the
+current Telegram message id, so a stale payload cannot bypass a filter. A
+Qdrant or embedding error adds `degraded` to the tool payload so the model
+sees the failure instead of a silent quality drop; an empty result above
+`search_min_score` is a normal fallback and does not set it. Self-memory selection keeps every directive and ranks
+code facts by `memory.self_fact_limit` (default 10); when the query or index
+is unavailable it returns the full SQLite set, never a subset.
+
+Every upsert, delete, and search is bounded by `memory.qdrant_timeout_secs`
+and `memory.qdrant_max_response_bytes`. A dimension change needs a new
+collection name because Qdrant refuses another vector size in an existing
+collection; the collection and its indexes are created on first use and an
+existing one is accepted. The `maksut_data` volume plus the idempotent
+backfill is the backup story: dropping the collection loses nothing, because
+SQLite re-derives chat vectors (stored) and self facts (re-embedded).
 
 ## Alternatives rejected
 
 - **Always-on semantic context.** It would grow every prompt and reintroduce the
   unbounded context the memory design removed. Retrieval is on demand.
-- **`sqlite-vec` / an ANN index.** The image has no SQLite extension support
-  (`sqlx` without extensions), and a brute-force pass over a bounded row count
-  keeps the module dependency-free. Revisit if `search_scan_rows` starts
-  dropping recent history.
+- **`sqlite-vec`.** The image has no SQLite extension support (`sqlx` without
+  extensions). The Qdrant index above answers the ANN revisit trigger without
+  an SQLite extension; with `memory.qdrant_url` empty the bounded brute-force
+  scan stays.
 - **Embedding the whole message text.** `chunk_text` is capped at
   `embedding_max_chars` like the summarizer input, so a single wall of text
   cannot dominate a batch or an API call.
@@ -141,3 +199,11 @@ coverage is reported, malformed arguments are rejected, the transport retries a
 transient status and does not retry a rejected request, and dispatch scopes the
 tool to the current turn. Mutating the chat filter, the flags filter, or the
 retry loop makes those tests fail.
+
+`src/qdrant_test.rs` covers stable point ids, chat mirroring from stored
+vectors without a second embedding call, re-sync of a rewritten vector through
+the `(created_at, id)` cursor, self-fact upsert/delete ids, backfill of only
+missing or changed facts plus stale-point deletion, Qdrant-first chat search
+filters, rejection of a stale author payload, empty results not marked
+degraded, explicit lexical fallback when the service is down, and ranked code
+facts with fully injected owner directives.
