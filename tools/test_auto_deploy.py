@@ -44,13 +44,17 @@ def tar_with(files: dict[str, str]) -> bytes:
     return buffer.getvalue()
 
 
-def container_state(image: str, code_dir: str, running: bool = True) -> dict:
-    """The `{running, image, mounts}` object `docker inspect --format` emits."""
+def container_state(
+    image: str, code_dir: str, running: bool = True, status: str | None = None
+) -> dict:
+    """The `{running, status, image, mounts}` object `docker inspect --format` emits."""
+    source = code_dir if code_dir.endswith("/src") else f"{code_dir}/src"
     return {
         "running": running,
+        "status": status or ("running" if running else "exited"),
         "image": image,
         "mounts": [
-            {"Type": "bind", "Source": code_dir, "Destination": "/var/lib/maksut/code/src"},
+            {"Type": "bind", "Source": source, "Destination": "/var/lib/maksut/code/src"},
         ],
     }
 
@@ -448,6 +452,34 @@ class AutoDeployTests(unittest.TestCase):
                     head_sha=sha,
                     container=container_state(f"{IMAGE}:{sha}", code_dir),
                     qdrant_container=container_state("qdrant/qdrant:v1.20.0", code_dir, running=False),
+                ),
+            )
+            with mock.patch.object(module, "log") as logged:
+                self.assertTrue(module.deploy_once(repo, state))
+            reasons = [call.args[0] for call in logged.call_args_list]
+            self.assertTrue(
+                any("maksut-qdrant-1 is not running" in reason for reason in reasons),
+                reasons,
+            )
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            self.assertIn("qdrant", ups[0])
+
+    def test_restarting_qdrant_container_recreates_the_service(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            code_dir = str(state / "code" / sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", code_dir),
+                    qdrant_container=container_state(
+                        "qdrant/qdrant:v1.20.0", code_dir, running=True, status="restarting"
+                    ),
                 ),
             )
             with mock.patch.object(module, "log") as logged:

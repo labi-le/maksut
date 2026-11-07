@@ -44,10 +44,10 @@ QDRANT_CONTAINER = os.environ.get("AUTO_DEPLOY_QDRANT_CONTAINER", "maksut-qdrant
 CODE_MOUNT = "/var/lib/maksut/code/src"
 INSPECT_TIMEOUT = 30
 # `docker inspect` without a template prints the whole config, including the
-# token from `Config.Env`; the drift check needs only these three fields.
+# token from `Config.Env`; the drift check needs only these four fields.
 INSPECT_FORMAT = (
-    '{"running":{{json .State.Running}},"image":{{json .Config.Image}},'
-    '"mounts":{{json .Mounts}}}'
+    '{"running":{{json .State.Running}},"status":{{json .State.Status}},'
+    '"image":{{json .Config.Image}},"mounts":{{json .Mounts}}}'
 )
 
 
@@ -126,7 +126,7 @@ def image_ref(sha: str) -> str:
 
 
 def inspect_container(name: str = CONTAINER) -> dict | None:
-    """Return `{running, image, mounts}` for `name`, None when absent."""
+    """Return `{running, status, image, mounts}` for `name`, None when absent."""
     try:
         proc = run(
             ["docker", "inspect", "--format", INSPECT_FORMAT, name], timeout=INSPECT_TIMEOUT
@@ -157,12 +157,12 @@ def container_drift(sha: str, state_dir: Path) -> str | None:
     container = inspect_container()
     if container is None:
         return f"no {CONTAINER} container"
-    if container.get("running") is not True:
+    if container.get("running") is not True or container.get("status") not in (None, "running"):
         return f"{CONTAINER} is not running"
     image = str(container.get("image") or "")
     if image != image_ref(sha):
         return f"container image {image or 'unknown'} != {image_ref(sha)}"
-    expected = state_dir / "code" / sha
+    expected = state_dir / "code" / sha / "src"
     source = ""
     for mount in container.get("mounts") or []:
         if isinstance(mount, dict) and mount.get("Destination") == CODE_MOUNT:
@@ -175,7 +175,7 @@ def container_drift(sha: str, state_dir: Path) -> str | None:
     qdrant = inspect_container(QDRANT_CONTAINER)
     if qdrant is None:
         return f"no {QDRANT_CONTAINER} container"
-    if qdrant.get("running") is not True:
+    if qdrant.get("running") is not True or qdrant.get("status") not in (None, "running"):
         return f"{QDRANT_CONTAINER} is not running"
     return None
 

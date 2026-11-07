@@ -49,6 +49,7 @@ services:
     image: qdrant/qdrant:v1.20.0
     restart: unless-stopped
     init: true
+    user: "1000:1000"
     cap_drop:
       - ALL
     security_opt:
