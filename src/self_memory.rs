@@ -213,10 +213,28 @@ fn speaker_name_stems(sender_name: &str, owner: bool) -> Vec<String> {
     stems
 }
 
+const KNOWN_PARTICIPANT_STEMS: &[&str] = &[
+    "дени", "вади", "даня", "дани", "ваня", "вани", "влад", "кири", "андр", "олег",
+];
+
 fn directive_topic(line: &str) -> Option<&str> {
     line.strip_prefix("- [owner] ")?
         .split_once(':')
         .map(|(t, _)| t.trim())
+}
+
+fn topic_names_other_participant(line: &str, speaker_stems: &[String]) -> bool {
+    let Some(topic) = directive_topic(line) else {
+        return false;
+    };
+    topic
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 4)
+        .any(|w| {
+            let lower = w.to_lowercase();
+            KNOWN_PARTICIPANT_STEMS.iter().any(|p| lower.starts_with(p))
+                && !speaker_stems.iter().any(|s| lower.starts_with(s))
+        })
 }
 
 fn topic_matches_speaker(line: &str, stems: &[String]) -> bool {
@@ -234,11 +252,14 @@ fn topic_matches_speaker(line: &str, stems: &[String]) -> bool {
 
 fn line_matches_speaker(line: &str, speaker_handles: &[String], speaker_stems: &[String]) -> bool {
     let line_handles = extract_at_handles(line);
-    line_handles.is_empty()
-        || line_handles
+    if !line_handles.is_empty() {
+        return line_handles
             .iter()
             .any(|lh| speaker_handles.iter().any(|sh| sh == lh))
-        || topic_matches_speaker(line, speaker_stems)
+            || topic_matches_speaker(line, speaker_stems);
+    }
+    topic_matches_speaker(line, speaker_stems)
+        || !topic_names_other_participant(line, speaker_stems)
 }
 
 /// Keeps code-verified facts and, for non-owners, only per-user `- [owner]`

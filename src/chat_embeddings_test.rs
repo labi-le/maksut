@@ -406,7 +406,19 @@ async fn search_falls_back_to_lexical_matching_when_embeddings_return_403() {
     let (_dir, pool) = test_pool().await;
     let server = mock_server_with_statuses(vec![(403, "{}".into())]).await;
     let chat = chat_config(&server.url).await;
-    recorded(&pool, 1, 10, "аня", "котики любят свежую рыбу", 0).await;
+    recorded(&pool, 1, 10, "Денис", "какой самый лучший пылесос", 0).await;
+    crate::memory::record_message(
+        &pool,
+        RecordMessage::new(
+            ChatId(1),
+            10,
+            "максут",
+            "assistant",
+            "бери Roborock Qrevo Edge 3 Pro, волосы не мотает",
+        ),
+    )
+    .await
+    .unwrap();
     recorded(&pool, 1, 11, "петя", "погода в москве", 0).await;
 
     let output = search(
@@ -414,7 +426,7 @@ async fn search_falls_back_to_lexical_matching_when_embeddings_return_403() {
         &pool,
         ChatId(1),
         0,
-        &request(json!({"query": "котики рыбу"})),
+        &request(json!({"query": "пылесос"})),
     )
     .await
     .unwrap();
@@ -425,6 +437,10 @@ async fn search_falls_back_to_lexical_matching_when_embeddings_return_403() {
         .iter()
         .map(|row| row["text"].as_str().unwrap())
         .collect();
-    assert_eq!(texts, vec!["котики любят свежую рыбу"]);
+    assert!(texts.contains(&"какой самый лучший пылесос"), "{texts:?}");
+    assert!(
+        texts.contains(&"бери Roborock Qrevo Edge 3 Pro, волосы не мотает"),
+        "adjacent assistant reply must be paired in lexical search: {texts:?}"
+    );
     server.task.abort();
 }

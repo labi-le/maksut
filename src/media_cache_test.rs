@@ -415,7 +415,7 @@ async fn features_delete_failure_does_not_disqualify_successful_media_from_cache
     assert!(requests
         .iter()
         .any(|request| request.method == "deletemessage"));
-    assert!(requests
+    assert!(!requests
         .iter()
         .any(|request| request.method == "sendmessage"));
     feature_silent(&requests);

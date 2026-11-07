@@ -85,7 +85,7 @@ impl Router {
         input: &crate::ResolvedChatInput,
     ) -> Decision {
         let stop = crate::chat_style::is_stop_followup(&input.prompt)
-            && (input.followup || input.prompt.split_whitespace().count() <= 4);
+            && (input.followup || input.prompt.split_whitespace().count() <= 7);
         let decision = self
             .decide(&RouterInput {
                 text: &input.prompt,
@@ -149,7 +149,10 @@ impl Router {
         } else {
             match &self.jev {
                 Some(client) => match client.decide(&jev_state(input)).await {
-                    Some(Decision::Sticker) => Decision::Sticker,
+                    Some(Decision::Sticker) if !input.followup || !lower_has_action_verb(text) => {
+                        Decision::Sticker
+                    }
+                    Some(Decision::Sticker) => Decision::Reply,
                     Some(_) if addressed => Decision::Reply,
                     Some(Decision::Silent) if input.followup && rules == Decision::Wait => {
                         Decision::Wait
@@ -282,6 +285,11 @@ const REQUEST_STEMS: &[&str] = &[
     "откро",
     "разбер",
     "поясн",
+    "изуч",
+    "посмотри",
+    "чекн",
+    "оцен",
+    "проанализир",
     "проресерч",
     "заресерч",
     "ресерч",
@@ -290,6 +298,13 @@ const REQUEST_STEMS: &[&str] = &[
     "погугл",
     "нагугл",
 ];
+
+fn lower_has_action_verb(text: &str) -> bool {
+    text.to_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|w| REQUEST_STEMS.iter().any(|stem| w.starts_with(stem)))
+}
 
 /// Followup turns answer only when they look like a real request; a plain
 /// remark keeps the window open instead of paying for a heavy completion.
@@ -319,6 +334,12 @@ fn expects_answer(text: &str) -> bool {
         "а этот",
         "а это",
         "а вот ",
+        "а другой",
+        "а другая",
+        "а другое",
+        "а другие",
+        "а еще ",
+        "а ещё ",
         "и эту",
         "и этот",
         "и это",

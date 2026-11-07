@@ -233,9 +233,7 @@ fn style_reply_bounded(text: &str, max_chars: usize) -> String {
 
 pub(crate) fn is_sticker_placeholder(text: &str) -> bool {
     let t = text.trim().trim_matches(|ch: char| !ch.is_alphanumeric());
-    ["стикер", "sticker"]
-        .iter()
-        .any(|w| t.eq_ignore_ascii_case(w))
+    t.eq_ignore_ascii_case("стикер") || t.eq_ignore_ascii_case("sticker")
 }
 
 pub(crate) fn is_pass_reply(text: &str) -> bool {
@@ -247,19 +245,23 @@ pub(crate) fn is_pass_reply(text: &str) -> bool {
 }
 
 pub(crate) fn is_stop_followup(text: &str) -> bool {
-    if text.split_whitespace().count() > 4 {
+    if text.split_whitespace().count() > 7 {
         return false;
     }
     let lower = text.to_lowercase();
     if [" он ", " он,", " ему ", " него ", " мне ", " сначала"]
         .iter()
-        .any(|third| lower.contains(third))
+        .any(|t| lower.contains(t))
     {
         return false;
     }
-    [
+    const STOPS: &[&str] = &[
         "завали ебало",
         "завали ебал",
+        "ебало на ноль",
+        "ебало закрой",
+        "закрой ебало",
+        "оффни ебало",
         "заткнись",
         "заткни ебало",
         "не пизди",
@@ -268,14 +270,14 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
         "замолчи",
         "отъебись",
         "отьебись",
+        "кто тебя звал",
         "пошёл нахуй",
         "пошел нахуй",
         "иди нахуй",
         "съеби",
         "сьеби",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase))
+    ];
+    STOPS.iter().any(|p| lower.contains(p))
 }
 
 /// Suppresses repetitive copy-paste spam from a non-owner when their current
@@ -315,11 +317,8 @@ pub(crate) fn is_repeated_user_spam(
             .filter(|m| m.role == "assistant")
             .take(3)
             .any(|m| normalize_spam_text(&m.text) == norm);
-    tracing::debug!(
-        author_id,
-        reason = if parroted { "bot_parrot" } else { "none" },
-        "repeat spam decision"
-    );
+    let reason = if parroted { "bot_parrot" } else { "none" };
+    tracing::debug!(author_id, reason, "repeat spam decision");
     parroted
 }
 
@@ -350,8 +349,7 @@ fn normalize_spam_text(text: &str) -> String {
         .join(" ")
 }
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
-    let t = text.to_lowercase();
-    [
+    const VERBS: &[&str] = &[
         "скинь",
         "покажи",
         "добавь",
@@ -362,22 +360,17 @@ pub(crate) fn explicit_sticker_request(text: &str) -> bool {
         "отправь",
         "пришли",
         "давай",
-    ]
-    .iter()
-    .any(|v| t.contains(v))
-        && ["стикер", "пак", "девоч", "девуш", "гачи", "пися", "котик"]
-            .iter()
-            .any(|k| t.contains(k))
+    ];
+    const NOUNS: &[&str] = &["стикер", "пак", "девоч", "девуш", "гачи", "пися", "котик"];
+    let t = text.to_lowercase();
+    VERBS.iter().any(|v| t.contains(v)) && NOUNS.iter().any(|k| t.contains(k))
 }
 
 pub(crate) fn explicit_feature_request(text: &str) -> bool {
+    const VERBS: &[&str] = &["добавь", "измени", "убери", "запили", "почини"];
+    const NOUNS: &[&str] = &["бот", "фич", "функци", "поведени", "возможност"];
     let t = text.to_lowercase();
-    ["добавь", "измени", "убери", "запили", "почини"]
-        .iter()
-        .any(|v| t.contains(v))
-        && ["бот", "фич", "функци", "поведени", "возможност"]
-            .iter()
-            .any(|k| t.contains(k))
+    VERBS.iter().any(|v| t.contains(v)) && NOUNS.iter().any(|k| t.contains(k))
 }
 
 pub(crate) fn sticker_request_query(text: &str) -> &'static str {
@@ -427,6 +420,13 @@ pub(crate) fn format_reply_context(
                 .unwrap_or("");
             fallback = format!("[стикер {emoji}]");
             fallback.trim()
+        }
+        _ if let Some(doc) = reply
+            .document()
+            .filter(|d| crate::chat_doc::is_text_document(d)) =>
+        {
+            fallback = crate::chat_doc::reply_label(doc);
+            &fallback
         }
         _ if crate::chat_media::message_has_attachment(reply) => "[вложение]",
         _ if let Some(user) = reply.left_chat_member() => {

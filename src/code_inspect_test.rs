@@ -107,3 +107,80 @@ async fn inspect_supports_directory_paths_and_delete_self_fact_matches_fuzzy_top
     let loaded = crate::code_inspect::load_self_memory(&pool).await.unwrap();
     assert!(loaded.is_none(), "{loaded:?}");
 }
+
+#[test]
+fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_formats_docs() {
+    let raw = "- [owner] вадик: С Вадиком общаться только «сладкий»\n- [owner] стиль в чате: Стиль короткий\n- [owner] даня: Даню (@newmdoupdate) материть";
+    let denis_directives = crate::code_inspect::speaker_owner_directives(
+        raw,
+        "Денис (@crudoshlepa)",
+        Some("crudoshlepa"),
+        true,
+        None,
+    );
+    assert!(
+        !denis_directives.contains("сладкий"),
+        "Vadik's handleless directive must not be injected on Denis's turn: {denis_directives}"
+    );
+    assert!(
+        denis_directives.contains("Стиль короткий"),
+        "General topic directive must stay active: {denis_directives}"
+    );
+    let vadik_directives = crate::code_inspect::speaker_owner_directives(
+        raw,
+        "Вадик (@CptIdea)",
+        Some("CptIdea"),
+        false,
+        None,
+    );
+    assert!(
+        vadik_directives.contains("сладкий"),
+        "Vadik's directive must be injected on Vadik's turn: {vadik_directives}"
+    );
+
+    let doc_msg: teloxide::types::Message = serde_json::from_value(serde_json::json!({
+        "message_id": 10,
+        "date": 1700000000,
+        "chat": {"id": -1001, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис"},
+        "document": {
+            "file_id": "csv-1",
+            "file_unique_id": "u-csv-1",
+            "file_name": "usage-logs-20261101.csv",
+            "mime_type": "text/csv",
+            "file_size": 128
+        }
+    }))
+    .unwrap();
+    let cand = crate::chat_doc::candidate(&doc_msg, false).expect("csv candidate");
+    assert_eq!(cand.name, "usage-logs-20261101.csv");
+    let formatted = crate::chat_doc::format_doc_block(&cand, b"model,cost\ndeepseek,4.12\n")
+        .expect("formatted csv");
+    assert!(
+        formatted.contains("[файл usage-logs-20261101.csv]:\nmodel,cost\ndeepseek,4.12"),
+        "{formatted}"
+    );
+    assert!(
+        crate::chat_doc::format_doc_block(&cand, b"binary\0data").is_none(),
+        "binary payload with NUL byte must be rejected"
+    );
+    let typed = "caption";
+    let vt = "caption\n[голосовое 3с, Вася]: quoted";
+    let dt = "caption\n[голосовое 3с, Вася]: quoted\n[файл a.txt]: own_doc";
+    assert_eq!(
+        crate::chat_doc::select_injection_text(typed, Some(vt), false, Some(dt), false, dt),
+        dt
+    );
+    assert_eq!(
+        crate::chat_doc::select_injection_text(typed, Some(vt), false, Some(dt), true, dt),
+        vt
+    );
+    assert_eq!(
+        crate::chat_doc::select_injection_text(typed, Some(vt), true, Some(dt), false, dt),
+        "caption\n[файл a.txt]: own_doc"
+    );
+    assert_eq!(
+        crate::chat_doc::select_injection_text(typed, Some(vt), true, Some(dt), true, dt),
+        "caption"
+    );
+}

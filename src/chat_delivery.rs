@@ -92,7 +92,7 @@ pub(crate) async fn deliver_chat_reply(
         let uid = message.from.as_ref().map_or(UserId(0), |u| u.id);
         record_assistant_reply(&cfg.database, message.chat.id, uid, rec, id, 0).await;
     }
-    if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 4) {
+    if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 7) {
         chat.clear_followup(message.chat.id).await;
     } else if delivered {
         chat.note_reply(message.chat.id).await;

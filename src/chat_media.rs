@@ -94,9 +94,28 @@ enum DownloadImageError {
 }
 
 pub(crate) async fn download_image(bot: &Bot, file_id: &FileId, mime: &str) -> Option<ChatImage> {
+    let bytes = download_file_bytes(bot, file_id, config().chat.image_max_bytes).await?;
+    Some(ChatImage {
+        bytes,
+        mime: mime.to_owned(),
+    })
+}
+
+pub(crate) async fn download_raw_file(
+    bot: &Bot,
+    file_id: &FileId,
+    max_bytes: u64,
+) -> Option<Vec<u8>> {
+    let Ok(_permit) = IMAGE_SEMAPHORE.acquire().await else {
+        return None;
+    };
+    download_file_bytes(bot, file_id, max_bytes).await
+}
+
+async fn download_file_bytes(bot: &Bot, file_id: &FileId, max_bytes: u64) -> Option<Vec<u8>> {
     for attempt in 0..2u8 {
-        match download_image_once(bot, file_id, mime).await {
-            Ok(image) => return Some(image),
+        match download_bytes_once(bot, file_id, max_bytes).await {
+            Ok(bytes) => return Some(bytes),
             Err(DownloadImageError::Permanent) => return None,
             Err(DownloadImageError::Transient) if attempt == 0 => {
                 time::sleep(Duration::from_millis(150)).await;
@@ -104,15 +123,15 @@ pub(crate) async fn download_image(bot: &Bot, file_id: &FileId, mime: &str) -> O
             Err(DownloadImageError::Transient) => {}
         }
     }
-    tracing::warn!("Chat image download failed after 2 attempts");
+    tracing::warn!("Chat attachment download failed after 2 attempts");
     None
 }
 
-async fn download_image_once(
+async fn download_bytes_once(
     bot: &Bot,
     file_id: &FileId,
-    mime: &str,
-) -> Result<ChatImage, DownloadImageError> {
+    max_bytes: u64,
+) -> Result<Vec<u8>, DownloadImageError> {
     let file = bot
         .get_file(file_id.clone())
         .await
@@ -134,7 +153,7 @@ async fn download_image_once(
         .api_url()
         .join(&format!("file/bot{}/{}", bot.token(), file.path))
         .map_err(|_| DownloadImageError::Permanent)?;
-    let response = IMAGE_CLIENT
+    let mut response = IMAGE_CLIENT
         .get(url)
         .send()
         .await
@@ -147,24 +166,23 @@ async fn download_image_once(
             Err(DownloadImageError::Permanent)
         };
     }
-    if response
-        .content_length()
-        .is_some_and(|length| length > config().chat.image_max_bytes)
-    {
+    if response.content_length().is_some_and(|len| len > max_bytes) {
         return Err(DownloadImageError::Permanent);
     }
-    let bytes = response
-        .bytes()
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
         .map_err(|_| DownloadImageError::Transient)?
-        .to_vec();
-    if bytes.is_empty() || bytes.len() as u64 > config().chat.image_max_bytes {
-        return Err(DownloadImageError::Permanent);
+    {
+        if bytes.len() as u64 + chunk.len() as u64 > max_bytes {
+            return Err(DownloadImageError::Permanent);
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(ChatImage {
-        bytes,
-        mime: mime.to_owned(),
-    })
+    (!bytes.is_empty())
+        .then_some(bytes)
+        .ok_or(DownloadImageError::Permanent)
 }
 
 pub(crate) struct ResolvedChatInput {

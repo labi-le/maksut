@@ -3256,6 +3256,17 @@ fn expand_repo_blob_links_ignores_nonexistent_paths_inline_code_and_unmatched_ba
     );
 }
 
+#[test]
+fn strip_raw_tool_call_tags_removes_xml_and_extracts_sticker_hint() {
+    let raw = r#"<tool_call>{"name": "send_sticker", "arguments": {"query": "тупой осуждающий взгляд"}}</tool_call>"#;
+    let (cleaned, hint) = crate::chat_urls::strip_raw_tool_call_tags(raw);
+    assert_eq!(cleaned, "");
+    assert_eq!(hint.as_deref(), Some("тупой осуждающий взгляд"));
+    assert_eq!(style_reply(raw), "");
+    assert!(is_stop_followup("да отъебись кто тебя звал вообще"));
+    assert!(is_stop_followup("ебало на ноль"));
+}
+
 #[tokio::test]
 async fn final_tool_round_forces_tool_free_synthesis_instead_of_tools_error() {
     let dir = tempfile::tempdir().unwrap();

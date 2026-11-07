@@ -63,11 +63,14 @@ static VOICE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 
+static VOICE_AUTH_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn enabled() -> bool {
     let voice = &config().voice;
-    voice.enabled && !voice.model.trim().is_empty()
+    voice.enabled
+        && !voice.model.trim().is_empty()
+        && !VOICE_AUTH_FAILED.load(std::sync::atomic::Ordering::Relaxed)
 }
-
 /// The current message's voice note, audio, or addressed video, else the
 /// attachment it replies to. Audio with an unknown container is skipped.
 pub(crate) fn candidate(message: &Message) -> Option<VoiceCandidate> {
@@ -188,9 +191,10 @@ pub(crate) async fn transcribe(
     // `bot.get_file` uses the Telegram client's much longer timeout, so only
     // this outer deadline bounds the whole acquire + download + STT chain.
     let bounded = async {
-        let Ok(_permit) = VOICE_SEMAPHORE.acquire().await else {
-            return Err(VoiceError::Download);
-        };
+        let _permit = VOICE_SEMAPHORE
+            .acquire()
+            .await
+            .map_err(|_| VoiceError::Download)?;
         let bytes = download(bot, attachment).await?;
         transcribe_bytes(&bytes, attachment.format, api_key, base_url).await
     };
@@ -249,15 +253,9 @@ pub(crate) async fn transcription(
         && !message.chat.is_private()
         && crate::addressing::address_kind(message, typed, &cfg.bot_username)
             == crate::addressing::AddressKind::None
+        && (!candidate.from_reply || !cfg.chat.as_ref()?.followup_active(message.chat.id).await)
     {
-        let followup_allowed = candidate.from_reply
-            && match cfg.chat.as_ref() {
-                Some(chat) => chat.followup_active(message.chat.id).await,
-                None => false,
-            };
-        if !followup_allowed {
-            return None;
-        }
+        return None;
     }
     if !message.chat.is_private()
         && !group_enabled(&cfg.database, message.chat.id)
@@ -278,14 +276,14 @@ pub(crate) async fn transcription(
                 (UNRECOGNISED.to_owned(), None)
             }
         };
-    if let Some(sender) = message.from.as_ref() {
-        UsageSite {
+    if let Some(s) = message.from.as_ref() {
+        let site = UsageSite {
             chat_id: message.chat.id,
-            user_id: sender.id,
-            author_name: display_author_name(sender),
-        }
-        .record(&cfg.database, &config().voice.model, KIND_VOICE_STT, usage)
-        .await;
+            user_id: s.id,
+            author_name: display_author_name(s),
+        };
+        site.record(&cfg.database, &config().voice.model, KIND_VOICE_STT, usage)
+            .await;
     }
     Some(VoiceBlock {
         text,
@@ -456,8 +454,15 @@ pub(crate) async fn transcribe_bytes(
         .send()
         .await
         .map_err(|_| VoiceError::Transcription)?;
+    let code = response.status().as_u16();
     if !response.status().is_success() {
-        tracing::warn!("Voice transcription HTTP {}", response.status().as_u16());
+        let local = base_url
+            .host_str()
+            .is_some_and(|h| matches!(h, "127.0.0.1" | "localhost" | "::1" | "[::1]"));
+        if matches!(code, 400 | 401 | 403 | 404) && !local {
+            VOICE_AUTH_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        tracing::warn!("Voice transcription HTTP {code}");
         return Err(VoiceError::Transcription);
     }
     let max_resp = u64::try_from(config().llm.max_response_bytes).unwrap_or(u64::MAX);
@@ -468,10 +473,9 @@ pub(crate) async fn transcribe_bytes(
     let usage = Usage::from_response(&value);
     let text = transcript_from_response(&value).ok_or(VoiceError::Transcription)?;
     let text = text.trim();
-    if text.is_empty() {
-        return Err(VoiceError::Transcription);
-    }
-    Ok((text.to_owned(), usage))
+    (!text.is_empty())
+        .then(|| (text.to_owned(), usage))
+        .ok_or(VoiceError::Transcription)
 }
 
 /// Accepts a plain string or the content-part array multimodal gateways return.

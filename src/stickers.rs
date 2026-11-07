@@ -386,7 +386,7 @@ impl StickerCatalog {
             let all: Vec<&StickerEntry> = self.entries.iter().collect();
             return self.random(&all);
         }
-        let found = self.search(query, 8);
+        let found = self.search(query, 24);
         self.random(&found)
     }
 

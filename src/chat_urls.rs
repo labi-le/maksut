@@ -360,3 +360,104 @@ pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal:
     };
     format!("Это не владелец бота. Доступные инструменты: {available}.{scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки».")
 }
+
+/// Strips raw `<tool_call>...</tool_call>` XML blocks and Parses an inline JSON
+/// `send_sticker` query/name/sticker_id when the model emits a textual tool tag
+/// instead of a structured `tool_calls` array.
+pub(crate) fn strip_raw_tool_call_tags(text: &str) -> (String, Option<String>) {
+    if !text.contains("<tool_call>") && !text.contains("</tool_call>") {
+        return (text.to_owned(), None);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut sticker_hint = None;
+    while let Some(open) = rest.find("<tool_call>") {
+        out.push_str(rest.get(..open).unwrap_or(""));
+        let after_open = rest.get(open + "<tool_call>".len()..).unwrap_or("");
+        let (inner, next_rest) = match after_open.find("</tool_call>") {
+            Some(close) => (
+                after_open.get(..close).unwrap_or(""),
+                after_open.get(close + "</tool_call>".len()..).unwrap_or(""),
+            ),
+            None => (after_open, ""),
+        };
+        if sticker_hint.is_none() {
+            sticker_hint = parse_inline_sticker_call(inner);
+        }
+        rest = next_rest;
+    }
+    out.push_str(rest);
+    let cleaned = out.replace("</tool_call>", "").trim().to_owned();
+    (cleaned, sticker_hint)
+}
+
+fn parse_inline_sticker_call(raw: &str) -> Option<String> {
+    let val: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    let name = val
+        .get("name")
+        .or_else(|| val.pointer("/function/name"))
+        .and_then(serde_json::Value::as_str)?;
+    if name != crate::ToolKind::SendSticker.name() {
+        return None;
+    }
+    let args = val
+        .get("arguments")
+        .or_else(|| val.pointer("/function/arguments"))?;
+    let parsed_args = if let Some(s) = args.as_str() {
+        serde_json::from_str::<serde_json::Value>(s).ok()?
+    } else {
+        args.clone()
+    };
+    for key in ["sticker_id", "query", "name"] {
+        if let Some(v) = parsed_args
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(v.to_owned());
+        }
+    }
+    Some(String::new())
+}
+
+pub(crate) fn apply_inline_sticker_and_clean(
+    raw_c: &str,
+    ctx: &crate::ToolContext<'_>,
+    state: &mut crate::ToolState,
+) -> String {
+    let (cleaned, inline_st) = strip_raw_tool_call_tags(raw_c);
+    if let Some(hint) = inline_st.as_deref() {
+        if ctx
+            .chat
+            .tools
+            .find(crate::ToolKind::SendSticker.name(), ctx.owner)
+            .is_some_and(|s| {
+                !state.research.used
+                    || s.kind
+                        .allowed_in_research(state.allow_sticker, state.allow_feature)
+            })
+        {
+            state.allow_sticker = true;
+            if state.sticker.is_none() && !hint.is_empty() {
+                state.sticker = ctx
+                    .catalog
+                    .get(hint)
+                    .map(|e| e.file_id.clone())
+                    .or_else(|| {
+                        crate::stickers::sticker_by_name(hint)
+                            .and_then(|u| ctx.stickers.file_id(u).cloned())
+                    })
+                    .or_else(|| ctx.catalog.pick(hint));
+            }
+        }
+    }
+    if crate::chat_style::is_sticker_placeholder(&cleaned) && state.sticker.is_none() {
+        state.allow_sticker = true;
+    }
+    if crate::chat_style::is_pass_reply(&cleaned) {
+        String::new()
+    } else {
+        cleaned
+    }
+}

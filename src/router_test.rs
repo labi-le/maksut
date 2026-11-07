@@ -147,6 +147,8 @@ fn followup_questions_and_requests_reply() {
         Decision::Reply
     );
     assert_eq!(decide_rules(&followup("загугли это")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("изучай ебать")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("а другой любимый")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
 }
 

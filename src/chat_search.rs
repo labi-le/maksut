@@ -267,20 +267,40 @@ pub(crate) async fn search(
             .fetch_all(pool)
             .await
             .map_err(|_| "database".to_string())?;
-            hits = raw_rows
-                .into_iter()
-                .filter_map(|(id, author_id, author_name, created_at, text)| {
-                    let score = lexical_score(&words, &text, &author_name);
-                    (score >= min_score).then_some((
+            let mut pair_hits = Vec::new();
+            for (idx, (id, author_id, author_name, created_at, text)) in raw_rows.iter().enumerate()
+            {
+                let score = lexical_score(&words, text, author_name);
+                if score >= min_score {
+                    pair_hits.push((
                         score,
-                        id,
-                        author_id,
-                        author_name,
-                        created_at,
-                        text,
-                    ))
-                })
-                .collect();
+                        *id,
+                        *author_id,
+                        author_name.clone(),
+                        *created_at,
+                        text.clone(),
+                    ));
+                    // `raw_rows` is ordered by `id DESC`, so the immediately
+                    // following chronological reply is at `idx - 1`.
+                    if let Some(prev_idx) = idx.checked_sub(1) {
+                        if let Some((next_id, next_author_id, next_name, next_at, next_text)) =
+                            raw_rows.get(prev_idx)
+                        {
+                            if *next_author_id == 0 && (*next_at - *created_at).abs() <= 120 {
+                                pair_hits.push((
+                                    (score - 0.01).max(min_score),
+                                    *next_id,
+                                    *next_author_id,
+                                    next_name.clone(),
+                                    *next_at,
+                                    next_text.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            hits = pair_hits;
         }
     }
     hits.sort_by(|left, right| right.0.total_cmp(&left.0));

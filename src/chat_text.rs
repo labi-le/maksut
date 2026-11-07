@@ -104,11 +104,12 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
 /// blocks verbatim, replaces em/en dashes in prose, and expands bare repository
 /// file paths into full GitHub blob URLs.
 pub(crate) fn flatten_reply_text(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    let (cleaned_input, _) = crate::chat_urls::strip_raw_tool_call_tags(text);
+    let mut out = String::with_capacity(cleaned_input.len());
     let mut in_code = false;
     let mut fence_ticks = 0;
     let mut pending_blank = false;
-    for line in text.lines() {
+    for line in cleaned_input.lines() {
         let line = line.trim_end_matches('\r');
         if in_code {
             push_line(&mut out, line.trim_end());

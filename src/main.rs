@@ -50,6 +50,7 @@ mod chat_client;
 pub(crate) use chat_client::*;
 mod chat_media;
 pub(crate) use chat_media::*;
+mod chat_doc;
 mod chat_profile;
 mod chat_status;
 pub(crate) use chat_status::*;

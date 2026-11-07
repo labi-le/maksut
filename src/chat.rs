@@ -157,7 +157,7 @@ pub(crate) async fn chat_reply_with_proposal(
     proposal: Option<&FeatureProposal>,
 ) -> Result<ChatReply, String> {
     if is_stop_followup(turn.prompt)
-        && (turn.followup || turn.prompt.split_whitespace().count() <= 4)
+        && (turn.followup || turn.prompt.split_whitespace().count() <= 7)
     {
         chat.clear_followup(turn.chat_id).await;
         if turn.followup {
@@ -203,15 +203,12 @@ pub(crate) async fn chat_reply_with_proposal(
         }
     }
     if explicit_sticker_request(prompt) {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(EXPLICIT_STICKER_PROMPT);
+        system_prompt.push_str(&format!("\n\n{EXPLICIT_STICKER_PROMPT}"));
     } else if turn.sticker_mode {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(STICKER_MODE_PROMPT);
+        system_prompt.push_str(&format!("\n\n{STICKER_MODE_PROMPT}"));
     }
     if turn.followup && !turn.sticker_mode {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(FOLLOWUP_PROMPT);
+        system_prompt.push_str(&format!("\n\n{FOLLOWUP_PROMPT}"));
     }
     let mut messages = vec![json!({"role": "system", "content": system_prompt})];
     if !turn.owner {
@@ -256,12 +253,8 @@ pub(crate) async fn chat_reply_with_proposal(
         let c = if a {
             m.text.clone()
         } else {
-            crate::memory::format_line_with_owner(
-                &m.author_name,
-                m.author_id,
-                oid == Some(m.author_id),
-                &m.text,
-            )
+            let is_o = oid == Some(m.author_id);
+            crate::memory::format_line_with_owner(&m.author_name, m.author_id, is_o, &m.text)
         };
         messages.push(json!({"role": if a { "assistant" } else { "user" }, "content": c}));
     }
@@ -384,20 +377,12 @@ pub(crate) async fn chat_reply_with_proposal(
                 .unwrap_or_default()
         };
         if calls.is_empty() {
-            let content = reply
+            let raw_c = reply
                 .get("content")
                 .and_then(Value::as_str)
                 .unwrap_or("")
-                .trim()
-                .to_owned();
-            if is_sticker_placeholder(&content) && state.sticker.is_none() {
-                state.allow_sticker = true;
-            }
-            let content = if is_pass_reply(&content) {
-                String::new()
-            } else {
-                content
-            };
+                .trim();
+            let content = crate::chat_urls::apply_inline_sticker_and_clean(raw_c, &ctx, &mut state);
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;
             let bare_prompt = turn.prompt.trim().is_empty();

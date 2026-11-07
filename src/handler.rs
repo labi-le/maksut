@@ -62,13 +62,15 @@ pub(crate) async fn handle_message(
     let reply_media = message.reply_to_message().and_then(message_image);
     let has_sticker = message.sticker().is_some();
     let has_voice = crate::voice::pending(&message);
+    let has_doc = crate::chat_doc::pending(&message);
     if text.is_empty()
         && current_media.is_none()
         && reply_media.is_none()
         && !has_sticker
         && !has_voice
+        && !has_doc
     {
-        tracing::debug!("skip: no text, media, sticker or voice");
+        tracing::debug!("skip: no text, media, sticker, voice or doc");
         return Ok(());
     }
     let Some(sender) = message.from.as_ref().filter(|user| !user.is_bot) else {
@@ -84,8 +86,8 @@ pub(crate) async fn handle_message(
     // Ignored senders and non-owner private chats never reach the model, so
     // paying for a download and an STT call before those gates would be waste.
     let sender_ignored = crate::memory::sender_ignored(&cfg.database, sender.id, owner, now).await;
-    // The transcript is untrusted user input: it becomes the message text
-    // before `detect_flags` and `injection_attempt` run.
+    // The transcript or document body is untrusted user input: it becomes the
+    // message text before `detect_flags` and `injection_attempt` run.
     let typed = text;
     let voice = crate::voice::turn(
         &bot,
@@ -97,25 +99,45 @@ pub(crate) async fn handle_message(
         reply_ignored,
     )
     .await;
-    let text = voice.text.as_deref().unwrap_or(typed);
+    let after_voice = voice.text.as_deref().unwrap_or(typed);
+    let doc = crate::chat_doc::turn(
+        &bot,
+        &message,
+        &cfg,
+        after_voice,
+        owner,
+        sender_ignored,
+        reply_ignored,
+    )
+    .await;
+    let text = doc.text.as_deref().unwrap_or(after_voice);
     tracing::debug!(
         voice = voice.text.is_some(),
-        quoted = voice.quoted,
+        doc = doc.text.is_some(),
+        quoted = voice.quoted || doc.quoted,
         has_media = current_media.is_some() || reply_media.is_some(),
         has_sticker,
         text_len = text.chars().count(),
         forwarded,
         "message received"
     );
-    // A quoted transcript belongs to its author, so its markers must not get
-    // the person quoting it ignored; typed text still counts on its own.
-    let injection_text = if voice.quoted { typed } else { text };
+    let injection_text = crate::chat_doc::select_injection_text(
+        typed,
+        voice.text.as_deref(),
+        voice.quoted,
+        doc.text.as_deref(),
+        doc.quoted,
+        text,
+    );
     let raw_log_text = if text.trim().is_empty() {
         "[вложение]"
     } else {
         text
     };
     let mut flags = crate::memory_guard::detect_flags(raw_log_text);
+    if flags & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET) != 0 {
+        crate::chat_doc::clear_recent_doc(message.chat.id).await;
+    }
     if text.trim().is_empty() && (current_media.is_some() || reply_media.is_some() || has_sticker) {
         flags |= crate::memory::FLAG_JUNK;
     }
@@ -126,20 +148,19 @@ pub(crate) async fn handle_message(
     } else {
         raw_log_text
     };
+    let record_user = |fl: i64| {
+        let rec = user_record(&message, sender.id.0 as i64, &sender_name, log_text, fl);
+        crate::memory::record_message(&cfg.database, rec)
+    };
     if sender_ignored {
         tracing::info!(reason = "ignored", "message skipped");
-        let flags = flags | crate::memory::FLAG_IGNORED;
-        let _ = crate::memory::record_message(
-            &cfg.database,
-            user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
-        )
-        .await;
+        let _ = record_user(flags | crate::memory::FLAG_IGNORED).await;
         return Ok(());
     }
     if !owner {
         let group = message.chat.is_group() || message.chat.is_supergroup();
         if group
-            && crate::memory_guard::injection_attempt(injection_text)
+            && crate::memory_guard::injection_attempt(&injection_text)
             && group_enabled(&cfg.database, message.chat.id)
                 .await
                 .is_ok_and(|enabled| enabled)
@@ -156,12 +177,9 @@ pub(crate) async fn handle_message(
                 tracing::error!("Ignore write failed: {error}");
             }
             tracing::info!(reason = "injection", "user ignored");
-            let flags = flags | crate::memory::FLAG_INJECTION | crate::memory::FLAG_IGNORED;
-            let _ = crate::memory::record_message(
-                &cfg.database,
-                user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
-            )
-            .await;
+            let _ =
+                record_user(flags | crate::memory::FLAG_INJECTION | crate::memory::FLAG_IGNORED)
+                    .await;
             return Ok(());
         }
     }
@@ -173,11 +191,7 @@ pub(crate) async fn handle_message(
     if typed.trim_start().starts_with('/') {
         tracing::debug!("routing: command");
         flags |= crate::memory::FLAG_JUNK;
-        let _ = crate::memory::record_message(
-            &cfg.database,
-            user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
-        )
-        .await;
+        let _ = record_user(flags).await;
         if crate::self_improve::handle_improve(&bot, &message, &cfg, typed).await {
             return Ok(());
         }
@@ -188,22 +202,14 @@ pub(crate) async fn handle_message(
     }
     if message.chat.is_private() && sender.id != cfg.owner_id {
         tracing::info!(reason = "private non-owner", "message skipped");
-        let _ = crate::memory::record_message(
-            &cfg.database,
-            user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
-        )
-        .await;
+        let _ = record_user(flags).await;
         return Ok(());
     }
     if !message.chat.is_private() && !message.chat.is_group() && !message.chat.is_supergroup() {
         tracing::debug!(reason = "unsupported chat kind", "message skipped");
         return Ok(());
     }
-    let _ = crate::memory::record_message(
-        &cfg.database,
-        user_record(&message, sender.id.0 as i64, &sender_name, log_text, flags),
-    )
-    .await;
+    let _ = record_user(flags).await;
     if owner
         && message.chat.is_private()
         && crate::self_improve::handle_owner_text(&bot, &message, &cfg, typed).await
