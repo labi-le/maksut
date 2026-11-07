@@ -262,32 +262,6 @@ impl QdrantClient {
         .map(|_| ())
     }
 
-    /// Ids already present in the collection, used to skip re-embedding when a
-    /// backfill only needs to fill holes.
-    pub(crate) async fn existing(&self, ids: &[u64]) -> Result<HashSet<u64>, String> {
-        if ids.is_empty() {
-            return Ok(HashSet::new());
-        }
-        let body = json!({"ids": ids, "with_payload": false, "with_vector": false});
-        let value = self
-            .send(
-                reqwest::Method::POST,
-                &format!("/collections/{}/points", self.collection),
-                Some(body),
-                &[200],
-                false,
-            )
-            .await?;
-        let points = value
-            .get("result")
-            .and_then(Value::as_array)
-            .ok_or_else(|| "qdrant retrieve shape".to_string())?;
-        Ok(points
-            .iter()
-            .filter_map(|point| point.get("id").and_then(id_of))
-            .collect())
-    }
-
     pub(crate) async fn query(
         &self,
         vector: &[f32],

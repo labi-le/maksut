@@ -1,6 +1,8 @@
 //! Retrieval for the `chat_search` tool: Qdrant first when configured, then a
 //! SQLite dot-product scan over `chat_embeddings`, then bounded lexical
-//! matching over `chat_messages`. Every fallback is surfaced as `degraded`.
+//! matching over `chat_messages`. Service or embedding errors are surfaced as
+//! `degraded`; an empty result above the score threshold is a normal fallback,
+//! not a failure.
 //!
 //! Search is bounded on every axis: at most `memory.search_scan_rows` stored
 //! vectors are scored per query, each returned text is cut to
@@ -97,11 +99,15 @@ pub(crate) async fn search_with(
     let query_vec = if has_vectors > 0 {
         match query_vector {
             Some(vector) => Some(vector),
-            None => embed_texts(chat, std::slice::from_ref(&request.query))
-                .await
-                .ok()
-                .and_then(|vecs| vecs.into_iter().next())
-                .and_then(unit_vector),
+            None => match embed_texts(chat, std::slice::from_ref(&request.query)).await {
+                Ok(vectors) => vectors.into_iter().next().and_then(unit_vector),
+                Err(reason) => {
+                    if degraded.is_none() {
+                        degraded = Some(format!("embeddings: {reason}"));
+                    }
+                    None
+                }
+            },
         }
     } else {
         None
@@ -149,9 +155,6 @@ pub(crate) async fn search_with(
             .collect();
     }
     if hits.is_empty() {
-        if client.is_some() && degraded.is_none() {
-            degraded = Some("лексический поиск по chat_messages".into());
-        }
         let lowered = request.query.to_lowercase();
         let words: Vec<(&str, &str)> = lowered
             .split(|ch: char| !ch.is_alphanumeric())
@@ -382,16 +385,19 @@ async fn qdrant_hits(
         ));
     }
     let ids: Vec<i64> = rows.iter().map(|row| row.1).collect();
-    let allowed = allowed_message_ids(pool, chat_id, &ids).await;
+    let allowed = allowed_message_ids(pool, chat_id, current_message_id, request, &ids).await;
     rows.retain(|row| allowed.contains(&row.1));
     Ok((vector, rows))
 }
 
-/// Re-applies the `flags = 0` guarantee to Qdrant hits: a point written by an
-/// older build or one whose SQLite row changed must not reach the model.
+/// Re-applies every retrieval filter to Qdrant hits against SQLite: a point
+/// written by an older build, or one whose SQLite row changed, must not reach
+/// the model through a stale payload.
 async fn allowed_message_ids(
     pool: &SqlitePool,
     chat_id: ChatId,
+    current_message_id: i32,
+    request: &SearchRequest,
     ids: &[i64],
 ) -> std::collections::HashSet<i64> {
     if ids.is_empty() {
@@ -401,13 +407,27 @@ async fn allowed_message_ids(
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
-        "SELECT id FROM chat_messages WHERE chat_id = ? AND flags = 0 AND id IN ({placeholders})"
+        "SELECT id FROM chat_messages WHERE chat_id = ? AND flags = 0 \
+           AND id IN ({placeholders}) \
+           AND (? IS NULL OR (role = 'user' AND author_id = ?)) \
+           AND (? IS NULL OR created_at >= ?) \
+           AND (? IS NULL OR created_at < ?) \
+           AND (? = 0 OR message_id IS NULL OR message_id <> ?)"
     );
-    let mut request = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(sql)).bind(chat_id.0);
+    let current = i64::from(current_message_id);
+    let mut query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(sql)).bind(chat_id.0);
     for id in ids {
-        request = request.bind(id);
+        query = query.bind(id);
     }
-    request
+    query
+        .bind(request.author_id)
+        .bind(request.author_id)
+        .bind(request.since)
+        .bind(request.since)
+        .bind(request.until)
+        .bind(request.until)
+        .bind(current)
+        .bind(current)
         .fetch_all(pool)
         .await
         .map(|rows| rows.into_iter().map(|(id,)| id).collect())

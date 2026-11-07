@@ -77,14 +77,8 @@ async fn chat_sync_uploads_stored_vectors_without_reembedding() {
     let chat = chat_config(&embed.url);
     assert_eq!(index_pending(&chat, &pool, 10).await.unwrap(), 2);
 
-    let qdrant = mock_server(
-        [
-            ready_responses(),
-            vec![json!({"result": []}).to_string(), "{}".to_string()],
-        ]
-        .concat(),
-    )
-    .await;
+    let qdrant =
+        mock_server([ready_responses(), vec!["{}".to_string(), "{}".to_string()]].concat()).await;
     let synced = crate::qdrant_index::sync_chat_points(&pool, &client(&qdrant))
         .await
         .unwrap();
@@ -93,12 +87,10 @@ async fn chat_sync_uploads_stored_vectors_without_reembedding() {
 
     {
         let requests = qdrant.requests.lock().unwrap();
-        assert_eq!(requests.len(), 10);
+        assert_eq!(requests.len(), 9);
         let create = body_of(&requests[0]);
         assert_eq!(create["vectors"]["size"], json!(DIM));
-        let retrieve = body_of(&requests[8]);
-        assert_eq!(retrieve["ids"].as_array().unwrap().len(), 2);
-        let upsert = body_of(&requests[9]);
+        let upsert = body_of(&requests[8]);
         let points = upsert["points"].as_array().unwrap();
         assert_eq!(points.len(), 2);
         assert_eq!(points[0]["payload"]["kind"], "chat");
@@ -110,7 +102,27 @@ async fn chat_sync_uploads_stored_vectors_without_reembedding() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(cursor, "2");
+    let (cursor_at, cursor_id) = cursor.split_once(':').unwrap();
+    assert!(cursor_at.parse::<i64>().unwrap() > 0);
+    assert_eq!(cursor_id, "2");
+
+    // Simulate a re-embedded row: the id stays, the index write time moves.
+    sqlx::query("UPDATE chat_embeddings SET created_at = created_at + 1 WHERE message_id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resynced = crate::qdrant_index::sync_chat_points(&pool, &client(&qdrant))
+        .await
+        .unwrap();
+    assert_eq!(resynced, 1);
+    {
+        let requests = qdrant.requests.lock().unwrap();
+        assert_eq!(requests.len(), 10);
+        let upsert = body_of(&requests[9]);
+        let points = upsert["points"].as_array().unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0]["payload"]["message_id"], 1);
+    }
     embed.task.abort();
     qdrant.task.abort();
 }
@@ -254,14 +266,26 @@ async fn self_sync_embeds_only_missing_facts_and_drops_stale_points() {
 
     let existing_id = point_id("self:память");
     let stale_id = point_id("self:удалено");
+    let model = config().memory.embedding_model.trim().to_owned();
+    let source = "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1";
     let qdrant = mock_server(
         [
             ready_responses(),
             vec![
-                json!({"result": [{"id": existing_id}]}).to_string(),
+                json!({"result": {"points": [
+                    {
+                        "id": existing_id,
+                        "payload": {
+                            "topic": "память",
+                            "fact": "хранит summary",
+                            "source_url": source,
+                            "model": model,
+                        },
+                    },
+                    {"id": stale_id, "payload": {"topic": "удалено"}},
+                ]}})
+                .to_string(),
                 "{}".to_string(),
-                json!({"result": {"points": [{"id": stale_id, "payload": {"topic": "удалено"}}]}})
-                    .to_string(),
                 "{}".to_string(),
             ],
         ]
@@ -283,7 +307,10 @@ async fn self_sync_embeds_only_missing_facts_and_drops_stale_points() {
     assert!(input.contains("поиск"), "{input}");
 
     let requests = qdrant.requests.lock().unwrap();
-    let delete = body_of(&requests[requests.len() - 1]);
+    assert_eq!(requests.len(), 11);
+    let upsert = body_of(&requests[9]);
+    assert_eq!(upsert["points"][0]["payload"]["topic"], "поиск");
+    let delete = body_of(&requests[10]);
     assert_eq!(delete["points"][0], json!(stale_id));
     embed.task.abort();
     qdrant.task.abort();
@@ -384,4 +411,154 @@ async fn self_memory_eviction_keeps_memory_max_rows() {
         .await
         .unwrap();
     assert_eq!(rows, config().code.memory_max_rows);
+}
+
+#[tokio::test]
+async fn self_sync_refreshes_changed_fact_payload() {
+    let (_dir, pool) = test_pool().await;
+    let base = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(base.path().join("src")).unwrap();
+    std::fs::write(base.path().join("src/memory.rs"), "// memory\n").unwrap();
+    let source = "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1";
+    let offline = offline_chat();
+    crate::code_inspect::record_self_fact(
+        &offline,
+        &pool,
+        base.path(),
+        "память",
+        "хранит summary",
+        source,
+    )
+    .await
+    .unwrap();
+    let model = config().memory.embedding_model.trim().to_owned();
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![
+                json!({"result": {"points": [{
+                    "id": point_id("self:память"),
+                    "payload": {
+                        "topic": "память",
+                        "fact": "старый текст",
+                        "source_url": source,
+                        "model": model,
+                    },
+                }]}})
+                .to_string(),
+                "{}".to_string(),
+            ],
+        ]
+        .concat(),
+    )
+    .await;
+    let embed = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let chat = chat_config(&embed.url);
+    let synced = crate::qdrant_index::sync_self_points(&chat, &pool, &client(&qdrant))
+        .await
+        .unwrap();
+    assert_eq!(synced, 1);
+    let requests = qdrant.requests.lock().unwrap();
+    assert_eq!(requests.len(), 10);
+    let upsert = body_of(&requests[9]);
+    assert_eq!(upsert["points"][0]["payload"]["fact"], "хранит summary");
+    embed.task.abort();
+    qdrant.task.abort();
+}
+
+#[tokio::test]
+async fn chat_search_rejects_stale_author_payload() {
+    let (_dir, pool) = test_pool().await;
+    recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
+    crate::memory::record_message(
+        &pool,
+        RecordMessage::new(ChatId(1), 99, "бот", "assistant", "бот ответил про котиков"),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM chat_messages ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let (user_id, assistant_id) = (ids[0], ids[1]);
+    let embed = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let chat = chat_config(&embed.url);
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![json!({
+                "result": {"points": [
+                    {
+                        "id": 1,
+                        "score": 0.9,
+                        "payload": {
+                            "message_id": user_id,
+                            "author_id": 10,
+                            "author_name": "аня",
+                            "created_at": 1_700_000_000,
+                            "text": "котики любят рыбу",
+                        },
+                    },
+                    {
+                        "id": 2,
+                        "score": 0.8,
+                        "payload": {
+                            "message_id": assistant_id,
+                            "author_id": 10,
+                            "author_name": "бот",
+                            "created_at": 1_700_000_001,
+                            "text": "бот ответил про котиков",
+                        },
+                    },
+                ]},
+            })
+            .to_string()],
+        ]
+        .concat(),
+    )
+    .await;
+    let request = parse_search_request(&json!({"query": "котики", "author_id": 10})).unwrap();
+    let output = search_with(&chat, &pool, ChatId(1), 0, &request, Some(&client(&qdrant)))
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_str(&output).unwrap();
+    let texts: Vec<&str> = value["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["котики любят рыбу"]);
+    embed.task.abort();
+    qdrant.task.abort();
+}
+
+#[tokio::test]
+async fn chat_search_empty_result_is_not_degraded() {
+    let (_dir, pool) = test_pool().await;
+    recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
+    let embed = mock_server(vec![
+        embeddings_body(&[axis(0)]),
+        embeddings_body(&[axis(1)]),
+    ])
+    .await;
+    let chat = chat_config(&embed.url);
+    index_pending(&chat, &pool, 10).await.unwrap();
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![json!({"result": {"points": []}}).to_string()],
+        ]
+        .concat(),
+    )
+    .await;
+    let request = parse_search_request(&json!({"query": "зебра"})).unwrap();
+    let output = search_with(&chat, &pool, ChatId(1), 0, &request, Some(&client(&qdrant)))
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(value["results"].as_array().unwrap().len(), 0);
+    assert!(value.get("degraded").is_none(), "{value}");
+    embed.task.abort();
+    qdrant.task.abort();
 }

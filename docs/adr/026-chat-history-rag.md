@@ -147,8 +147,10 @@ SQLite stays canonical. `src/qdrant_index.rs` only mirrors it:
   a restart continues instead of rescanning the log.
 - A code fact (`source_url` non-empty) is embedded and upserted when
   `remember_self` writes it; a failed write is logged and repaired by the same
-  tick's backfill, which embeds only points missing from Qdrant. Owner
-  directives (`source_url` empty) are never indexed and stay fully injected.
+  tick's backfill. The backfill scrolls `kind = "self"` once and re-embeds a
+  fact whose mirror is missing or whose payload `model`, `fact`, or
+  `source_url` differs from SQLite. Owner directives (`source_url` empty) are
+  never indexed and stay fully injected.
 - Point ids are the first 63 bits of `SHA-256` over `chat:<chat_id>:<row_id>`
   or `self:<topic>`, so an upsert is idempotent and a delete needs no lookup.
 - One collection (`memory.qdrant_collection`, default `maksut_memory`) with
@@ -159,9 +161,12 @@ SQLite stays canonical. `src/qdrant_index.rs` only mirrors it:
 
 Retrieval order in `chat_search`: Qdrant query with mandatory `kind=chat`,
 `chat_id`, and `model` filters plus the existing author/date filters, then the
-SQLite dot-product scan, then lexical scoring. A Qdrant failure adds
-`degraded` to the tool payload so the model sees the fallback instead of a
-silent quality drop. Self-memory selection keeps every directive and ranks
+SQLite dot-product scan, then lexical scoring. Every Qdrant hit is re-checked
+against `chat_messages` for `flags = 0`, role/author, date bounds, and the
+current Telegram message id, so a stale payload cannot bypass a filter. A
+Qdrant or embedding error adds `degraded` to the tool payload so the model
+sees the failure instead of a silent quality drop; an empty result above
+`search_min_score` is a normal fallback and does not set it. Self-memory selection keeps every directive and ranks
 code facts by `memory.self_fact_limit` (default 10); when the query or index
 is unavailable it returns the full SQLite set, never a subset.
 
@@ -196,7 +201,9 @@ tool to the current turn. Mutating the chat filter, the flags filter, or the
 retry loop makes those tests fail.
 
 `src/qdrant_test.rs` covers stable point ids, chat mirroring from stored
-vectors without a second embedding call, self-fact upsert/delete ids, backfill
-of only missing facts plus stale-point deletion, Qdrant-first chat search
-filters, explicit lexical fallback when the service is down, and ranked code
+vectors without a second embedding call, re-sync of a rewritten vector through
+the `(created_at, id)` cursor, self-fact upsert/delete ids, backfill of only
+missing or changed facts plus stale-point deletion, Qdrant-first chat search
+filters, rejection of a stale author payload, empty results not marked
+degraded, explicit lexical fallback when the service is down, and ranked code
 facts with fully injected owner directives.
