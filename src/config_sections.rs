@@ -257,6 +257,7 @@ pub(crate) struct MemorySettings {
     pub(crate) compact_passes: usize,
     pub(crate) compact_interval_secs: u64,
     pub(crate) load_limit: i64,
+    pub(crate) embedding_url: String,
     pub(crate) embedding_model: String,
     pub(crate) embedding_dim: usize,
     pub(crate) embedding_batch: usize,
@@ -274,8 +275,6 @@ pub(crate) struct MemorySettings {
     pub(crate) qdrant_collection: String,
     pub(crate) qdrant_timeout_secs: u64,
     pub(crate) qdrant_max_response_bytes: usize,
-    pub(crate) qdrant_sync_batch: usize,
-    pub(crate) qdrant_sync_batches: usize,
     pub(crate) self_fact_limit: usize,
 }
 
@@ -552,8 +551,9 @@ defaults!(MemorySettings {
     compact_passes: 3,
     compact_interval_secs: 10 * 60,
     load_limit: 2000,
-    embedding_model: "text-embedding-3-small".into(),
-    embedding_dim: 1536,
+    embedding_url: String::new(),
+    embedding_model: "intfloat/multilingual-e5-small".into(),
+    embedding_dim: 384,
     embedding_batch: 32,
     embedding_max_chars: 500,
     embedding_max_response_bytes: 4 * 1024 * 1024,
@@ -569,8 +569,6 @@ defaults!(MemorySettings {
     qdrant_collection: "maksut_memory".into(),
     qdrant_timeout_secs: 5,
     qdrant_max_response_bytes: 1024 * 1024,
-    qdrant_sync_batch: 128,
-    qdrant_sync_batches: 4,
     self_fact_limit: 10,
 });
 

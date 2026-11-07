@@ -77,6 +77,7 @@ class FakeGitAndDocker:
         up_ok: bool = True,
         container: dict | None = None,
         qdrant_container: dict | None = None,
+        embeddings_container: dict | None = None,
     ):
         self.branch = branch
         self.dirty = dirty
@@ -90,6 +91,7 @@ class FakeGitAndDocker:
         self.up_ok = up_ok
         self.container = container
         self.qdrant_container = qdrant_container
+        self.embeddings_container = embeddings_container
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
@@ -117,6 +119,12 @@ class FakeGitAndDocker:
             source = self.container
             if name == "maksut-qdrant-1":
                 source = self.qdrant_container if self.qdrant_container is not None else self.container
+            elif name == "maksut-embeddings-1":
+                source = (
+                    self.embeddings_container
+                    if self.embeddings_container is not None
+                    else self.container
+                )
             if source is None:
                 return subprocess.CompletedProcess(
                     args, 1, stdout="", stderr=f"Error: No such object: {name}"
@@ -177,6 +185,7 @@ class AutoDeployTests(unittest.TestCase):
             self.assertEqual(len(ups), 1)
             self.assertIn("--no-build", ups[0])
             self.assertIn("qdrant", ups[0])
+            self.assertIn("embeddings", ups[0])
             self.assertTrue(ups[0][3].endswith(module.COMPOSE_OVERRIDE))
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], "b" * 40)
@@ -492,6 +501,36 @@ class AutoDeployTests(unittest.TestCase):
             ups = fake.named(["docker", "compose"])
             self.assertEqual(len(ups), 1)
             self.assertIn("qdrant", ups[0])
+
+    def test_stopped_embeddings_container_recreates_the_service(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, repo, state = load_module(tmp)
+            sha = "b" * 40
+            module.write_deployed_sha(state, sha)
+            code_dir = str(state / "code" / sha)
+            fake = install(
+                module,
+                FakeGitAndDocker(
+                    remote_sha=sha,
+                    head_sha=sha,
+                    container=container_state(f"{IMAGE}:{sha}", code_dir),
+                    embeddings_container=container_state(
+                        "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3",
+                        code_dir,
+                        running=False,
+                    ),
+                ),
+            )
+            with mock.patch.object(module, "log") as logged:
+                self.assertTrue(module.deploy_once(repo, state))
+            reasons = [call.args[0] for call in logged.call_args_list]
+            self.assertTrue(
+                any("maksut-embeddings-1 is not running" in reason for reason in reasons),
+                reasons,
+            )
+            ups = fake.named(["docker", "compose"])
+            self.assertEqual(len(ups), 1)
+            self.assertIn("embeddings", ups[0])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,10 +1,10 @@
 //! Bounded REST client for the Qdrant vector index.
 //!
-//! Qdrant is a write-through index beside SQLite, never the source of truth:
-//! the canonical rows stay in `chat_messages`, `chat_embeddings`, and
-//! `bot_self_memory`. Every request here has a deadline and a response byte
-//! cap, so an absent or slow service can only make retrieval fall back to
-//! SQLite; it cannot stall a turn or grow memory without bound.
+//! Qdrant is the sole vector store for chat history and code facts; SQLite
+//! keeps the raw `chat_messages` log, summaries, and `bot_self_memory` rows.
+//! Every request here has a deadline and a response byte cap, so an absent or
+//! slow service can only make retrieval fall back to SQLite lexical matching;
+//! it cannot stall a turn or grow memory without bound.
 //!
 //! The collection uses one unnamed cosine vector per point and payload
 //! filtering only: indexes on `kind`, `chat_id`, `author_id`, `created_at`,
@@ -126,9 +126,12 @@ impl QdrantClient {
             max_bytes,
         }
     }
-
-    fn ready_key(&self) -> String {
+    pub(crate) fn identity(&self) -> String {
         format!("{}|{}", self.base, self.collection)
+    }
+
+    fn ready_key(&self, dim: usize) -> String {
+        format!("{}|{}|{dim}", self.base, self.collection)
     }
 
     fn url(&self, path: &str) -> Result<Url, String> {
@@ -185,6 +188,12 @@ impl QdrantClient {
         let status = response.status().as_u16();
         let bytes = self.read_bounded(response).await?;
         if !accept.contains(&status) {
+            if status == 404 {
+                if let Ok(mut ready) = READY.lock() {
+                    let prefix = format!("{}|", self.identity());
+                    ready.retain(|key| !key.starts_with(&prefix));
+                }
+            }
             return Err(format!("qdrant HTTP {status}"));
         }
         if bytes.is_empty() {
@@ -193,33 +202,94 @@ impl QdrantClient {
         serde_json::from_slice(&bytes).map_err(|_| "qdrant json".to_string())
     }
 
-    /// Creates the collection and its payload indexes once per process. An
-    /// existing collection and an existing index are accepted, so a restart
-    /// converges without dropping data.
-    pub(crate) async fn ensure(&self, dim: usize) -> Result<(), String> {
+    /// Creates the collection and its payload indexes once per `(endpoint,
+    /// collection, dim)`. When an existing collection was created with a
+    /// different vector size, it is dropped and recreated so a dimension
+    /// upgrade never gets stuck returning HTTP 400 on every upsert/query.
+    pub(crate) async fn ensure(&self, dim: usize) -> Result<bool, String> {
         if dim == 0 || dim > 8192 {
             return Err("qdrant dimension".into());
         }
-        let key = self.ready_key();
+        let key = self.ready_key(dim);
         if READY
             .lock()
             .map(|ready| ready.contains(&key))
             .unwrap_or(false)
         {
-            return Ok(());
+            return Ok(false);
         }
         let create = json!({
             "vectors": {"size": dim, "distance": "Cosine"},
             "on_disk_payload": true,
         });
-        self.send(
-            reqwest::Method::PUT,
-            &format!("/collections/{}", self.collection),
-            Some(create),
-            &[200, 400, 409],
-            true,
-        )
-        .await?;
+        let response = self
+            .send(
+                reqwest::Method::PUT,
+                &format!("/collections/{}", self.collection),
+                Some(create.clone()),
+                &[200, 400, 409],
+                true,
+            )
+            .await?;
+        let mut recreated = false;
+        if let Some(existing_dim) = response
+            .pointer("/result/config/params/vectors/size")
+            .and_then(Value::as_u64)
+        {
+            if existing_dim as usize != dim {
+                self.send(
+                    reqwest::Method::DELETE,
+                    &format!("/collections/{}", self.collection),
+                    None,
+                    &[200, 404],
+                    true,
+                )
+                .await?;
+                self.send(
+                    reqwest::Method::PUT,
+                    &format!("/collections/{}", self.collection),
+                    Some(create),
+                    &[200, 400, 409],
+                    true,
+                )
+                .await?;
+                recreated = true;
+            }
+        } else if response.pointer("/status/error").is_some() {
+            let info = self
+                .send(
+                    reqwest::Method::GET,
+                    &format!("/collections/{}", self.collection),
+                    None,
+                    &[200, 404],
+                    false,
+                )
+                .await?;
+            if let Some(existing_dim) = info
+                .pointer("/result/config/params/vectors/size")
+                .and_then(Value::as_u64)
+            {
+                if existing_dim as usize != dim {
+                    self.send(
+                        reqwest::Method::DELETE,
+                        &format!("/collections/{}", self.collection),
+                        None,
+                        &[200, 404],
+                        true,
+                    )
+                    .await?;
+                    self.send(
+                        reqwest::Method::PUT,
+                        &format!("/collections/{}", self.collection),
+                        Some(create),
+                        &[200, 400, 409],
+                        true,
+                    )
+                    .await?;
+                    recreated = true;
+                }
+            }
+        }
         for (field, schema) in PAYLOAD_INDEXES {
             let body = json!({"field_name": field, "field_schema": schema});
             self.send(
@@ -232,9 +302,11 @@ impl QdrantClient {
             .await?;
         }
         if let Ok(mut ready) = READY.lock() {
+            let prefix = format!("{}|", self.identity());
+            ready.retain(|entry| !entry.starts_with(&prefix));
             ready.insert(key);
         }
-        Ok(())
+        Ok(recreated)
     }
 
     pub(crate) async fn upsert(&self, points: &[Point]) -> Result<(), String> {

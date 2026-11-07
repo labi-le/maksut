@@ -28,6 +28,7 @@ IMAGE_REPO = os.environ.get("AUTO_DEPLOY_IMAGE_REPO", "ghcr.io/labi-le/maxwell")
 COMPOSE_FILE = os.environ.get("AUTO_DEPLOY_COMPOSE_FILE", "compose.yaml")
 SERVICE = os.environ.get("AUTO_DEPLOY_SERVICE", "maksut")
 QDRANT_SERVICE = os.environ.get("AUTO_DEPLOY_QDRANT_SERVICE", "qdrant")
+EMBEDDINGS_SERVICE = os.environ.get("AUTO_DEPLOY_EMBEDDINGS_SERVICE", "embeddings")
 GIT_TIMEOUT = 60
 PULL_TIMEOUT = 300
 UP_TIMEOUT = 120
@@ -41,6 +42,9 @@ UNPUBLISHED_IMAGE_MARKERS = ("manifest unknown", "not found")
 # this name no matter which directory the file is read from.
 CONTAINER = os.environ.get("AUTO_DEPLOY_CONTAINER", "maksut-maksut-1")
 QDRANT_CONTAINER = os.environ.get("AUTO_DEPLOY_QDRANT_CONTAINER", "maksut-qdrant-1")
+EMBEDDINGS_CONTAINER = os.environ.get(
+    "AUTO_DEPLOY_EMBEDDINGS_CONTAINER", "maksut-embeddings-1"
+)
 CODE_MOUNT = "/var/lib/maksut/code/src"
 INSPECT_TIMEOUT = 30
 # `docker inspect` without a template prints the whole config, including the
@@ -170,13 +174,14 @@ def container_drift(sha: str, state_dir: Path) -> str | None:
             break
     if not source or os.path.realpath(source) != os.path.realpath(expected):
         return f"code mount {source or 'missing'} != {expected}"
-    # The deploy brings qdrant up alongside maksut; a missing or stopped vector
-    # service is drift even when the bot's own image and mount are correct.
-    qdrant = inspect_container(QDRANT_CONTAINER)
-    if qdrant is None:
-        return f"no {QDRANT_CONTAINER} container"
-    if qdrant.get("running") is not True or qdrant.get("status") not in (None, "running"):
-        return f"{QDRANT_CONTAINER} is not running"
+    # The deploy brings qdrant and embeddings up alongside maksut; a missing or
+    # stopped sidecar is drift even when the bot's own image and mount match.
+    for sidecar in (QDRANT_CONTAINER, EMBEDDINGS_CONTAINER):
+        state = inspect_container(sidecar)
+        if state is None:
+            return f"no {sidecar} container"
+        if state.get("running") is not True or state.get("status") not in (None, "running"):
+            return f"{sidecar} is not running"
     return None
 
 
@@ -294,6 +299,7 @@ def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path)
                 "--no-build",
                 SERVICE,
                 QDRANT_SERVICE,
+                EMBEDDINGS_SERVICE,
             ],
             timeout=UP_TIMEOUT,
             cwd=repo,

@@ -6,7 +6,7 @@ use crate::*;
 use serde_json::json;
 use std::time::Duration;
 
-const DIM: usize = 1536;
+const DIM: usize = 384;
 
 fn axis(index: usize) -> Vec<f32> {
     let mut vector = vec![0.0f32; DIM];
@@ -61,27 +61,38 @@ async fn recorded(pool: &SqlitePool, chat: i64, author: i64, name: &str, text: &
 
 #[test]
 fn point_ids_are_stable_and_bounded() {
-    let first = point_id("chat:1:2");
-    assert_eq!(first, point_id("chat:1:2"));
-    assert_ne!(first, point_id("chat:1:3"));
+    let first = point_id("chat:intfloat/multilingual-e5-small:1:2");
+    assert_eq!(first, point_id("chat:intfloat/multilingual-e5-small:1:2"));
+    assert_ne!(first, point_id("chat:intfloat/multilingual-e5-small:1:3"));
+    assert_ne!(first, point_id("chat:other-model:1:2"));
     assert_ne!(first, point_id("self:память"));
     assert!(first < 1u64 << 63);
 }
 
 #[tokio::test]
-async fn chat_sync_uploads_stored_vectors_without_reembedding() {
+async fn chat_sync_embeds_messages_directly_to_qdrant_and_advances_cursor() {
     let (_dir, pool) = test_pool().await;
     recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
     recorded(&pool, 1, 11, "петя", "собаки любят мясо").await;
-    let embed = mock_server(vec![embeddings_body(&[axis(0), axis(1)])]).await;
+    let embed = mock_server(vec![
+        embeddings_body(&[axis(0), axis(1)]),
+        embeddings_body(&[axis(0)]),
+    ])
+    .await;
     let chat = chat_config(&embed.url);
-    assert_eq!(index_pending(&chat, &pool, 10).await.unwrap(), 2);
-
-    let qdrant =
-        mock_server([ready_responses(), vec!["{}".to_string(), "{}".to_string()]].concat()).await;
-    let synced = crate::qdrant_index::sync_chat_points(&pool, &client(&qdrant))
-        .await
-        .unwrap();
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![
+                "{}".to_string(),
+                json!({"result": {"points": [{"id": 1, "payload": {}}]}}).to_string(),
+                "{}".to_string(),
+            ],
+        ]
+        .concat(),
+    )
+    .await;
+    let synced = index_pending(&chat, &pool, &client(&qdrant)).await.unwrap();
     assert_eq!(synced, 2);
     assert_eq!(embed.requests.lock().unwrap().len(), 1);
 
@@ -102,26 +113,19 @@ async fn chat_sync_uploads_stored_vectors_without_reembedding() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    let (cursor_at, cursor_id) = cursor.split_once(':').unwrap();
-    assert!(cursor_at.parse::<i64>().unwrap() > 0);
-    assert_eq!(cursor_id, "2");
+    assert_eq!(cursor, "2");
 
-    // Simulate a re-embedded row: the id stays, the index write time moves.
-    sqlx::query("UPDATE chat_embeddings SET created_at = created_at + 1 WHERE message_id = 1")
-        .execute(&pool)
-        .await
-        .unwrap();
-    let resynced = crate::qdrant_index::sync_chat_points(&pool, &client(&qdrant))
-        .await
-        .unwrap();
+    // Append a new message and verify only the new row is embedded and synced.
+    recorded(&pool, 1, 12, "вася", "попугаи любят зерно").await;
+    let resynced = index_pending(&chat, &pool, &client(&qdrant)).await.unwrap();
     assert_eq!(resynced, 1);
     {
         let requests = qdrant.requests.lock().unwrap();
-        assert_eq!(requests.len(), 10);
-        let upsert = body_of(&requests[9]);
+        assert_eq!(requests.len(), 11);
+        let upsert = body_of(&requests[10]);
         let points = upsert["points"].as_array().unwrap();
         assert_eq!(points.len(), 1);
-        assert_eq!(points[0]["payload"]["message_id"], 1);
+        assert_eq!(points[0]["payload"]["message_id"], 3);
     }
     embed.task.abort();
     qdrant.task.abort();
@@ -185,13 +189,8 @@ async fn chat_search_answers_from_qdrant_when_indexed() {
 async fn chat_search_degrades_explicitly_when_qdrant_is_down() {
     let (_dir, pool) = test_pool().await;
     recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
-    let embed = mock_server(vec![
-        embeddings_body(&[axis(0)]),
-        embeddings_body(&[axis(0)]),
-    ])
-    .await;
+    let embed = mock_server(vec![embeddings_body(&[axis(0)])]).await;
     let chat = chat_config(&embed.url);
-    index_pending(&chat, &pool, 10).await.unwrap();
     let dead = QdrantClient::new(
         Url::parse("http://127.0.0.1:9/").unwrap(),
         "test_memory".into(),
@@ -236,7 +235,10 @@ async fn self_fact_upsert_and_delete_hit_the_same_point() {
     assert_eq!(point["id"], json!(point_id("self:память")));
     assert_eq!(point["payload"]["kind"], "self");
     assert_eq!(point["payload"]["topic"], "память");
-    assert_eq!(point["payload"]["model"], "text-embedding-3-small");
+    assert_eq!(
+        point["payload"]["model"],
+        config().memory.embedding_model.trim()
+    );
     let delete = body_of(&requests[9]);
     assert_eq!(delete["points"][0], json!(point_id("self:память")));
     embed.task.abort();
@@ -537,13 +539,8 @@ async fn chat_search_rejects_stale_author_payload() {
 async fn chat_search_empty_result_is_not_degraded() {
     let (_dir, pool) = test_pool().await;
     recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
-    let embed = mock_server(vec![
-        embeddings_body(&[axis(0)]),
-        embeddings_body(&[axis(1)]),
-    ])
-    .await;
+    let embed = mock_server(vec![embeddings_body(&[axis(1)])]).await;
     let chat = chat_config(&embed.url);
-    index_pending(&chat, &pool, 10).await.unwrap();
     let qdrant = mock_server(
         [
             ready_responses(),
@@ -559,6 +556,77 @@ async fn chat_search_empty_result_is_not_degraded() {
     let value: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(value["results"].as_array().unwrap().len(), 0);
     assert!(value.get("degraded").is_none(), "{value}");
+    embed.task.abort();
+    qdrant.task.abort();
+}
+
+#[tokio::test]
+async fn ensure_recreates_collection_when_existing_dimension_differs() {
+    let (_dir, pool) = test_pool().await;
+    recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
+    let embed = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let chat = chat_config(&embed.url);
+    let qdrant = mock_server(
+        [
+            vec![
+                json!({"status": {"error": "Wrong input: Collection already exists!"}}).to_string(),
+                json!({"result": {"config": {"params": {"vectors": {"size": 1536}}}}}).to_string(),
+                "{}".to_string(),
+                "{}".to_string(),
+            ],
+            vec!["{}".to_string(); 7],
+            vec!["{}".to_string()],
+        ]
+        .concat(),
+    )
+    .await;
+    let client = client(&qdrant);
+    sqlx::query("INSERT INTO memory_meta (key, value) VALUES (?, '99')")
+        .bind(format!(
+            "qdrant_chat_cursor:{}|{}",
+            client.identity(),
+            config().memory.embedding_model.trim()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let synced = index_pending(&chat, &pool, &client).await.unwrap();
+    assert_eq!(synced, 1);
+    embed.task.abort();
+    qdrant.task.abort();
+}
+
+#[tokio::test]
+async fn sync_resets_cursor_when_qdrant_collection_is_empty() {
+    let (_dir, pool) = test_pool().await;
+    recorded(&pool, 1, 10, "аня", "котики любят рыбу").await;
+    let embed = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let chat = chat_config(&embed.url);
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![
+                json!({"result": {"points": []}}).to_string(),
+                "{}".to_string(),
+            ],
+        ]
+        .concat(),
+    )
+    .await;
+    let client = client(&qdrant);
+    sqlx::query("INSERT INTO memory_meta (key, value) VALUES (?, '50')")
+        .bind(format!(
+            "qdrant_chat_cursor:{}|{}",
+            client.identity(),
+            config().memory.embedding_model.trim()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let synced = index_pending(&chat, &pool, &client).await.unwrap();
+    assert_eq!(synced, 1);
     embed.task.abort();
     qdrant.task.abort();
 }

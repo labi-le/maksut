@@ -28,6 +28,9 @@ services:
       LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-low}
       CODE_DIR: /var/lib/maksut/code
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      EMBEDDING_URL: ${EMBEDDING_URL:-http://embeddings:8080/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
     volumes:
       - data:/data
       # Bind the directory so atomic replacement of cookies.txt stays visible.
@@ -68,6 +71,43 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # Local CPU embedding server (384-d multilingual-e5-small) so Qdrant indexing
+  # and semantic search never depend on external embedding API keys or quotas.
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --model-id
+      - intfloat/multilingual-e5-small
+      - --dtype
+      - float32
+      - --port
+      - "8080"
+      - --auto-truncate
+      - --max-client-batch-size
+      - "128"
+      - --tokenization-workers
+      - "2"
+    environment:
+      HUGGINGFACE_HUB_CACHE: /data/huggingface
+      HF_HOME: /data/huggingface
+      RAYON_NUM_THREADS: "4"
+    volumes:
+      - data:/data
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
   cookie-refresh:
     build:

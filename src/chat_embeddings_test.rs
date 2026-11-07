@@ -1,11 +1,12 @@
-use crate::chat_embeddings::{coverage, embed_texts, index_pending, reindex};
-use crate::chat_search::{parse_search_request, search, SearchRequest};
+use crate::chat_embeddings::{coverage, embed_texts, index_pending, reindex_with};
+use crate::chat_search::{parse_search_request, search, search_with, SearchRequest};
+use crate::qdrant::QdrantClient;
 use crate::test_support::*;
 use crate::*;
 use serde_json::json;
+use std::time::Duration;
 
-const DIM: usize = 1536;
-
+const DIM: usize = 384;
 fn axis(index: usize) -> Vec<f32> {
     let mut vector = vec![0.0f32; DIM];
     if let Some(slot) = vector.get_mut(index) {
@@ -32,6 +33,19 @@ async fn chat_config(url: &Url) -> ChatConfig {
         SearchProvider::DuckDuckGo,
         None,
     )
+}
+
+fn qdrant_client(server: &MockServer) -> QdrantClient {
+    QdrantClient::new(
+        server.url.clone(),
+        "test_memory".into(),
+        Duration::from_secs(2),
+        1024 * 1024,
+    )
+}
+
+fn ready_responses() -> Vec<String> {
+    vec!["{}".to_string(); 8]
 }
 
 async fn recorded(pool: &SqlitePool, chat: i64, author: i64, name: &str, text: &str, flags: i64) {
@@ -72,6 +86,7 @@ async fn embeddings_do_not_retry_a_rejected_request() {
 async fn index_writes_vectors_for_unflagged_messages_only() {
     let (_dir, pool) = test_pool().await;
     let server = mock_server(vec![embeddings_body(&[axis(0), axis(1)])]).await;
+    let qdrant = mock_server([ready_responses(), vec!["{}".to_string()]].concat()).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "котики любят рыбу", 0).await;
     recorded(
@@ -85,10 +100,17 @@ async fn index_writes_vectors_for_unflagged_messages_only() {
     .await;
     recorded(&pool, 1, 12, "вася", "собаки любят мясо", 0).await;
 
-    let indexed = index_pending(&chat, &pool, 10).await.unwrap();
+    let indexed = index_pending(&chat, &pool, &qdrant_client(&qdrant))
+        .await
+        .unwrap();
     assert_eq!(indexed, 2);
     let model = config().memory.embedding_model.trim().to_owned();
-    assert_eq!(coverage(&pool, &model).await.unwrap(), (2, 0));
+    assert_eq!(
+        coverage(&pool, Some(&qdrant_client(&qdrant)), &model)
+            .await
+            .unwrap(),
+        (2, 0)
+    );
 
     let body = body_of(&server.requests.lock().unwrap()[0]);
     assert_eq!(body["model"], json!(model));
@@ -96,28 +118,74 @@ async fn index_writes_vectors_for_unflagged_messages_only() {
     assert_eq!(inputs.len(), 2);
     assert!(!format!("{inputs:?}").contains("секрет"));
     server.task.abort();
+    qdrant.task.abort();
 }
 
 #[tokio::test]
 async fn search_scopes_to_one_chat_and_drops_low_scores() {
     let (_dir, pool) = test_pool().await;
-    let server = mock_server(vec![
-        embeddings_body(&[axis(0), axis(1), axis(0)]),
-        embeddings_body(&[axis(0)]),
-    ])
-    .await;
+    let server = mock_server(vec![embeddings_body(&[axis(0)])]).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "котики любят рыбу", 0).await;
     recorded(&pool, 1, 11, "петя", "погода в москве", 0).await;
     recorded(&pool, 2, 10, "аня", "котики в чужом чате", 0).await;
-    index_pending(&chat, &pool, 10).await.unwrap();
-
-    let output = search(
+    let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM chat_messages ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![json!({
+                "result": {"points": [
+                    {
+                        "id": 1,
+                        "score": 0.9,
+                        "payload": {
+                            "message_id": ids[0],
+                            "author_id": 10,
+                            "author_name": "аня",
+                            "created_at": 1_700_000_000,
+                            "text": "котики любят рыбу",
+                        },
+                    },
+                    {
+                        "id": 2,
+                        "score": 0.1,
+                        "payload": {
+                            "message_id": ids[1],
+                            "author_id": 11,
+                            "author_name": "петя",
+                            "created_at": 1_700_000_001,
+                            "text": "погода в москве",
+                        },
+                    },
+                    {
+                        "id": 3,
+                        "score": 0.95,
+                        "payload": {
+                            "message_id": ids[2],
+                            "author_id": 10,
+                            "author_name": "аня",
+                            "created_at": 1_700_000_002,
+                            "text": "котики в чужом чате",
+                        },
+                    },
+                ]},
+            })
+            .to_string()],
+        ]
+        .concat(),
+    )
+    .await;
+    let client = qdrant_client(&qdrant);
+    let output = search_with(
         &chat,
         &pool,
         ChatId(1),
         0,
         &request(json!({"query": "котики"})),
+        Some(&client),
     )
     .await
     .unwrap();
@@ -130,27 +198,49 @@ async fn search_scopes_to_one_chat_and_drops_low_scores() {
         .collect();
     assert_eq!(texts, vec!["котики любят рыбу"]);
     server.task.abort();
+    qdrant.task.abort();
 }
 
 #[tokio::test]
 async fn search_merges_recent_messages_and_dedupes() {
     let (_dir, pool) = test_pool().await;
-    let server = mock_server(vec![
-        embeddings_body(&[axis(0)]),
-        embeddings_body(&[axis(0)]),
-    ])
-    .await;
+    let server = mock_server(vec![embeddings_body(&[axis(0)])]).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "старая реплика про котиков", 0).await;
-    index_pending(&chat, &pool, 10).await.unwrap();
     recorded(&pool, 1, 11, "петя", "новая реплика", 0).await;
-
-    let output = search(
+    let first_id: i64 = sqlx::query_scalar("SELECT id FROM chat_messages ORDER BY id LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![json!({
+                "result": {"points": [{
+                    "id": 1,
+                    "score": 0.9,
+                    "payload": {
+                        "message_id": first_id,
+                        "author_id": 10,
+                        "author_name": "аня",
+                        "created_at": 1_700_000_000,
+                        "text": "старая реплика про котиков",
+                    },
+                }]},
+            })
+            .to_string()],
+        ]
+        .concat(),
+    )
+    .await;
+    let client = qdrant_client(&qdrant);
+    let output = search_with(
         &chat,
         &pool,
         ChatId(1),
         0,
         &request(json!({"query": "котики"})),
+        Some(&client),
     )
     .await
     .unwrap();
@@ -164,20 +254,16 @@ async fn search_merges_recent_messages_and_dedupes() {
         .collect();
     assert_eq!(recent, vec!["новая реплика"]);
     server.task.abort();
+    qdrant.task.abort();
 }
 
 #[tokio::test]
 async fn chat_search_tool_scopes_to_the_current_chat() {
     let (_dir, pool) = test_pool().await;
-    let server = mock_server(vec![
-        embeddings_body(&[axis(0), axis(0)]),
-        embeddings_body(&[axis(0)]),
-    ])
-    .await;
+    let server = mock_server(vec![]).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "котики любят рыбу", 0).await;
     recorded(&pool, 2, 10, "аня", "котики в чужом чате", 0).await;
-    index_pending(&chat, &pool, 10).await.unwrap();
 
     let stickers = StickerReplies::for_tests();
     let catalog = StickerCatalog::for_tests(&[]);
@@ -235,29 +321,36 @@ async fn search_never_returns_flagged_rows() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let bytes: Vec<u8> = axis(0)
-        .iter()
-        .flat_map(|value| value.to_le_bytes())
-        .collect();
-    sqlx::query(
-        "INSERT INTO chat_embeddings (chat_id, message_id, chunk_text, vector, model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![json!({
+                "result": {"points": [{
+                    "id": 1,
+                    "score": 0.99,
+                    "payload": {
+                        "message_id": message_id,
+                        "author_id": 10,
+                        "author_name": "аня",
+                        "created_at": 1_700_000_000,
+                        "text": "секрет token=abcdef",
+                    },
+                }]},
+            })
+            .to_string()],
+        ]
+        .concat(),
     )
-    .bind(1_i64)
-    .bind(message_id)
-    .bind("секрет token=abcdef")
-    .bind(bytes)
-    .bind(config().memory.embedding_model.trim().to_owned())
-    .bind(0_i64)
-    .execute(&pool)
-    .await
-    .unwrap();
+    .await;
+    let client = qdrant_client(&qdrant);
 
-    let output = search(
+    let output = search_with(
         &chat,
         &pool,
         ChatId(1),
         0,
         &request(json!({"query": "секрет"})),
+        Some(&client),
     )
     .await
     .unwrap();
@@ -265,19 +358,13 @@ async fn search_never_returns_flagged_rows() {
     assert!(value["results"].as_array().unwrap().is_empty());
     assert!(value["recent"].as_array().unwrap().is_empty());
     server.task.abort();
+    qdrant.task.abort();
 }
 
 #[tokio::test]
 async fn search_filters_by_author_and_date_window() {
     let (_dir, pool) = test_pool().await;
-    let same = axis(0);
-    let server = mock_server(vec![
-        embeddings_body(&[same.clone(), same.clone()]),
-        embeddings_body(std::slice::from_ref(&same)),
-        embeddings_body(std::slice::from_ref(&same)),
-        embeddings_body(std::slice::from_ref(&same)),
-    ])
-    .await;
+    let server = mock_server(vec![]).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "реплика номер один", 0).await;
     recorded(&pool, 1, 11, "петя", "реплика номер два", 0).await;
@@ -286,7 +373,6 @@ async fn search_filters_by_author_and_date_window() {
         .execute(&pool)
         .await
         .unwrap();
-    index_pending(&chat, &pool, 10).await.unwrap();
 
     let by_author = search(
         &chat,
@@ -343,45 +429,51 @@ async fn search_filters_by_author_and_date_window() {
 async fn index_reembeds_rows_left_by_another_model() {
     let (_dir, pool) = test_pool().await;
     let server = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let qdrant = mock_server([ready_responses(), vec!["{}".to_string()]].concat()).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "котики", 0).await;
-    let message_id: i64 = sqlx::query_scalar("SELECT id FROM chat_messages LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
     sqlx::query(
-        "INSERT INTO chat_embeddings (chat_id, message_id, chunk_text, vector, model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memory_meta (key, value) VALUES ('qdrant_chat_cursor:old-model', '1')",
     )
-    .bind(1_i64)
-    .bind(message_id)
-    .bind("котики")
-    .bind(vec![0u8; DIM * 4])
-    .bind("old-embedding-model")
-    .bind(0_i64)
     .execute(&pool)
     .await
     .unwrap();
 
-    assert_eq!(index_pending(&chat, &pool, 10).await.unwrap(), 1);
     let model = config().memory.embedding_model.trim().to_owned();
-    assert_eq!(coverage(&pool, &model).await.unwrap(), (1, 0));
+    assert_eq!(coverage(&pool, None, &model).await.unwrap(), (0, 1));
+    assert_eq!(
+        index_pending(&chat, &pool, &qdrant_client(&qdrant))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        coverage(&pool, Some(&qdrant_client(&qdrant)), &model)
+            .await
+            .unwrap(),
+        (1, 0)
+    );
     server.task.abort();
+    qdrant.task.abort();
 }
 
 #[tokio::test]
 async fn reindex_reports_coverage() {
     let (_dir, pool) = test_pool().await;
     let server = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let qdrant = mock_server([ready_responses(), vec!["{}".to_string()]].concat()).await;
     let chat = chat_config(&server.url).await;
     recorded(&pool, 1, 10, "аня", "котики", 0).await;
 
-    let report: Value = serde_json::from_str(&reindex(&chat, &pool, 2).await).unwrap();
+    let report: Value =
+        serde_json::from_str(&reindex_with(&chat, &pool, &qdrant_client(&qdrant), 2).await)
+            .unwrap();
     assert_eq!(report["indexed_now"], json!(1));
     assert_eq!(report["indexed"], json!(1));
     assert_eq!(report["pending"], json!(0));
     server.task.abort();
+    qdrant.task.abort();
 }
-
 #[test]
 fn search_request_rejects_bad_arguments_and_bounds_limit() {
     assert!(parse_search_request(&json!({"query": "  "})).is_err());

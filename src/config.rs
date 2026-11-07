@@ -125,6 +125,17 @@ impl Config {
         if let Some(value) = env_value("QDRANT_URL") {
             self.memory.qdrant_url = value;
         }
+        if let Some(value) = env_value("EMBEDDING_URL") {
+            self.memory.embedding_url = value;
+        }
+        if let Some(value) = env_value("EMBEDDING_MODEL") {
+            self.memory.embedding_model = value;
+        }
+        if let Some(value) = env_value("EMBEDDING_DIM") {
+            self.memory.embedding_dim = value
+                .parse()
+                .map_err(|_| "EMBEDDING_DIM must be a non-negative integer".to_string())?;
+        }
         if let Some(value) = env_value("SEARCH_PROVIDER") {
             self.search.provider = SearchProvider::from_name(&value).ok_or_else(|| {
                 format!(

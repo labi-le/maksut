@@ -209,6 +209,9 @@ impl MemorySettings {
             86_400,
         )?;
         signed("memory.load_limit", self.load_limit, 1, 100_000)?;
+        if !self.embedding_url.trim().is_empty() {
+            parse_http_endpoint(&self.embedding_url, "memory.embedding_url")?;
+        }
         if self.embedding_model.chars().count() > 100 {
             return Err("memory.embedding_model must be at most 100 characters".into());
         }
@@ -281,13 +284,6 @@ impl MemorySettings {
             self.qdrant_max_response_bytes,
             64 * 1024,
             16 * 1024 * 1024,
-        )?;
-        usize_count("memory.qdrant_sync_batch", self.qdrant_sync_batch, 1, 512)?;
-        usize_count(
-            "memory.qdrant_sync_batches",
-            self.qdrant_sync_batches,
-            1,
-            32,
         )?;
         usize_count("memory.self_fact_limit", self.self_fact_limit, 1, 50)
     }

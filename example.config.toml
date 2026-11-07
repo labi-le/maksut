@@ -201,9 +201,11 @@ compact_message_chars = 500
 compact_passes = 3
 compact_interval_secs = 600
 load_limit = 2000
+# Empty URL uses `llm.base_url`; the compose `embeddings` service sets `http://embeddings:8080/v1`.
+embedding_url = ""
 # Empty model disables embeddings; chat_search falls back to lexical matching.
-embedding_model = "text-embedding-3-small"
-embedding_dim = 1536
+embedding_model = "intfloat/multilingual-e5-small"
+embedding_dim = 384
 embedding_batch = 32
 embedding_max_chars = 500
 embedding_max_response_bytes = 4194304
@@ -220,8 +222,6 @@ qdrant_url = ""
 qdrant_collection = "maksut_memory"
 qdrant_timeout_secs = 5
 qdrant_max_response_bytes = 1048576
-qdrant_sync_batch = 128
-qdrant_sync_batches = 4
 self_fact_limit = 10
 
 [media_cache]

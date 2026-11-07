@@ -1,44 +1,18 @@
-//! Vector index over `chat_messages` plus the bounded `/embeddings` transport.
+//! Bounded `/embeddings` transport and Qdrant chat-history indexer.
 //!
-//! `chat_embeddings` stores one unit vector per unflagged message. Vectors are
-//! normalized on write so a query scores by dot product alone. The model name
-//! is stored beside each vector: a configured model change makes existing rows
-//! foreign, and the scan re-embeds them instead of mixing dimensions.
-//!
-//! Only `flags = 0` rows are indexed, matching the memory guarantee that
-//! injection and secret messages never reach the model. Retrieval lives in
-//! [`crate::chat_search`]. When `memory.qdrant_url` is set, the indexer also
-//! mirrors these stored vectors into Qdrant through [`crate::qdrant_index`].
+//! Vectors live exclusively in Qdrant (`crate::qdrant_index`). SQLite holds only
+//! the raw `chat_messages` log and a per-model `memory_meta` cursor. Only
+//! `flags = 0` rows are embedded, matching the memory guarantee that injection
+//! and secret messages never reach the model. Retrieval lives in
+//! [`crate::chat_search`].
 
+use crate::qdrant::QdrantClient;
 use crate::*;
 use serde_json::json;
 
 pub(crate) fn enabled() -> bool {
     !config().memory.embedding_model.trim().is_empty()
 }
-
-fn encode_vector(vector: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(vector.len() * 4);
-    for value in vector {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes
-}
-
-/// Little-endian `f32` blob from `chat_embeddings.vector`; a trailing partial
-/// word means the row is corrupt and is skipped rather than misread.
-pub(crate) fn decode_vector(bytes: &[u8]) -> Option<Vec<f32>> {
-    let (chunks, remainder) = bytes.as_chunks::<4>();
-    if !remainder.is_empty() {
-        return None;
-    }
-    let mut vector = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        vector.push(f32::from_le_bytes(*chunk));
-    }
-    Some(vector)
-}
-
 /// Unit vector for dot-product scoring; `None` for an empty, zero, or
 /// non-finite vector, which the provider should never return.
 pub(crate) fn unit_vector(vector: Vec<f32>) -> Option<Vec<f32>> {
@@ -118,7 +92,12 @@ pub(crate) async fn embed_texts(
     if model.is_empty() {
         return Err("embeddings disabled".into());
     }
-    let mut url = chat.base_url.clone();
+    let configured = config().memory.embedding_url.trim();
+    let mut url = if configured.is_empty() {
+        chat.base_url.clone()
+    } else {
+        Url::parse(configured).map_err(|_| "embeddings url".to_string())?
+    };
     url.set_path(&format!("{}/embeddings", url.path().trim_end_matches('/')));
     let payload = json!({"model": model, "input": inputs}).to_string();
     let policy = &config().retry.llm;
@@ -195,126 +174,78 @@ pub(crate) async fn embed_texts(
     }
 }
 
-/// Indexes up to `limit` unflagged messages that have no vector for the
-/// configured model, in bounded API batches. Returns the number written.
+/// Indexes unflagged messages directly into Qdrant through `qdrant_index::sync_chat_points`.
 pub(crate) async fn index_pending(
     chat: &ChatConfig,
     pool: &SqlitePool,
-    limit: usize,
+    client: &QdrantClient,
 ) -> Result<usize, String> {
-    let model = config().memory.embedding_model.trim().to_owned();
-    if model.is_empty() {
-        return Err("search disabled".into());
-    }
-    let rows: Vec<(i64, i64, String)> = sqlx::query_as(
-        "SELECT m.id, m.chat_id, m.text FROM chat_messages m \
-         LEFT JOIN chat_embeddings e ON e.message_id = m.id AND e.model = ? \
-         WHERE m.flags = 0 AND trim(m.text) <> '' AND e.message_id IS NULL \
-         ORDER BY m.id LIMIT ?",
-    )
-    .bind(&model)
-    .bind(limit as i64)
-    .fetch_all(pool)
-    .await
-    .map_err(|_| "database".to_string())?;
-    if rows.is_empty() {
-        return Ok(0);
-    }
-    let max_chars = config().memory.embedding_max_chars;
-    let batch = config().memory.embedding_batch.max(1);
-    let mut indexed = 0;
-    for chunk in rows.chunks(batch) {
-        let mut pending = Vec::with_capacity(chunk.len());
-        for (id, chat_id, text) in chunk {
-            pending.push((
-                *id,
-                *chat_id,
-                crate::chat_text::truncate_text(text, max_chars),
-            ));
-        }
-        let texts: Vec<String> = pending.iter().map(|(_, _, text)| text.clone()).collect();
-        let vectors = embed_texts(chat, &texts).await?;
-        if vectors.len() != pending.len() {
-            return Err("embedding count mismatch".into());
-        }
-        let mut normalized = Vec::with_capacity(pending.len());
-        for ((id, chat_id, text), vector) in pending.into_iter().zip(vectors) {
-            let vector = unit_vector(vector).ok_or("empty embedding vector")?;
-            normalized.push((id, chat_id, text, encode_vector(&vector)));
-        }
-        let mut tx = pool.begin().await.map_err(|_| "database".to_string())?;
-        for (id, chat_id, text, bytes) in normalized {
-            sqlx::query(
-                "INSERT INTO chat_embeddings (chat_id, message_id, chunk_text, vector, model, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(chat_id, message_id) DO UPDATE SET \
-                     chunk_text = excluded.chunk_text, \
-                     vector = excluded.vector, \
-                     model = excluded.model, \
-                     created_at = excluded.created_at",
-            )
-            .bind(chat_id)
-            .bind(id)
-            .bind(&text)
-            .bind(&bytes)
-            .bind(&model)
-            .bind(unix_now())
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| "database".to_string())?;
-            indexed += 1;
-        }
-        tx.commit().await.map_err(|_| "database".to_string())?;
-    }
-    Ok(indexed)
+    crate::qdrant_index::sync_chat_points(chat, pool, client).await
 }
 
-/// `(indexed, pending)` counts over unflagged non-empty messages for `model`.
-pub(crate) async fn coverage(pool: &SqlitePool, model: &str) -> Result<(i64, i64), String> {
+/// `(indexed, pending)` counts over unflagged non-empty messages for `model`
+/// relative to the Qdrant cursor stored in `memory_meta`.
+pub(crate) async fn coverage(
+    pool: &SqlitePool,
+    client: Option<&QdrantClient>,
+    model: &str,
+) -> Result<(i64, i64), String> {
+    let cursor = crate::qdrant_index::chat_cursor_id(pool, client, model).await;
     let indexed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM chat_messages m \
-         JOIN chat_embeddings e ON e.message_id = m.id AND e.model = ? \
-         WHERE m.flags = 0",
+        "SELECT COUNT(*) FROM chat_messages \
+         WHERE flags = 0 AND trim(text) <> '' AND id <= ?",
     )
-    .bind(model)
+    .bind(cursor)
     .fetch_one(pool)
     .await
     .map_err(|_| "database".to_string())?;
     let pending: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM chat_messages m \
-         LEFT JOIN chat_embeddings e ON e.message_id = m.id AND e.model = ? \
-         WHERE m.flags = 0 AND trim(m.text) <> '' AND e.message_id IS NULL",
+        "SELECT COUNT(*) FROM chat_messages \
+         WHERE flags = 0 AND trim(text) <> '' AND id > ?",
     )
-    .bind(model)
+    .bind(cursor)
     .fetch_one(pool)
     .await
     .map_err(|_| "database".to_string())?;
     Ok((indexed, pending))
 }
 
-/// Owner maintenance: bounded reindex passes plus a coverage report.
+/// Owner maintenance: bounded reindex passes into Qdrant plus a coverage report.
 pub(crate) async fn reindex(chat: &ChatConfig, pool: &SqlitePool, passes: usize) -> String {
     let model = config().memory.embedding_model.trim().to_owned();
     if model.is_empty() {
         return "поиск по истории выключен: memory.embedding_model пуст".to_string();
     }
-    let mut indexed = 0usize;
-    for _ in 0..passes {
-        match index_pending(chat, pool, config().memory.embedding_batch).await {
-            Ok(0) => break,
-            Ok(count) => indexed += count,
-            Err(reason) => {
+    let Some(client) = QdrantClient::from_config() else {
+        return "векторный индекс выключен: memory.qdrant_url пуст".to_string();
+    };
+    reindex_with(chat, pool, &client, passes).await
+}
+
+pub(crate) async fn reindex_with(
+    chat: &ChatConfig,
+    pool: &SqlitePool,
+    client: &QdrantClient,
+    passes: usize,
+) -> String {
+    let model = config().memory.embedding_model.trim().to_owned();
+    if model.is_empty() {
+        return "поиск по истории выключен: memory.embedding_model пуст".to_string();
+    }
+    let indexed =
+        match crate::qdrant_index::sync_chat_points_passes(chat, pool, client, passes).await {
+            Ok(count) => count,
+            Err((partial, reason)) => {
                 return json!({
                     "note": "индексация остановлена",
-                    "indexed_now": indexed,
+                    "indexed_now": partial,
                     "error": reason,
                     "model": model,
                 })
                 .to_string();
             }
-        }
-    }
-    match coverage(pool, &model).await {
+        };
+    match coverage(pool, Some(client), &model).await {
         Ok((done, pending)) => json!({
             "note": "отчёт по покрытию индекса",
             "indexed_now": indexed,
@@ -332,18 +263,18 @@ pub(crate) async fn reindex(chat: &ChatConfig, pool: &SqlitePool, passes: usize)
     }
 }
 
-/// Background backfill. Idempotent, bounded, and silent when embeddings are
-/// not configured; a failed batch leaves rows pending for the next tick.
+/// Background Qdrant backfill. Idempotent, bounded, and silent when embeddings
+/// or Qdrant are not configured; a failed batch leaves the cursor unchanged for
+/// the next tick.
 pub(crate) async fn chat_indexer(cfg: Arc<Settings>) {
     let mut auth_failed = false;
     loop {
         if let Some(chat) = cfg.chat.as_ref() {
             if enabled() && !auth_failed {
-                for _ in 0..config().memory.embedding_passes {
-                    match index_pending(chat, &cfg.database, config().memory.embedding_batch).await
-                    {
-                        Ok(0) => break,
-                        Ok(_) => {}
+                if let Some(client) = QdrantClient::from_config() {
+                    match index_pending(chat, &cfg.database, &client).await {
+                        Ok(0) => {}
+                        Ok(count) => tracing::debug!(count, "chat vectors indexed in qdrant"),
                         Err(reason) => {
                             if matches!(
                                 reason.as_str(),
@@ -354,24 +285,19 @@ pub(crate) async fn chat_indexer(cfg: Arc<Settings>) {
                             ) {
                                 auth_failed = true;
                             }
-                            tracing::warn!("Chat embedding index failed: {reason}");
-                            break;
+                            tracing::warn!("Qdrant chat index failed: {reason}");
                         }
                     }
-                }
-            }
-            if let Some(client) = crate::qdrant::QdrantClient::from_config() {
-                match crate::qdrant_index::sync_chat_points(&cfg.database, &client).await {
-                    Ok(0) => {}
-                    Ok(count) => tracing::debug!(count, "chat vectors synced to qdrant"),
-                    Err(reason) => tracing::warn!("Qdrant chat sync failed: {reason}"),
-                }
-                if !auth_failed {
-                    match crate::qdrant_index::sync_self_points(chat, &cfg.database, &client).await
-                    {
-                        Ok(0) => {}
-                        Ok(count) => tracing::debug!(count, "self facts synced to qdrant"),
-                        Err(reason) => tracing::warn!("Qdrant self memory sync failed: {reason}"),
+                    if !auth_failed {
+                        match crate::qdrant_index::sync_self_points(chat, &cfg.database, &client)
+                            .await
+                        {
+                            Ok(0) => {}
+                            Ok(count) => tracing::debug!(count, "self facts synced to qdrant"),
+                            Err(reason) => {
+                                tracing::warn!("Qdrant self memory sync failed: {reason}");
+                            }
+                        }
                     }
                 }
             }

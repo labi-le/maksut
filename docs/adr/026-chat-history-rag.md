@@ -20,42 +20,22 @@ premise no longer matches the log size.
 Add a retrieval path over the raw log that never enlarges the always-on context:
 a separate `chat_search` tool the model calls when it needs older messages.
 
-### Storage
+### Storage and local embeddings
 
-`chat_embeddings` holds one row per indexed message:
+Vectors live exclusively in Qdrant (`qdrant/qdrant:v1.20.0`, collection
+`memory.qdrant_collection`, default `maksut_memory`). SQLite holds only the raw
+`chat_messages` log, `chat_summaries`, `bot_self_memory`, and the per-model
+cursor `qdrant_chat_cursor:<model>` in `memory_meta`; `open_database` drops any
+legacy `chat_embeddings` table so SQLite never stores vector blobs.
 
-| Column | Meaning |
-|---|---|
-| `chat_id`, `message_id` | `chat_messages.chat_id` and `chat_messages.id`; primary key |
-| `chunk_text` | message text truncated to `memory.embedding_max_chars` |
-| `vector` | normalized `f32` little-endian blob, so scoring is a dot product |
-| `model` | embedding model that produced the vector |
-| `created_at` | write time |
-
-Vectors are unit-normalized on write. The model travels with every row: rows
-written by another model are treated as foreign, so a model change reindexes
-them instead of comparing incompatible dimensions.
-
-### Embeddings
-
-The call goes through the existing OpenAI-compatible endpoint
-(`POST {llm.base_url}/embeddings`) with `memory.embedding_model`, reusing the
-chat HTTP client, API key, and `config().retry.llm` policy: transport errors and
-`retry.llm.retry_statuses` get exponential backoff inside one deadline, exactly
-like `complete_with`. A provider-supplied `index` orders the result; every
-vector must match `memory.embedding_dim` when it is nonzero. Setting
-`memory.embedding_model = ""` disables embedding and indexing; `chat_index`
-reports it plainly and `chat_search` stays available through the lexical
-fallback, marked `degraded`. The transport lives in `src/chat_embeddings.rs` (`embed_texts`),
-retrieval in `src/chat_search.rs`, so `src/chat_client.rs` stays inside the
-500-line module bound.
-
-Local ONNX inference was the requested first choice. It is not in this change:
-`fastembed`/`ort` would add a dependency (a `Cargo.lock` edit) and the
-onnxruntime shared library plus model weights to the image (a `Dockerfile` and
-`compose.yaml` edit). Both files are outside what an automated worker may touch,
-so the local backend stays a maintainer change on top of the same storage and
-scoring path.
+Embeddings are computed through `POST {embedding_url_or_llm_base}/embeddings`
+(`memory.embedding_url`, env `EMBEDDING_URL`, falling back to `llm.base_url`
+when empty) with `memory.embedding_model` (default
+`intfloat/multilingual-e5-small`, `memory.embedding_dim = 384`). In
+`compose.yaml`, the `embeddings` service runs HuggingFace
+`text-embeddings-inference:cpu-1.8.3` locally on CPU (`1000:1000`,
+`HUGGINGFACE_HUB_CACHE=/data/huggingface`), so vector indexing and semantic
+search never depend on external API keys or quotas.
 
 ### Indexing
 
@@ -107,8 +87,8 @@ still filtered at query time.
   `memory.embedding_max_chars`.
 - Output: `memory.search_chunk_chars` per row, `memory.search_max_chars` total,
   `chat.chat_search_calls_per_reply` (default 3) calls per reply.
-- Work per worker tick: `memory.embedding_passes` batches, plus
-  `memory.qdrant_sync_batches` bounded Qdrant mirror batches.
+- Work per worker tick: `memory.embedding_passes` batches of
+  `memory.embedding_batch` rows upserted directly into Qdrant.
 - Qdrant request: `memory.qdrant_timeout_secs` deadline and
   `memory.qdrant_max_response_bytes` response cap per call; self-fact ranking
   returns at most `memory.self_fact_limit` rows.
@@ -138,13 +118,13 @@ client would add `tonic`/`prost` and a second HTTP stack for the same
 upsert/query/delete operations, so the transport is `src/qdrant.rs` over the
 existing `reqwest` stack.
 
-SQLite stays canonical. `src/qdrant_index.rs` only mirrors it:
+Qdrant is the sole vector store; SQLite holds the canonical text rows:
 
-- Chat points are pushed from the stored `chat_embeddings.vector` blobs, never
-  re-embedded, in `memory.qdrant_sync_batch` (default 128) batches bounded by
-  `memory.qdrant_sync_batches` (default 4) per `chat_indexer` tick. A
-  per-model cursor in `memory_meta` makes the sweep resumable and idempotent;
-  a restart continues instead of rescanning the log.
+- `sync_chat_points` selects unflagged `chat_messages` rows (`m.id > cursor_id`)
+  in `memory.embedding_batch` (default 32) batches for up to
+  `memory.embedding_passes` (default 3) passes per `chat_indexer` tick, embeds
+  them, upserts the points into Qdrant, and advances `qdrant_chat_cursor:<model>`
+  in `memory_meta` only after Qdrant acknowledges the write.
 - A code fact (`source_url` non-empty) is embedded and upserted when
   `remember_self` writes it; a failed write is logged and repaired by the same
   tick's backfill. The backfill scrolls `kind = "self"` once and re-embeds a
