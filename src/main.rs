@@ -91,6 +91,9 @@ mod memory;
 pub(crate) use memory::*;
 mod chat_embeddings;
 mod chat_search;
+mod chat_search_query;
+mod qdrant;
+mod qdrant_index;
 mod usage;
 pub(crate) use usage::*;
 mod code_inspect;
@@ -368,6 +371,8 @@ mod media_test;
 mod memory_test;
 #[cfg(test)]
 mod process_test;
+#[cfg(test)]
+mod qdrant_test;
 #[cfg(test)]
 mod read_url_test;
 #[cfg(test)]

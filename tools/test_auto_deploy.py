@@ -166,6 +166,7 @@ class AutoDeployTests(unittest.TestCase):
             ups = fake.named(["docker", "compose"])
             self.assertEqual(len(ups), 1)
             self.assertIn("--no-build", ups[0])
+            self.assertIn("qdrant", ups[0])
             self.assertTrue(ups[0][3].endswith(module.COMPOSE_OVERRIDE))
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], "b" * 40)

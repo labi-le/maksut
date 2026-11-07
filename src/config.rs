@@ -122,6 +122,9 @@ impl Config {
         if let Some(value) = env_value("LLM_SEARCH_URL") {
             self.search.url = Some(value);
         }
+        if let Some(value) = env_value("QDRANT_URL") {
+            self.memory.qdrant_url = value;
+        }
         if let Some(value) = env_value("SEARCH_PROVIDER") {
             self.search.provider = SearchProvider::from_name(&value).ok_or_else(|| {
                 format!(

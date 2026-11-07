@@ -333,6 +333,7 @@ pub(crate) async fn run_tool_call(
                 } else {
                     state.remember_calls += 1;
                     match crate::code_inspect::record_self_fact(
+                        ctx.chat,
                         ctx.pool,
                         &ctx.chat.code_dir,
                         topic,

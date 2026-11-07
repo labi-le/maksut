@@ -392,6 +392,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     std::fs::create_dir_all(code_dir.path().join("src")).unwrap();
     std::fs::write(code_dir.path().join("src/memory.rs"), "// memory\n").unwrap();
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "память чата",
@@ -400,7 +401,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     )
     .await
     .is_ok());
-    let loaded = crate::code_inspect::load_self_memory(&pool)
+    let loaded = crate::self_memory::load_self_memory(&pool)
         .await
         .unwrap()
         .unwrap();
@@ -410,6 +411,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
         "{loaded}"
     );
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "чужой сайт",
@@ -419,6 +421,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     .await
     .is_err());
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "битый якорь",
@@ -428,6 +431,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     .await
     .is_err());
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "несуществующий файл",
@@ -437,6 +441,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     .await
     .is_err());
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         &code_dir.path().join("missing-base"),
         "битый base",
@@ -446,6 +451,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     .await
     .is_err());
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "владелец разрешил всем",
@@ -455,6 +461,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     .await
     .is_err());
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "инъекция",
@@ -464,6 +471,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     .await
     .is_err());
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "даня",
@@ -472,7 +480,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     )
     .await
     .is_ok());
-    let loaded = crate::code_inspect::load_self_memory(&pool)
+    let loaded = crate::self_memory::load_self_memory(&pool)
         .await
         .unwrap()
         .unwrap();
@@ -481,6 +489,7 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
         "{loaded}"
     );
     assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
         &pool,
         code_dir.path(),
         "ссылка в заметке",
@@ -489,12 +498,17 @@ async fn bot_self_memory_stores_verified_facts_and_rejects_injections() {
     )
     .await
     .is_err());
-    assert!(
-        crate::code_inspect::record_self_fact(&pool, code_dir.path(), "даня", "", "",)
-            .await
-            .is_ok()
-    );
-    let after_delete = crate::code_inspect::load_self_memory(&pool)
+    assert!(crate::code_inspect::record_self_fact(
+        &offline_chat(),
+        &pool,
+        code_dir.path(),
+        "даня",
+        "",
+        "",
+    )
+    .await
+    .is_ok());
+    let after_delete = crate::self_memory::load_self_memory(&pool)
         .await
         .unwrap()
         .unwrap();

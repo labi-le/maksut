@@ -27,6 +27,7 @@ BRANCH = os.environ.get("AUTO_DEPLOY_BRANCH", "main")
 IMAGE_REPO = os.environ.get("AUTO_DEPLOY_IMAGE_REPO", "ghcr.io/labi-le/maxwell")
 COMPOSE_FILE = os.environ.get("AUTO_DEPLOY_COMPOSE_FILE", "compose.yaml")
 SERVICE = os.environ.get("AUTO_DEPLOY_SERVICE", "maksut")
+QDRANT_SERVICE = os.environ.get("AUTO_DEPLOY_QDRANT_SERVICE", "qdrant")
 GIT_TIMEOUT = 60
 PULL_TIMEOUT = 300
 UP_TIMEOUT = 120
@@ -284,6 +285,7 @@ def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path)
                 "-d",
                 "--no-build",
                 SERVICE,
+                QDRANT_SERVICE,
             ],
             timeout=UP_TIMEOUT,
             cwd=repo,

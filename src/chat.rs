@@ -176,7 +176,7 @@ pub(crate) async fn chat_reply_with_proposal(
     if is_repeated_user_spam(turn.owner, turn.user_id.0 as i64, prompt, &recent) {
         return Ok(ChatReply::default());
     }
-    let self_memory = crate::code_inspect::load_self_memory(pool)
+    let self_memory = crate::code_inspect::load_self_memory_for(chat, pool, prompt)
         .await
         .ok()
         .flatten();

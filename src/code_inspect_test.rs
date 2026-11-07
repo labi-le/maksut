@@ -93,6 +93,7 @@ async fn inspect_supports_directory_paths_and_delete_self_fact_matches_fuzzy_top
     .await
     .unwrap();
     crate::code_inspect::record_self_fact(
+        &crate::test_support::offline_chat(),
         &pool,
         dir.path(),
         "обращение к денису",
@@ -101,10 +102,17 @@ async fn inspect_supports_directory_paths_and_delete_self_fact_matches_fuzzy_top
     )
     .await
     .unwrap();
-    crate::code_inspect::record_self_fact(&pool, dir.path(), "денис", "", "")
-        .await
-        .unwrap();
-    let loaded = crate::code_inspect::load_self_memory(&pool).await.unwrap();
+    crate::code_inspect::record_self_fact(
+        &crate::test_support::offline_chat(),
+        &pool,
+        dir.path(),
+        "денис",
+        "",
+        "",
+    )
+    .await
+    .unwrap();
+    let loaded = crate::self_memory::load_self_memory(&pool).await.unwrap();
     assert!(loaded.is_none(), "{loaded:?}");
 }
 

@@ -201,7 +201,7 @@ compact_message_chars = 500
 compact_passes = 3
 compact_interval_secs = 600
 load_limit = 2000
-# Empty model disables chat history search entirely.
+# Empty model disables embeddings; chat_search falls back to lexical matching.
 embedding_model = "text-embedding-3-small"
 embedding_dim = 1536
 embedding_batch = 32
@@ -215,6 +215,14 @@ search_min_score = 0.25
 search_chunk_chars = 400
 search_max_chars = 4000
 search_recent_messages = 5
+# Empty URL keeps vectors in SQLite only; the compose `qdrant` service sets it.
+qdrant_url = ""
+qdrant_collection = "maksut_memory"
+qdrant_timeout_secs = 5
+qdrant_max_response_bytes = 1048576
+qdrant_sync_batch = 128
+qdrant_sync_batches = 4
+self_fact_limit = 10
 
 [media_cache]
 ttl_seconds = 86400
