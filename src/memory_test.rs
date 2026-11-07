@@ -624,20 +624,10 @@ fn snapcompact_renders_frames_edges_and_valid_png_chunks() {
         expected_len,
         "inflated 1-bit scanlines + Adler-32 must match exact frame dimensions"
     );
-    let multimodal = crate::snapcompact::render_parsed_message(&archive, true).unwrap();
-    let arr = multimodal.as_array().unwrap();
-    assert!(arr[0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("imaged middle below"));
-    assert!(arr[1]["image_url"]["url"]
-        .as_str()
-        .unwrap()
-        .starts_with("data:image/png;base64,iVBORw0KGgo"));
-    assert!(arr.last().unwrap()["text"]
-        .as_str()
-        .unwrap()
-        .contains("imaged middle above"));
+    let text_block = crate::snapcompact::render_parsed_text_block(&archive).unwrap();
+    assert!(text_block.contains("Вадик [300]: сообщение номер 1 про кириллицу"));
+    assert!(text_block.contains("Вадик [300]: сообщение номер 250 про кириллицу"));
+    assert!(text_block.ends_with("</memory>"));
 }
 
 fn test_base64_decode(s: &str) -> Vec<u8> {

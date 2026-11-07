@@ -118,7 +118,7 @@ async fn inspect_supports_directory_paths_and_delete_self_fact_matches_fuzzy_top
 
 #[test]
 fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_formats_docs() {
-    let raw = "- [owner] вадик: С Вадиком общаться только «сладкий»\n- [owner] стиль в чате: Стиль короткий\n- [owner] даня: Даню (@newmdoupdate) материть";
+    let raw = "- [owner] вадик: С Вадиком общаться только «сладкий»\n- [owner] правило: С Вадиком общаться только «сладкий»\n- [owner] стиль в чате: Стиль короткий\n- [owner] даня: Даню (@newmdoupdate) материть";
     let denis_directives = crate::code_inspect::speaker_owner_directives(
         raw,
         "Денис (@crudoshlepa)",
@@ -128,7 +128,7 @@ fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_for
     );
     assert!(
         !denis_directives.contains("сладкий"),
-        "Vadik's handleless directive must not be injected on Denis's turn: {denis_directives}"
+        "Vadik's handleless directive (even under generic topic) must not be injected on Denis's turn: {denis_directives}"
     );
     assert!(
         denis_directives.contains("Стиль короткий"),

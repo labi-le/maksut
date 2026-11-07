@@ -150,6 +150,8 @@ fn followup_questions_and_requests_reply() {
     assert_eq!(decide_rules(&followup("изучай ебать")), Decision::Reply);
     assert_eq!(decide_rules(&followup("а другой любимый")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("понял тебя")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("принял")), Decision::Silent);
 }
 
 #[test]

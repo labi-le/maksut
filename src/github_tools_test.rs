@@ -456,3 +456,76 @@ async fn rejected_comment_does_not_spend_the_per_reply_budget() {
         assert_eq!(state.github_comment_calls, 0);
     }
 }
+
+#[tokio::test]
+async fn search_commits_lists_and_filters_recent_commits() {
+    let response = json!([
+        {
+            "sha": "b01fc761e38b0f0713112948261d061b5ab502d4",
+            "html_url": "https://github.com/labi-le/maxwell/commit/b01fc76",
+            "author": {"login": "crudoshlepa"},
+            "commit": {
+                "message": "chat: store vectors only in qdrant and add local embeddings service\n\ndetailed body",
+                "author": {"name": "Denis", "date": "2026-11-07T06:14:00Z"}
+            }
+        },
+        {
+            "sha": "67fefcc111111111111111111111111111111111",
+            "html_url": "https://github.com/labi-le/maxwell/commit/67fefcc",
+            "author": {"login": "crudoshlepa"},
+            "commit": {
+                "message": "deploy: run qdrant as 1000:1000 and check src mount and status",
+                "author": {"name": "Denis", "date": "2026-11-07T05:00:00Z"}
+            }
+        }
+    ])
+    .to_string();
+    let llm = mock_server(vec![response.clone(), response]).await;
+    let cfg = settings(llm.url.as_str());
+    let all_text = crate::github_tools::search(
+        &cfg,
+        None,
+        "",
+        crate::github_tools::SearchFilters {
+            state: "all",
+            label: "",
+            kind: "commit",
+            limit: 5,
+        },
+    )
+    .await;
+    assert!(
+        all_text.contains("b01fc76 (2026-11-07T06:14:00Z) chat: store vectors only in qdrant"),
+        "{all_text}"
+    );
+    assert!(
+        all_text.contains("67fefcc (2026-11-07T05:00:00Z) deploy: run qdrant as 1000:1000"),
+        "{all_text}"
+    );
+    let filtered = crate::github_tools::search(
+        &cfg,
+        None,
+        "vectors",
+        crate::github_tools::SearchFilters {
+            state: "all",
+            label: "",
+            kind: "commit",
+            limit: 5,
+        },
+    )
+    .await;
+    assert!(filtered.contains("b01fc76"), "{filtered}");
+    assert!(!filtered.contains("67fefcc"), "{filtered}");
+    let requests = llm.requests.lock().unwrap();
+    assert!(
+        requests[0].starts_with("GET /repos/labi-le/maxwell/commits?per_page=5 "),
+        "{}",
+        requests[0]
+    );
+    assert!(
+        requests[1].starts_with("GET /repos/labi-le/maxwell/commits?per_page=30 "),
+        "{}",
+        requests[1]
+    );
+    llm.task.abort();
+}

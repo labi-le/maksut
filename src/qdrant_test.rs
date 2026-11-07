@@ -630,3 +630,74 @@ async fn sync_resets_cursor_when_qdrant_collection_is_empty() {
     embed.task.abort();
     qdrant.task.abort();
 }
+
+#[tokio::test]
+async fn chat_search_qdrant_expands_user_hit_with_adjacent_assistant_reply() {
+    let (_dir, pool) = test_pool().await;
+    recorded(&pool, 1, 10, "денис", "какой я пылесос выбрал").await;
+    crate::memory::record_message(
+        &pool,
+        RecordMessage::new(
+            ChatId(1),
+            10,
+            "максут",
+            "assistant",
+            "Qrevo Edge 3 Pro: волосы не мотает вообще",
+        ),
+    )
+    .await
+    .unwrap();
+    let user_msg_id: i64 =
+        sqlx::query_scalar("SELECT id FROM chat_messages WHERE role = 'user' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let created_at: i64 = sqlx::query_scalar("SELECT created_at FROM chat_messages WHERE id = ?")
+        .bind(user_msg_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let embed = mock_server(vec![embeddings_body(&[axis(0)])]).await;
+    let chat = chat_config(&embed.url);
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![json!({
+                "result": {"points": [{
+                    "id": 1,
+                    "score": 0.88,
+                    "payload": {
+                        "message_id": user_msg_id,
+                        "author_id": 10,
+                        "author_name": "денис",
+                        "created_at": created_at,
+                        "text": "какой я пылесос выбрал",
+                    },
+                }]},
+            })
+            .to_string()],
+        ]
+        .concat(),
+    )
+    .await;
+    let request = parse_search_request(&json!({"query": "пылесос"})).unwrap();
+    let output = search_with(&chat, &pool, ChatId(1), 0, &request, Some(&client(&qdrant)))
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_str(&output).unwrap();
+    let texts: Vec<&str> = value["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            "какой я пылесос выбрал",
+            "Qrevo Edge 3 Pro: волосы не мотает вообще"
+        ]
+    );
+    embed.task.abort();
+    qdrant.task.abort();
+}

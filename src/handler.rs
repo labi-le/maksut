@@ -135,7 +135,10 @@ pub(crate) async fn handle_message(
         text
     };
     let mut flags = crate::memory_guard::detect_flags(raw_log_text);
-    if flags & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET) != 0 {
+    if doc.text.is_some()
+        && (flags & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET) != 0)
+        && (!owner || (flags & crate::memory::FLAG_SECRET != 0))
+    {
         crate::chat_doc::clear_recent_doc(message.chat.id).await;
     }
     if text.trim().is_empty() && (current_media.is_some() || reply_media.is_some() || has_sticker) {

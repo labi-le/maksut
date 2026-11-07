@@ -2952,10 +2952,9 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     ))
     .await
     .unwrap();
-    let llm = mock_server(vec![tool_response(
-        "send_sticker",
-        serde_json::json!({"query": "девушка"}),
-    )])
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"<tool_call>{\"name\": \"send_sticker\", \"arguments\": {\"query\": \"девушка\"}}</tool_call>","tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_sticker","arguments":"{\"query\":\"девушка\"}"}}]}}]}"#.to_owned(),
+    ])
     .await;
     let config = ChatConfig::new(
         llm.url.clone(),

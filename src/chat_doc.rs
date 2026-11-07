@@ -61,6 +61,7 @@ pub(crate) struct DocCandidate {
     pub(crate) file_id: FileId,
     pub(crate) name: String,
     pub(crate) from_reply: bool,
+    pub(crate) author_id: Option<UserId>,
     pub(crate) author: Option<String>,
 }
 
@@ -97,16 +98,20 @@ pub(crate) async fn clear_recent_doc(chat_id: ChatId) {
     RECENT_DOCS.lock().await.remove(&chat_id);
 }
 
-async fn take_recent_doc(chat_id: ChatId) -> Option<DocCandidate> {
+async fn take_recent_doc(chat_id: ChatId, sender_id: Option<UserId>) -> Option<DocCandidate> {
     let mut guard = RECENT_DOCS.lock().await;
     let now = time::Instant::now();
-    match guard.remove(&chat_id) {
-        Some((at, mut cand)) if now.duration_since(at) < Duration::from_secs(300) => {
-            cand.from_reply = true;
-            Some(cand)
+    match guard.get(&chat_id) {
+        Some((at, _)) if now.duration_since(*at) >= Duration::from_secs(300) => {
+            guard.remove(&chat_id);
+            return None;
         }
-        _ => None,
+        Some((_, cand)) if cand.author_id.is_some() && cand.author_id != sender_id => {
+            return None;
+        }
+        _ => {}
     }
+    guard.remove(&chat_id).map(|(_, cand)| cand)
 }
 
 /// Checks whether `doc` is a text/code/log/CSV document within `DOC_MAX_BYTES`.
@@ -162,6 +167,7 @@ pub(crate) fn candidate(message: &Message, reply_ignored: bool) -> Option<DocCan
             file_id: doc.file.id.clone(),
             name,
             from_reply: false,
+            author_id: message.from.as_ref().map(|u| u.id),
             author: None,
         });
     }
@@ -179,6 +185,7 @@ pub(crate) fn candidate(message: &Message, reply_ignored: bool) -> Option<DocCan
         file_id: doc.file.id.clone(),
         name,
         from_reply: true,
+        author_id: reply.from.as_ref().map(|u| u.id),
         author,
     })
 }
@@ -267,6 +274,12 @@ pub(crate) async fn turn(
                     .as_ref()
                     .map(crate::chat_style::display_author_name);
                 note_recent_doc(message.chat.id, &cand).await;
+                if typed.trim().is_empty() {
+                    return DocTurn {
+                        text: None,
+                        quoted: false,
+                    };
+                }
             } else {
                 return DocTurn {
                     text: None,
@@ -300,10 +313,16 @@ pub(crate) async fn turn(
             };
         }
     }
+    let sender_id = message.from.as_ref().map(|u| u.id);
     let cand = match direct_cand {
-        Some(cand) => cand,
+        Some(cand) => {
+            if !cand.from_reply && !message.chat.is_private() {
+                let _ = take_recent_doc(message.chat.id, sender_id).await;
+            }
+            cand
+        }
         None if !reply_ignored && !typed.trim().is_empty() => {
-            let Some(cand) = take_recent_doc(message.chat.id).await else {
+            let Some(cand) = take_recent_doc(message.chat.id, sender_id).await else {
                 return DocTurn {
                     text: None,
                     quoted: false,

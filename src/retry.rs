@@ -58,10 +58,10 @@ impl RetryPolicy {
 impl RetryPolicy {
     pub(crate) fn llm() -> Self {
         Self {
-            attempts: 2,
-            base_backoff_ms: 200,
-            max_backoff_ms: 2000,
-            retry_statuses: vec![408, 500, 502, 503, 504],
+            attempts: 3,
+            base_backoff_ms: 400,
+            max_backoff_ms: 2500,
+            retry_statuses: vec![408, 429, 500, 502, 503, 504],
             retry_transport: true,
         }
     }

@@ -398,11 +398,34 @@ impl StickerCatalog {
         if entries.is_empty() {
             return None;
         }
+        static RECENT_PICKS: std::sync::LazyLock<
+            std::sync::Mutex<std::collections::VecDeque<String>>,
+        > = std::sync::LazyLock::new(|| {
+            std::sync::Mutex::new(std::collections::VecDeque::with_capacity(24))
+        });
+        let mut pool: Vec<&StickerEntry> = if let Ok(recent) = RECENT_PICKS.lock() {
+            entries
+                .iter()
+                .copied()
+                .filter(|e| !recent.iter().any(|r| r == &e.file_id.0))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if pool.is_empty() {
+            pool = entries.to_vec();
+        }
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         unix_nanos().hash(&mut hasher);
-        let index = (hasher.finish() as usize) % entries.len();
-        entries.get(index).map(|entry| entry.file_id.clone())
+        let chosen = pool.get((hasher.finish() as usize) % pool.len())?;
+        if let Ok(mut recent) = RECENT_PICKS.lock() {
+            if recent.len() >= 24 {
+                recent.pop_front();
+            }
+            recent.push_back(chosen.file_id.0.clone());
+        }
+        Some(chosen.file_id.clone())
     }
 }
 

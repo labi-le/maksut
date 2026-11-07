@@ -276,10 +276,10 @@ output_price_per_m = 1.10
 # attempts counts the first try: 1 disables retries. Backoff grows as
 # base_backoff_ms * 2^(attempt-1), capped at max_backoff_ms.
 [retry.llm]
-attempts = 2
-base_backoff_ms = 200
-max_backoff_ms = 2000
-retry_statuses = [408, 500, 502, 503, 504]
+attempts = 3
+base_backoff_ms = 400
+max_backoff_ms = 2500
+retry_statuses = [408, 429, 500, 502, 503, 504]
 retry_transport = true
 
 [retry.read_url]

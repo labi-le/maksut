@@ -311,6 +311,40 @@ async fn qdrant_hits(
     let ids: Vec<i64> = rows.iter().map(|row| row.1).collect();
     let allowed = allowed_message_ids(pool, chat_id, current_message_id, request, &ids).await;
     rows.retain(|row| allowed.contains(&row.1));
+    if request.author_id.is_none() && !rows.is_empty() {
+        let parents: Vec<(i64, f32, i64)> = rows
+            .iter()
+            .filter(|row| row.2 != 0)
+            .take(request.limit)
+            .map(|row| (row.1, (row.0 - 0.01).max(min_score), row.4))
+            .collect();
+        let current = i64::from(current_message_id);
+        for (parent_id, score, parent_at) in parents {
+            let next: Option<(i64, String, String, i64, i64, String)> = sqlx::query_as(
+                "SELECT id, role, author_name, flags, created_at, text \
+                 FROM chat_messages \
+                 WHERE chat_id = ? AND id > ? \
+                   AND (? = 0 OR message_id IS NULL OR message_id <> ?) \
+                 ORDER BY id ASC LIMIT 1",
+            )
+            .bind(chat_id.0)
+            .bind(parent_id)
+            .bind(current)
+            .bind(current)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            if let Some((nid, role, name, flags, created_at, text)) = next {
+                if role == "assistant"
+                    && flags == 0
+                    && !text.trim().is_empty()
+                    && (created_at - parent_at).abs() <= 120
+                {
+                    rows.push((score, nid, 0, name, created_at, text));
+                }
+            }
+        }
+    }
     Ok(rows)
 }
 

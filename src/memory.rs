@@ -231,7 +231,7 @@ pub(crate) async fn load_memory(
             .fetch_optional(pool)
             .await?;
     let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT CASE WHEN role = 'assistant' THEN 0 ELSE author_id END, author_name, role, text FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
+        "SELECT CASE WHEN role = 'assistant' THEN 0 ELSE author_id END, author_name, role, text FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND text NOT LIKE '%<tool_call>%' AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
     )
     .bind(chat_id.0)
     .bind(i64::from(current_id))

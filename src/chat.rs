@@ -227,23 +227,15 @@ pub(crate) async fn chat_reply_with_proposal(
     let parsed_snap = summary
         .as_deref()
         .and_then(crate::snapcompact::parse_stored_archive);
-    let snap_text = parsed_snap
+    if let Some(b) = parsed_snap
         .as_ref()
-        .and_then(crate::snapcompact::render_parsed_text_block);
-    let snap_parts = parsed_snap
-        .as_ref()
-        .and_then(|a| crate::snapcompact::render_parsed_message(a, true))
-        .filter(Value::is_array);
-    if let (None, Some(b)) = (&snap_parts, &snap_text) {
+        .and_then(crate::snapcompact::render_parsed_text_block)
+    {
         memory_text.push_str(&format!("{b}\n\n"));
     }
-    if !memory_text.is_empty() || !recent.is_empty() || snap_parts.is_some() {
+    if !memory_text.is_empty() || !recent.is_empty() {
         memory_text.push_str(MEMORY_FOOTER_PROMPT);
         messages.push(json!({"role": "system", "content": memory_text}));
-    }
-    let snap_msg_idx = snap_parts.as_ref().map(|_| messages.len());
-    if let Some(parts) = snap_parts {
-        messages.push(json!({"role": "user", "content": parts}));
     }
     let oid = proposal
         .map(|p| p.owner_id.0 as i64)
@@ -335,7 +327,7 @@ pub(crate) async fn chat_reply_with_proposal(
             .research_mode(state.research.used)
             .allow_sticker(state.allow_sticker)
             .allow_feature(state.allow_feature);
-        if turn.image.is_some() || snap_msg_idx.is_some() {
+        if turn.image.is_some() {
             request = request.without_reasoning();
         }
         let force_synthesis = max_rounds > 1 && round + 1 == max_rounds;
@@ -430,11 +422,6 @@ pub(crate) async fn chat_reply_with_proposal(
                 proposed_feature: state.proposed_feature,
             });
         }
-        if let (Some(i), Some(t)) = (snap_msg_idx, snap_text.as_deref()) {
-            if let Some(m) = messages.get_mut(i) {
-                m["content"] = json!(t);
-            }
-        }
         if let Some(m) = messages
             .get_mut(user_msg_idx)
             .filter(|m| m["content"].is_array())
@@ -458,10 +445,11 @@ pub(crate) async fn chat_reply_with_proposal(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .trim();
-            let text = if raw.is_empty() || is_pass_reply(raw) {
+            let (cleaned, _) = crate::chat_urls::strip_raw_tool_call_tags(raw);
+            let text = if cleaned.is_empty() || is_pass_reply(&cleaned) {
                 String::new()
             } else {
-                style_chat_reply(raw)
+                style_chat_reply(&cleaned)
             };
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;

@@ -292,6 +292,21 @@ pub(crate) async fn search(
     }
     let query = query.trim();
     let label = filters.label.trim();
+    let limit = filters.limit.clamp(1, 10);
+    if matches!(filters.kind, "commit" | "commits") {
+        let per_page = if query.is_empty() || query == "*" {
+            limit
+        } else {
+            30
+        };
+        let path = format!("/repos/{}/commits", settings.repo);
+        let params = [("per_page", per_page.to_string())];
+        let value = match fetch(settings, token, reqwest::Method::GET, &path, &params, None).await {
+            Ok(value) => value,
+            Err(reason) => return reason,
+        };
+        return crate::github_render::commits(&value, query, limit, &settings.repo);
+    }
     let mut qualified = if query.is_empty() || query == "*" {
         format!("repo:{}", settings.repo)
     } else {
@@ -309,7 +324,6 @@ pub(crate) async fn search(
         "pr" => qualified.push_str(" is:pr"),
         _ => {}
     }
-    let limit = filters.limit.clamp(1, 10);
     let query = [
         ("q", qualified),
         ("per_page", limit.to_string()),

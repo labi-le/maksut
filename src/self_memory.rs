@@ -332,7 +332,7 @@ fn speaker_name_stems(sender_name: &str, owner: bool) -> Vec<String> {
 }
 
 const KNOWN_PARTICIPANT_STEMS: &[&str] = &[
-    "дени", "вади", "даня", "дани", "ваня", "вани", "влад", "кири", "андр", "олег",
+    "дени", "вади", "даня", "дани", "ваня", "вани", "влад", "кири", "андр", "олег", "венд", "игор",
 ];
 
 fn directive_topic(line: &str) -> Option<&str> {
@@ -345,12 +345,24 @@ fn topic_names_other_participant(line: &str, speaker_stems: &[String]) -> bool {
     let Some(topic) = directive_topic(line) else {
         return false;
     };
-    topic
+    let topic_hit = topic
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.chars().count() >= 4)
         .any(|w| {
             let lower = w.to_lowercase();
             KNOWN_PARTICIPANT_STEMS.iter().any(|p| lower.starts_with(p))
+                && !speaker_stems.iter().any(|s| lower.starts_with(s))
+        });
+    if topic_hit {
+        return true;
+    }
+    line.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 4)
+        .any(|w| {
+            let lower = w.to_lowercase();
+            KNOWN_PARTICIPANT_STEMS
+                .iter()
+                .any(|p| *p != "дени" && lower.starts_with(p))
                 && !speaker_stems.iter().any(|s| lower.starts_with(s))
         })
 }

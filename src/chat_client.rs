@@ -296,9 +296,8 @@ impl ChatConfig {
         let policy = &config().retry.llm;
         let max_bytes = config().llm.max_response_bytes;
         let policy_attempts = policy.attempts;
-        let deadline = time::Instant::now()
-            + Duration::from_secs(config().llm.request_timeout_secs)
-                .saturating_mul(policy_attempts);
+        let per_attempt = Duration::from_secs(config().llm.request_timeout_secs);
+        let deadline = time::Instant::now() + per_attempt.saturating_mul(policy_attempts);
         let payload = body.to_string();
         llm_request_built(request.messages.len(), payload.len(), request.temperature);
         let mut attempt = 0u32;
@@ -308,13 +307,14 @@ impl ChatConfig {
             if remaining.is_zero() {
                 return Err(CompleteError::Timeout);
             }
+            let attempt_timeout = remaining.min(per_attempt);
             let request = self
                 .http
                 .post(endpoint.clone())
                 .bearer_auth(&self.api_key)
                 .header("content-type", "application/json")
                 .body(payload.clone());
-            let response = match time::timeout(remaining, request.send()).await {
+            let response = match time::timeout(attempt_timeout, request.send()).await {
                 Ok(Ok(response)) => response,
                 Ok(Err(err)) => {
                     tracing::warn!(attempt = attempt + 1, error = %err, "LLM transport error");
@@ -363,7 +363,7 @@ impl ChatConfig {
             if remaining.is_zero() {
                 return Err(CompleteError::Timeout);
             }
-            let bytes = match time::timeout(remaining, response.bytes()).await {
+            let bytes = match time::timeout(remaining.min(per_attempt), response.bytes()).await {
                 Ok(Ok(bytes)) => bytes,
                 Ok(Err(_)) | Err(_) => {
                     if policy.retry_transport && policy.should_retry(attempt) {
