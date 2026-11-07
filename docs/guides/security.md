@@ -5,7 +5,7 @@
 ## Read-only and forbidden paths
 
 - `docs/communication-guide.md` is **read-only**. It is compiled into `maksut` via `include_str!("../docs/communication-guide.md")` in `src/prompts.rs` (`COMMUNICATION_GUIDE`). Never edit, reformat, or regenerate it; change bot behavior in code, `src/prompts/*.md`, tool descriptions, `README.md`, or `docs/`.
-- Self-improve forbidden paths (`docs/communication-guide.md`, `AGENTS.md`, `Dockerfile`, `compose.yaml`, `Cargo.lock`, `shell.nix`, `.github/`, `.env`, `.secrets/`, `cookie_refresh/`, `cookie-refresh/`, `packaging/`, `self-improve/`, `self_improve/`, `tools/self_improve_orchestrator.py`, `tools/self_improve_deploy.py`, `tools/auto_deploy.py`, `tools/pr_review.py`, `tools/omp_worker.py`, and `target/`) stay untouched by any automated worker tasks (policy for `tools/omp_worker.py` / future worker runs; live intake only creates GitHub issues via `tools/self_improve_orchestrator.py`).
+- `tools/omp_worker.py` sandbox forbidden paths (`docs/communication-guide.md`, `AGENTS.md`, `Dockerfile`, `compose.yaml`, `Cargo.lock`, `shell.nix`, `.github/`, `.env`, `.secrets/`, `cookie_refresh/`, `cookie-refresh/`, `packaging/`, `self-improve/`, `self_improve/`, `tools/self_improve_orchestrator.py`, `tools/self_improve_deploy.py`, `tools/auto_deploy.py`, `tools/pr_review.py`, `tools/omp_worker.py`, and `target/`) apply only to the legacy standalone `tools/omp_worker.py` sandbox helper; normal repository pull requests (including `farm/*` / `@int8-ptr` PRs) may edit `compose.yaml`, `Dockerfile`, `Cargo.lock`, `tools/auto_deploy.py`, `AGENTS.md`, and `docs/guides/*` when the issue requires it (`docs/communication-guide.md`, `.env`, and `.secrets/` remain untouchable).
 
 ## Untrusted URLs and SSRF gates
 
