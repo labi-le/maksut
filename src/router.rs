@@ -140,6 +140,9 @@ impl Router {
             return Decision::Silent;
         }
         let rules = decide_rules(input);
+        if !addressed && input.followup && addresses_other_participant(text) {
+            return Decision::Wait;
+        }
         if !addressed && input.followup && rules == Decision::Reply {
             return Decision::Reply;
         }
@@ -196,6 +199,9 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
     let text = input.text.trim();
     if text.is_empty() {
         return Decision::Silent;
+    }
+    if addresses_other_participant(text) {
+        return Decision::Wait;
     }
     if expects_answer(text) {
         return Decision::Reply;
@@ -304,6 +310,56 @@ fn lower_has_action_verb(text: &str) -> bool {
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .any(|w| REQUEST_STEMS.iter().any(|stem| w.starts_with(stem)))
+}
+
+const OTHER_PARTICIPANT_VOCATIVES: &[&str] = &[
+    "денис",
+    "дениска",
+    "вадик",
+    "даня",
+    "дань",
+    "ваня",
+    "вань",
+    "ваньок",
+    "ванёк",
+    "влад",
+    "владулик",
+    "владик",
+    "влудик",
+    "кирилл",
+    "кирюх",
+    "андрей",
+    "андрюх",
+    "андрюха",
+    "анрюх",
+    "олег",
+    "олежа",
+    "иван",
+];
+
+fn addresses_other_participant(text: &str) -> bool {
+    if text
+        .split_whitespace()
+        .any(|w| w.starts_with('@') && w.len() > 2)
+    {
+        return true;
+    }
+    let words: Vec<String> = text
+        .to_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let Some(first) = words.first() else {
+        return false;
+    };
+    if OTHER_PARTICIPANT_VOCATIVES.contains(&first.as_str()) {
+        return true;
+    }
+    words.len() >= 2
+        && words
+            .last()
+            .is_some_and(|last| OTHER_PARTICIPANT_VOCATIVES.contains(&last.as_str()))
 }
 
 /// Followup turns answer only when they look like a real request; a plain

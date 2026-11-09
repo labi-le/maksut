@@ -419,6 +419,40 @@ pub(crate) fn filter_self_memory(
         .join("\n")
 }
 
+pub(crate) fn filter_self_memory_for_prompt(
+    self_memory: &str,
+    sender_name: &str,
+    username: Option<&str>,
+    owner: bool,
+    prompt: &str,
+) -> String {
+    if !owner {
+        return filter_self_memory(self_memory, sender_name, username, false);
+    }
+    let p_lower = prompt.to_lowercase();
+    if ["памят", "правил", "запомн", "установк", "обща", "называ"]
+        .iter()
+        .any(|k| p_lower.contains(k))
+    {
+        return self_memory.to_owned();
+    }
+    let handles = speaker_handles(sender_name, username);
+    let mut stems = speaker_name_stems(sender_name, true);
+    for w in p_lower.split(|c: char| !c.is_alphanumeric()) {
+        if w.chars().count() >= 4 && KNOWN_PARTICIPANT_STEMS.iter().any(|p| w.starts_with(p)) {
+            let stem: String = w.chars().take(4).collect();
+            if !stems.contains(&stem) {
+                stems.push(stem);
+            }
+        }
+    }
+    self_memory
+        .lines()
+        .filter(|l| !l.starts_with("- [owner]") || line_matches_speaker(l, &handles, &stems))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Retains `- [owner]` directives that are general or whose `@handle` or topic
 /// name matches the current speaker.
 pub(crate) fn speaker_owner_directives(

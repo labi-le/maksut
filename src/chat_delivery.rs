@@ -111,11 +111,11 @@ pub(crate) async fn send_turn_error_reply(
     }
     let msg = match (message.chat.is_private(), reason.strip_prefix("http_")) {
         (true, _) => "Не получилось ответить, попробуй ещё раз.".to_owned(),
-        (false, Some(code)) => format!("лпмка вернула ошибку {code}, повтори ещё раз"),
+        (false, Some(code)) => format!("ллмка вернула ошибку {code}, повтори ещё раз"),
         (false, None) if reason == "timeout" => {
-            "лпмка отвалилась по таймауту, повтори ещё раз".to_owned()
+            "ллмка отвалилась по таймауту, повтори ещё раз".to_owned()
         }
-        (false, None) => "лпмка временно отвалилась, повтори ещё раз".to_owned(),
+        (false, None) => "ллмка временно отвалилась, повтори ещё раз".to_owned(),
     };
     let _ =
         crate::rich_message::send_chat_chunk(bot, message.chat.id, message.id, &msg, true, None)

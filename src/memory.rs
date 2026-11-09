@@ -281,7 +281,7 @@ pub(crate) async fn burst_already_answered(
     let Ok(rows) = sqlx::query_as::<_, (i64, String, Option<i64>, i64)>(
         "SELECT author_id, role, message_id, created_at FROM chat_messages \
          WHERE chat_id = ? AND compacted_at IS NULL AND (flags = 0 OR role = 'assistant') \
-         ORDER BY id DESC LIMIT 4",
+         ORDER BY id DESC LIMIT 10",
     )
     .bind(chat_id.0)
     .fetch_all(pool)
@@ -291,15 +291,22 @@ pub(crate) async fn burst_already_answered(
     };
     let (uid, mid) = (user_id.0 as i64, i64::from(message_id));
     let fresh = |t: i64| now.saturating_sub(t) <= 30;
-    rows.first()
-        .is_some_and(|(a, r, _, t)| r == "assistant" && *a == uid && fresh(*t))
-        && rows
-            .iter()
-            .skip(1)
-            .any(|(a, r, m, t)| *a == uid && r == "user" && *m == Some(mid) && fresh(*t))
-        && rows.iter().skip(1).any(|(a, r, m, t)| {
-            *a == uid && r == "user" && m.is_some_and(|id| id < mid && mid - id <= 3) && fresh(*t)
+    let Some(curr_idx) = rows
+        .iter()
+        .position(|(a, r, m, t)| *a == uid && r == "user" && *m == Some(mid) && fresh(*t))
+    else {
+        return false;
+    };
+    let has_later_reply = rows.get(..curr_idx).is_some_and(|head| {
+        head.iter()
+            .any(|(a, r, _, t)| r == "assistant" && *a == uid && fresh(*t))
+    });
+    let has_earlier_burst_msg = rows.get(curr_idx + 1..).is_some_and(|tail| {
+        tail.iter().any(|(a, r, m, t)| {
+            *a == uid && r == "user" && m.is_some_and(|id| id < mid && mid - id <= 4) && fresh(*t)
         })
+    });
+    has_later_reply && has_earlier_burst_msg
 }
 
 pub(crate) fn format_line(author_name: &str, author_id: i64, text: &str) -> String {

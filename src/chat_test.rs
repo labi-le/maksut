@@ -1831,14 +1831,14 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
         "quoted snippet handles must not trigger directives: {owner_reply_quoted_mention}"
     );
     let scoped_non_owner =
-        crate::code_inspect::filter_self_memory(sample, "Даня", Some("newmdoupdate"), false);
+        crate::self_memory::filter_self_memory(sample, "Даня", Some("newmdoupdate"), false);
     assert!(
         scoped_non_owner.contains("- код: лимит")
             && scoped_non_owner.contains("(@newmdoupdate)")
             && !scoped_non_owner.contains("@crudoshlepa")
     );
     let scoped_owner =
-        crate::code_inspect::filter_self_memory(sample, "Денис", Some("crudoshlepa"), true);
+        crate::self_memory::filter_self_memory(sample, "Денис", Some("crudoshlepa"), true);
     assert!(scoped_owner.contains("(@newmdoupdate)") && scoped_owner.contains("(@crudoshlepa)"));
     let first_body = body_of(&requests[0]);
     let owner_user_msg = first_body["messages"].as_array().unwrap().last().unwrap()["content"]
@@ -3173,11 +3173,21 @@ async fn normal_turn_sticker_placeholder_picks_sticker_and_burst_dedup_detects_a
     )
     .await
     .unwrap();
+    crate::memory::record_message(
+        &pool,
+        crate::memory::RecordMessage::new(chat_id, 999, "Вадик", "user", "норм")
+            .with_message_id(Some(219746)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        crate::memory::burst_already_answered(&pool, chat_id, uid, 219742, now).await,
+        "interleaved message from another user after the assistant reply must not break burst dedup"
+    );
     let (_, loaded) = crate::memory::load_memory(&pool, chat_id, 0).await.unwrap();
-    let last = loaded.last().unwrap();
-    assert_eq!(last.role, "assistant");
+    let last_assistant = loaded.iter().rev().find(|m| m.role == "assistant").unwrap();
     assert_eq!(
-        last.author_id, 0,
+        last_assistant.author_id, 0,
         "load_memory must normalize assistant author_id to 0"
     );
 }

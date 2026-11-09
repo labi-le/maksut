@@ -66,7 +66,7 @@ pub(crate) async fn reply_with_chat(
     let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
     let (_chat_guard, _user_guard) = (chat_lock.read().await, user_lock.write().await);
     if input.followup
-        && message.forward_origin().is_some()
+        && input.address == crate::addressing::AddressKind::None
         && crate::memory::burst_already_answered(
             &cfg.database,
             message.chat.id,
@@ -76,7 +76,7 @@ pub(crate) async fn reply_with_chat(
         )
         .await
     {
-        tracing::debug!("skip: forwarded burst continuation already answered");
+        tracing::debug!("skip: burst continuation already answered");
         return;
     }
     // Hold the image permit across `chat.acquire()` so downloaded bytes stay
@@ -160,9 +160,7 @@ pub(crate) async fn chat_reply_with_proposal(
         && (turn.followup || turn.prompt.split_whitespace().count() <= 7)
     {
         chat.clear_followup(turn.chat_id).await;
-        if turn.followup {
-            return Ok(ChatReply::default());
-        }
+        return Ok(ChatReply::default());
     }
     let prompt = match (turn.prompt.trim().is_empty(), turn.followup) {
         (true, true) => MEDIA_FOLLOWUP_PROMPT,
@@ -216,8 +214,13 @@ pub(crate) async fn chat_reply_with_proposal(
     }
     let mut memory_text = String::new();
     if let Some(m) = &self_memory {
-        let s =
-            crate::code_inspect::filter_self_memory(m, turn.sender_name, turn.username, turn.owner);
+        let s = crate::code_inspect::filter_self_memory_for_prompt(
+            m,
+            turn.sender_name,
+            turn.username,
+            turn.owner,
+            prompt,
+        );
         if !s.is_empty() {
             memory_text.push_str(&format!(
                 "<self_memory type=\"data\" source=\"self_memory\">\n{s}\n</self_memory>\n\n"

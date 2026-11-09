@@ -255,21 +255,16 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
     {
         return false;
     }
-    const STOPS: &[&str] = &[
+    const PHRASE_STOPS: &[&str] = &[
         "завали ебало",
         "завали ебал",
         "ебало на ноль",
         "ебало закрой",
         "закрой ебало",
         "оффни ебало",
-        "заткнись",
         "заткни ебало",
         "не пизди",
         "хватит пиздеть",
-        "помолчи",
-        "замолчи",
-        "отъебись",
-        "отьебись",
         "кто тебя звал",
         "пошёл нахуй",
         "пошел нахуй",
@@ -277,7 +272,23 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
         "съеби",
         "сьеби",
     ];
-    STOPS.iter().any(|p| lower.contains(p))
+    const WORD_STOPS: &[&str] = &[
+        "оффнись",
+        "заткнись",
+        "помолчи",
+        "замолчи",
+        "молчи",
+        "тише",
+        "отъебись",
+        "отьебись",
+    ];
+    if PHRASE_STOPS.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+    lower
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|w| WORD_STOPS.contains(&w))
 }
 
 /// Suppresses repetitive copy-paste spam from a non-owner when their current

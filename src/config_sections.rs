@@ -541,7 +541,7 @@ defaults!(MemorySettings {
     ignore_secs: 24 * 60 * 60,
     summary_max_chars: 1500,
     recent_messages: 60,
-    recent_max_chars: 12_000,
+    recent_max_chars: 6_000,
     keep_newest: 5,
     keep_fresh: 40,
     compact_after_secs: 12 * 60 * 60,

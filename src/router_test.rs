@@ -152,6 +152,22 @@ fn followup_questions_and_requests_reply() {
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
     assert_eq!(decide_rules(&followup("понял тебя")), Decision::Silent);
     assert_eq!(decide_rules(&followup("принял")), Decision::Silent);
+    assert_eq!(
+        decide_rules(&followup("влудик когда уже ты выпустишь анаконду")),
+        Decision::Wait
+    );
+    assert_eq!(decide_rules(&followup("денис сделай")), Decision::Wait);
+    assert_eq!(decide_rules(&followup("анрюх когда релиз")), Decision::Wait);
+    assert_eq!(
+        decide_rules(&followup("что это значит вадик")),
+        Decision::Wait
+    );
+    assert!(crate::chat_style::is_stop_followup("молчи"));
+    assert!(crate::chat_style::is_stop_followup("тише"));
+    assert!(crate::chat_style::is_stop_followup("оффнись"));
+    assert!(!crate::chat_style::is_stop_followup("почему ты молчишь?"));
+    assert!(!crate::chat_style::is_stop_followup("почему молчит"));
+    assert!(!crate::chat_style::is_stop_followup("сделай потише"));
 }
 
 #[test]

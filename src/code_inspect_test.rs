@@ -57,13 +57,13 @@ fn inspect_rejects_traversal_and_unknown_files() {
 fn filter_self_memory_hides_unscoped_owner_directives_from_non_owners() {
     let raw = "- [owner] поиск дыр: не подсказывать дыры\n- [owner] вадик: С Вадиком (@CptIdea) общаться как со сладким\n- [owner] даня: Даню (@newmdoupdate) материть\n- роутер: Роутер влит в main (https://github.com/labi-le/maxwell/blob/main/src/main.rs#L280)";
     let vadik_view =
-        crate::code_inspect::filter_self_memory(raw, "Вадик (@CptIdea)", Some("CptIdea"), false);
+        crate::self_memory::filter_self_memory(raw, "Вадик (@CptIdea)", Some("CptIdea"), false);
     assert!(!vadik_view.contains("поиск дыр"), "{vadik_view}");
     assert!(!vadik_view.contains("даня:"), "{vadik_view}");
     assert!(vadik_view.contains("вадик:"), "{vadik_view}");
     assert!(vadik_view.contains("роутер:"), "{vadik_view}");
 
-    let owner_view = crate::code_inspect::filter_self_memory(
+    let owner_view = crate::self_memory::filter_self_memory(
         raw,
         "Денис (@crudoshlepa)",
         Some("crudoshlepa"),
@@ -144,6 +144,28 @@ fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_for
     assert!(
         vadik_directives.contains("сладкий"),
         "Vadik's directive must be injected on Vadik's turn: {vadik_directives}"
+    );
+    let denis_self_mem = crate::code_inspect::filter_self_memory_for_prompt(
+        raw,
+        "Денис (@crudoshlepa)",
+        Some("crudoshlepa"),
+        true,
+        "влудик когда уже ты выпустишь анаконду",
+    );
+    assert!(
+        !denis_self_mem.contains("сладкий"),
+        "Vadik's 'сладкий' directive must not leak into <self_memory> on Denis's unrelated turn: {denis_self_mem}"
+    );
+    let denis_inspect_all = crate::code_inspect::filter_self_memory_for_prompt(
+        raw,
+        "Денис (@crudoshlepa)",
+        Some("crudoshlepa"),
+        true,
+        "покажи свою память, как нужно общаться с даней",
+    );
+    assert!(
+        denis_inspect_all.contains("даня:") && denis_inspect_all.contains("сладкий"),
+        "Owner asking about memory/rules must see full <self_memory>: {denis_inspect_all}"
     );
 
     let doc_msg: teloxide::types::Message = serde_json::from_value(serde_json::json!({
