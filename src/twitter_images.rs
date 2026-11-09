@@ -11,13 +11,15 @@ pub(crate) fn twitter_status_id(url: &Url) -> Option<&str> {
     else {
         return None;
     };
+    let valid_index = |index: &str| {
+        !index.is_empty()
+            && index.bytes().all(|byte| byte.is_ascii_digit())
+            && index.bytes().any(|byte| byte != b'0')
+    };
     let suffix_valid = match (segments.next(), segments.next(), segments.next()) {
         (None, None, None) => true,
-        (Some("photo"), Some(index), None) => {
-            !index.is_empty()
-                && index.bytes().all(|byte| byte.is_ascii_digit())
-                && index.bytes().any(|byte| byte != b'0')
-        }
+        (Some("video"), None, None) => true,
+        (Some("photo" | "video"), Some(index), None) => valid_index(index),
         _ => false,
     };
     (suffix_valid

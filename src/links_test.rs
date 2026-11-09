@@ -179,15 +179,21 @@ fn pinterest_regions_and_twitter_photo_paths_are_exact() {
         "https://x.com/user/status/123/photo/1",
         "https://twitter.com/user/status/123/photo/2",
         "https://mobile.twitter.com/user/status/123/photo/09",
+        "https://x.com/user/status/123/video",
+        "https://x.com/user/status/123/video/1",
+        "https://x.com/u/status/123/video/1?a=1&s=19",
     ] {
         let url = allowed_url(link).unwrap();
         assert_eq!(twitter_status_id(&url), Some("123"), "{link}");
     }
     for link in [
+        "https://x.com/user/status/123/photo",
         "https://x.com/user/status/123/photo/0",
         "https://x.com/user/status/123/photo/abc",
         "https://x.com/user/status/123/photo/1/456",
-        "https://x.com/user/status/123/video/1",
+        "https://x.com/user/status/123/video/0",
+        "https://x.com/user/status/123/video/abc",
+        "https://x.com/user/status/123/video/1/456",
         "https://x.com/user/status/123/photo/1/extra",
         "https://x.com/user/status/abc/photo/1",
     ] {
