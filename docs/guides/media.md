@@ -4,7 +4,7 @@
 
 ## Supported sources and short-link resolution
 
-`src/links.rs` accepts single-post URLs from YouTube (`watch?v=`, `playlist?list=`, `/shorts/`, `/live/`, `/embed/`, `/clip/`, `youtu.be`), Pinterest (`/pin/<id>`, `pin.it`), X/Twitter (`/status/<id>`), Instagram (`/p/`, `/reel/`, `/reels/`, `/tv/`), and TikTok (`/@user/video/<id>`, `/@user/photo/<id>`, `/v/`, `/t/`, `vm.tiktok.com`, `vt.tiktok.com`).
+`src/links.rs` accepts single-post URLs from YouTube (`watch?v=`, `playlist?list=`, `/shorts/`, `/live/`, `/embed/`, `/clip/`, `youtu.be`), Pinterest (`/pin/<id>`, `pin.it`), X/Twitter (`/status/<id>`, `/status/<id>/video`, `/status/<id>/photo/<index>`, `/status/<id>/video/<index>`), Instagram (`/p/`, `/reel/`, `/reels/`, `/tv/`), and TikTok (`/@user/video/<id>`, `/@user/photo/<id>`, `/v/`, `/t/`, `vm.tiktok.com`, `vt.tiktok.com`).
 
 - **Short links (`pin.it`, `vm.tiktok.com`, `vt.tiktok.com`).** `yt-dlp` has no extractors for these hosts and `--ies default,-generic` is enforced in `/etc/yt-dlp.conf`. `resolve_short_link` resolves up to 5 HTTPS hops through `pinned_client` before any downloader or cache check runs.
 - **TikTok quirks.** TikTok serves a "Site Maintenance" stub to Chrome-like User-Agents from this network, so `TIKTOK_USER_AGENT` sends Firefox (`rv:147.0`). H.264 is sorted ahead of resolution (`-S vcodec:h264,res`) because TikTok HEVC (`bytevc1`) variants are rejected by Telegram inline playback or omit the audio track even when metadata reports AAC.
