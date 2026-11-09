@@ -1029,6 +1029,20 @@ async fn propose_feature_refines_links_parent_without_rejection() {
         .join("approvals")
         .join("plan-1.json")
         .exists());
+    let overview = crate::self_improve::status_overview(&cfg.self_improve_dir, cfg.owner_id);
+    let active = overview["active"].as_array().unwrap();
+    assert!(
+        !active.iter().any(|t| t["id"] == "plan-1"),
+        "superseded parent plan-1 must not remain active in status_overview: {overview}"
+    );
+    assert!(
+        active.iter().any(|t| t["id"] == id),
+        "refined child must be active in status_overview: {overview}"
+    );
+    assert!(
+        !crate::self_improve::has_pending_decision(&cfg.self_improve_dir, cfg.owner_id),
+        "superseded proposed parent must not count as a pending decision while child is still in inbox"
+    );
     write_outbox(
         &cfg.self_improve_dir,
         "rejected-1.json",

@@ -37,8 +37,13 @@ pub(crate) async fn download_videos(
     } else {
         None
     };
+    let first_deadline = if selected_format.is_some() {
+        (time::Instant::now() + Duration::from_secs(45)).min(deadline)
+    } else {
+        deadline
+    };
     let (mut first, interrupted) =
-        download_videos_attempt(url, cfg, dir, deadline, selected_format.as_deref())
+        download_videos_attempt(url, cfg, dir, first_deadline, selected_format.as_deref())
             .await
             .map_err(|reason| {
                 tracing::error!(
@@ -107,10 +112,12 @@ pub(crate) async fn download_videos(
         finish(first.selection.files.len());
         return Ok(first);
     }
+    let can_fallback_after_timeout = interrupted
+        && deadline.saturating_duration_since(time::Instant::now()) >= Duration::from_secs(15);
     if selected_format.is_none()
         || first.process_ok
         || first.limited
-        || interrupted
+        || (interrupted && !can_fallback_after_timeout)
         || !first.selection.files.is_empty()
         || time::Instant::now() >= deadline
         || !retryable_output(dir, cfg.max_media_bytes).await
@@ -211,23 +218,19 @@ pub(crate) async fn download_videos_attempt(
     if filter_applied {
         // yt-dlp rejects live/upcoming and overlong entries before opening a
         // media stream. This is the backstop when the metadata probe fails.
-        cmd.arg("--match-filter").arg(youtube_duration_filter());
+        cmd.arg("--match-filter")
+            .arg(youtube_duration_filter())
+            .arg("--socket-timeout")
+            .arg("15")
+            .arg("--retries")
+            .arg("2");
     }
     if image_source(url).is_some() {
         cmd.arg("--ignore-no-formats-error");
     }
     if let Some((_, path)) = &cookie {
         cmd.arg("--cookies").arg(path);
-        if matches!(
-            url.host_str(),
-            Some(
-                "youtube.com"
-                    | "www.youtube.com"
-                    | "m.youtube.com"
-                    | "music.youtube.com"
-                    | "youtu.be"
-            )
-        ) {
+        if filter_applied {
             cmd.arg("--extractor-args")
                 .arg("youtube:player_client=default,web_embedded");
         }

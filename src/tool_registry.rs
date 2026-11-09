@@ -367,7 +367,7 @@ fn read_logs_parameters() -> Value {
                 "enum": ["trace", "debug", "info", "warn", "error"],
                 "description": "Optional minimum level; events below log.level never enter the ring"
             },
-            "target": {"type": "string", "description": "Optional case-insensitive substring of the module target, e.g. read_url or download"},
+            "target": {"type": "string", "description": "Optional case-insensitive substring of the module target or span name, e.g. read_url or download"},
             "grep": {"type": "string", "description": "Optional case-insensitive substring of the whole formatted line"},
             "limit": {"type": "integer", "description": "Newest matching lines to return, 1-200 (default 50)"}
         },

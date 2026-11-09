@@ -73,7 +73,7 @@ fn query_applies_level_target_and_grep_filters() {
         &mut ring,
         tracing::Level::ERROR,
         "maksut::download",
-        "Read URL retry\n",
+        "Download failed\n",
     );
 
     let filtered = texts(
@@ -81,11 +81,26 @@ fn query_applies_level_target_and_grep_filters() {
         &query(Some("warn"), Some("READ_URL"), Some("retry"), 10),
     );
     assert_eq!(filtered, vec!["Read URL retry\n"]);
+    push(
+        &mut ring,
+        tracing::Level::INFO,
+        "maksut::log_fields",
+        "download_with_timeout{host=\"youtube.com\"}: media not selected stage=\"yt-dlp\" detail=\"Timeout\"\n",
+    );
+    assert_eq!(
+        texts(
+            &ring,
+            &query(Some("info"), Some("download"), Some("Timeout"), 10)
+        )
+        .len(),
+        1,
+        "target filter must match span names in the formatted log line as well as module target"
+    );
     assert_eq!(
         texts(&ring, &query(Some("WARN"), Some("read_url"), None, 10)).len(),
         1,
     );
-    assert_eq!(texts(&ring, &query(Some("info"), None, None, 10)).len(), 3);
+    assert_eq!(texts(&ring, &query(Some("info"), None, None, 10)).len(), 4);
 }
 
 #[test]

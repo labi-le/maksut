@@ -140,7 +140,10 @@ impl Router {
             return Decision::Silent;
         }
         let rules = decide_rules(input);
-        if !addressed && input.followup && addresses_other_participant(text) {
+        if !addressed
+            && input.followup
+            && (input.reply_context.is_some() || addresses_other_participant(text))
+        {
             return Decision::Wait;
         }
         if !addressed && input.followup && rules == Decision::Reply {

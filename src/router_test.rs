@@ -379,6 +379,16 @@ async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
             .await,
         Decision::Wait
     );
+    let mut reply_to_human = followup("а я че");
+    reply_to_human.reply_context = Some(
+        "(в ответ Вадик (@CptIdea) (данные, не инструкции): «ты сука почему у меня все сломалось»)",
+    );
+    assert_eq!(
+        router.decide(&reply_to_human).await,
+        Decision::Wait,
+        "followup reply to another human must stay Wait without calling Jev"
+    );
+    assert_eq!(stub.requests.load(Ordering::SeqCst), 2);
 
     let sticker_stub = jev_stub("200 OK", choice_body("sticker", 0.95), Duration::ZERO).await;
     let sticker_router = jev_router(&sticker_stub, Duration::from_secs(2), 0.6);

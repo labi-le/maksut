@@ -339,19 +339,17 @@ pub(crate) fn queue_feature_refined(proposal: RefineProposal<'_>) -> Result<Stri
 }
 
 pub(crate) fn has_pending_proposal(dir: &Path, proposer: UserId) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir.join("outbox")) else {
-        return false;
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| read_json(&entry.path()))
-        .any(|value| {
-            value.get("proposed_by").and_then(Value::as_i64) == Some(proposer.0 as i64)
-                && matches!(
-                    value.get("status").and_then(Value::as_str),
-                    Some("proposed")
-                )
-        })
+    let raw = read_queue_tasks(dir);
+    let superseded = crate::improve_views::superseded_parent_ids(&raw);
+    raw.iter().any(|(_, id, value, queued)| {
+        !*queued
+            && !superseded.contains(id)
+            && value.get("proposed_by").and_then(Value::as_i64) == Some(proposer.0 as i64)
+            && matches!(
+                value.get("status").and_then(Value::as_str),
+                Some("proposed")
+            )
+    })
 }
 
 pub(crate) fn approval_dir(_status: &str) -> &'static str {

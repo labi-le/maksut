@@ -109,10 +109,31 @@ pub(crate) fn task_view(dir: &Path, value: &Value, queued: bool) -> Option<Value
     }))
 }
 
+pub(crate) fn superseded_parent_ids(
+    raw: &[(i64, String, Value, bool)],
+) -> std::collections::HashSet<String> {
+    raw.iter()
+        .filter_map(|(_, _, value, _)| {
+            value
+                .get("parent")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
 pub(crate) fn task_views(dir: &Path, owner: UserId) -> Vec<Value> {
-    let views: Vec<Value> = read_queue_tasks(dir)
+    let raw = read_queue_tasks(dir);
+    let superseded = superseded_parent_ids(&raw);
+    let views: Vec<Value> = raw
         .into_iter()
-        .filter(|(_, _, value, _)| owned_by_owner(value, owner))
+        .filter(|(_, id, value, _)| {
+            owned_by_owner(value, owner)
+                && !(superseded.contains(id)
+                    && value.get("status").and_then(Value::as_str) == Some("proposed"))
+        })
         .filter_map(|(_, _, value, queued)| task_view(dir, &value, queued))
         .collect();
     tracing::debug!(items = views.len(), "task views built");
@@ -307,9 +328,15 @@ pub(crate) fn status_snapshot_for(
         }
         value
     } else {
-        let tasks: Vec<Value> = read_queue_tasks(dir)
+        let raw = read_queue_tasks(dir);
+        let superseded = superseded_parent_ids(&raw);
+        let tasks: Vec<Value> = raw
             .into_iter()
-            .filter(|(_, _, value, _)| own_task(value))
+            .filter(|(_, id, value, _)| {
+                own_task(value)
+                    && !(superseded.contains(id)
+                        && value.get("status").and_then(Value::as_str) == Some("proposed"))
+            })
             .filter_map(|(_, _, value, queued)| task_view(dir, &value, queued))
             .take(config().improve.result_tasks)
             .collect();
@@ -347,8 +374,11 @@ pub(crate) fn pending_confirmation(dir: &Path, owner: UserId) -> Value {
 /// Read-only probe used to keep a standalone «да»/«нет» sticker from
 /// swallowing a pending issue decision. It never writes a marker.
 pub(crate) fn has_pending_decision(dir: &Path, owner: UserId) -> bool {
-    read_queue_tasks(dir).iter().any(|(_, _, value, queued)| {
+    let raw = read_queue_tasks(dir);
+    let superseded = superseded_parent_ids(&raw);
+    raw.iter().any(|(_, id, value, queued)| {
         !*queued
+            && !superseded.contains(id)
             && owned_by_owner(value, owner)
             && matches!(
                 value.get("status").and_then(Value::as_str),
