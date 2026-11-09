@@ -152,20 +152,20 @@ fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_for
         true,
         "влудик когда уже ты выпустишь анаконду",
     );
-    assert!(
-        !denis_self_mem.contains("сладкий"),
-        "Vadik's 'сладкий' directive must not leak into <self_memory> on Denis's unrelated turn: {denis_self_mem}"
+    assert_eq!(
+        denis_self_mem, raw,
+        "Owner turns must keep all <self_memory> rows visible for inspection and remember_self updates while speaker_owner_directives isolates active turn directives"
     );
-    let denis_inspect_all = crate::code_inspect::filter_self_memory_for_prompt(
+    let vadik_self_mem = crate::code_inspect::filter_self_memory_for_prompt(
         raw,
-        "Денис (@crudoshlepa)",
-        Some("crudoshlepa"),
-        true,
-        "покажи свою память, как нужно общаться с даней",
+        "Вадик (@CptIdea)",
+        Some("CptIdea"),
+        false,
+        "покажи свою память",
     );
     assert!(
-        denis_inspect_all.contains("даня:") && denis_inspect_all.contains("сладкий"),
-        "Owner asking about memory/rules must see full <self_memory>: {denis_inspect_all}"
+        !vadik_self_mem.contains("стиль в чате") && !vadik_self_mem.contains("даня:"),
+        "Non-owner turns must still hide general and other participants' directives from <self_memory>: {vadik_self_mem}"
     );
 
     let doc_msg: teloxide::types::Message = serde_json::from_value(serde_json::json!({
