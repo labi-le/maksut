@@ -110,12 +110,28 @@ pub(crate) struct VoiceSettings {
     pub(crate) concurrency: usize,
 }
 
+/// The tiny classifier behind `llm.reasoning_effort = "auto"`: one bounded
+/// `choice` question per turn against the omp-style judge model.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ReasoningSettings {
+    pub(crate) model: String,
+    pub(crate) url: String,
+    pub(crate) timeout_ms: u64,
+    pub(crate) max_response_bytes: usize,
+    pub(crate) min_confidence: f64,
+    pub(crate) concurrency: usize,
+    pub(crate) default: String,
+    pub(crate) max: String,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LlmSettings {
     pub(crate) base_url: String,
     pub(crate) model: String,
     pub(crate) reasoning_effort: Option<String>,
+    pub(crate) reasoning: ReasoningSettings,
     pub(crate) request_timeout_secs: u64,
     pub(crate) max_response_bytes: usize,
 }
@@ -456,10 +472,22 @@ defaults!(VoiceSettings {
     concurrency: 2,
 });
 
+defaults!(ReasoningSettings {
+    model: "jev-latest".into(),
+    url: "https://api.typesafe.ai/v1/systemone".into(),
+    timeout_ms: 1500,
+    max_response_bytes: 16 * 1024,
+    min_confidence: 0.6,
+    concurrency: 4,
+    default: "low".into(),
+    max: "high".into(),
+});
+
 defaults!(LlmSettings {
     base_url: "https://llm.labile.cc/v1".into(),
     model: "deepseek-v4.1-flash".into(),
-    reasoning_effort: Some("low".into()),
+    reasoning_effort: Some("auto".into()),
+    reasoning: ReasoningSettings::default(),
     request_timeout_secs: 40,
     max_response_bytes: 64 * 1024,
 });
