@@ -347,6 +347,22 @@ pub(crate) struct UsageSettings {
     pub(crate) output_price_per_m: f64,
 }
 
+/// HTTP surface for the Telegram Mini App. The process serves plain HTTP on
+/// `listen`; TLS terminates at the host reverse proxy, and `public_url` is the
+/// https address Telegram opens through the chat button. `enabled = false`
+/// keeps the listener closed, which is the default.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct WebSettings {
+    pub(crate) enabled: bool,
+    pub(crate) listen: String,
+    pub(crate) public_url: Option<String>,
+    /// Rejects an `initData` older than this, so a captured payload expires.
+    pub(crate) auth_max_age_secs: u64,
+    /// Cap for a JSON request body; every endpoint takes one small object.
+    pub(crate) max_body_bytes: usize,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetrySettings {
@@ -623,6 +639,14 @@ defaults!(UsageSettings {
     input_price_per_m: 0.27,
     cached_input_price_per_m: 0.07,
     output_price_per_m: 1.10,
+});
+
+defaults!(WebSettings {
+    enabled: false,
+    listen: "0.0.0.0:8090".into(),
+    public_url: None,
+    auth_max_age_secs: 24 * 60 * 60,
+    max_body_bytes: 16 * 1024,
 });
 
 defaults!(RetrySettings {

@@ -30,6 +30,7 @@ pub(crate) struct Config {
     pub(crate) image_fetch: ImageFetchSettings,
     pub(crate) cleanup: CleanupSettings,
     pub(crate) usage: UsageSettings,
+    pub(crate) web: WebSettings,
     pub(crate) retry: RetrySettings,
 }
 
@@ -52,12 +53,8 @@ impl Config {
     pub(crate) async fn load() -> Result<Self, String> {
         // A missing implicit file means "run on defaults"; a missing explicit
         // path is an operator error and must not degrade silently.
-        let explicit = env::var(CONFIG_PATH_ENV)
-            .ok()
-            .filter(|raw| !raw.trim().is_empty());
-        let path = explicit
-            .as_deref()
-            .map_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH), PathBuf::from);
+        let explicit = explicit_config_path();
+        let path = config_path();
         let mut loaded = match tokio::fs::read_to_string(&path).await {
             Ok(text) => {
                 Self::parse(&text).map_err(|reason| format!("{}: {reason}", path.display()))?
@@ -72,11 +69,20 @@ impl Config {
         Ok(loaded)
     }
 
+    /// Parses candidate TOML the way startup would, without installing it, so a
+    /// candidate that fails validation never replaces the file.
+    pub(crate) fn preview(text: &str) -> Result<Self, String> {
+        let mut loaded = Self::parse(text)?;
+        loaded.apply_env()?;
+        loaded.validate()?;
+        Ok(loaded)
+    }
+
     pub(crate) fn parse(text: &str) -> Result<Self, String> {
         toml::from_str::<Self>(text).map_err(|error| format!("invalid TOML: {error}"))
     }
 
-    fn apply_env(&mut self) -> Result<(), String> {
+    pub(crate) fn apply_env(&mut self) -> Result<(), String> {
         if let Some(value) = env_value("DATABASE_URL") {
             self.paths.database_url = value;
         }
@@ -155,6 +161,21 @@ impl Config {
 
 fn env_value(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn explicit_config_path() -> Option<String> {
+    env::var(CONFIG_PATH_ENV)
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty())
+}
+
+/// The file startup reads and the Mini App rewrites: `MAKSUT_CONFIG` when set,
+/// otherwise `config.toml` in the process working directory.
+pub(crate) fn config_path() -> PathBuf {
+    explicit_config_path()
+        .as_deref()
+        .map_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH), PathBuf::from)
 }
 
 pub(crate) fn parse_http_endpoint(raw: &str, name: &str) -> Result<Url, String> {

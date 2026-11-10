@@ -154,6 +154,11 @@ mod group_settings;
 pub(crate) use group_settings::*;
 mod cleanup;
 pub(crate) use cleanup::*;
+mod web;
+mod web_api;
+mod web_auth;
+mod web_config;
+mod web_static;
 
 const TIKTOK_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
@@ -234,7 +239,7 @@ async fn main() {
         }
     };
     cleanup_old_downloads(&cfg.download_dir);
-    let bot = match telegram_bot(token) {
+    let bot = match telegram_bot(token.clone()) {
         Ok(bot) => bot,
         Err(_) => {
             tracing::error!("Unable to initialize Telegram HTTP client");
@@ -283,6 +288,7 @@ async fn main() {
         Arc::clone(&cfg),
     ));
     tracing::info!("background tasks started");
+    crate::web::start(Arc::clone(&cfg), token);
     let handler = teloxide::dptree::entry()
         .branch(teloxide::types::Update::filter_message().endpoint(message_endpoint))
         .branch(teloxide::types::Update::filter_callback_query().endpoint(callback_endpoint));
@@ -397,5 +403,11 @@ mod user_errors_test;
 mod video_convert_test;
 #[cfg(test)]
 mod voice_test;
+#[cfg(test)]
+mod web_api_test;
+#[cfg(test)]
+mod web_auth_test;
+#[cfg(test)]
+mod web_config_test;
 #[cfg(test)]
 mod youtube_test;

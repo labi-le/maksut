@@ -1,6 +1,46 @@
 use crate::*;
 pub(crate) use tokio::io::AsyncWriteExt;
 
+/// Builds a Telegram `initData` string. `signed_user` is the id inside the
+/// signed payload and `sent_user` the id actually sent, so a test can prove a
+/// tampered payload fails the signature instead of merely the owner check.
+pub(crate) fn signed_init_data_with(
+    token: &str,
+    signed_user: u64,
+    sent_user: u64,
+    auth_date: i64,
+) -> String {
+    let signed_user = format!(r#"{{"id":{signed_user},"first_name":"Test"}}"#);
+    let sent_user = format!(r#"{{"id":{sent_user},"first_name":"Test"}}"#);
+    let mut signed = [
+        ("auth_date".to_string(), auth_date.to_string()),
+        ("user".to_string(), signed_user),
+    ];
+    signed.sort_by(|left, right| left.0.cmp(&right.0));
+    let check = signed
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let secret = crate::web_auth::hmac_sha256(b"WebAppData", token.as_bytes());
+    let digest = crate::web_auth::hmac_sha256(&secret, check.as_bytes());
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query.append_pair("auth_date", &auth_date.to_string());
+    query.append_pair("user", &sent_user);
+    query.append_pair(
+        "hash",
+        &digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+    );
+    query.finish()
+}
+
+pub(crate) fn signed_init_data(token: &str, user_id: u64, auth_date: i64) -> String {
+    signed_init_data_with(token, user_id, user_id, auth_date)
+}
+
 pub(crate) fn av_fixture() -> &'static Path {
     static FILE: std::sync::LazyLock<tempfile::NamedTempFile> = std::sync::LazyLock::new(|| {
         let file = tempfile::NamedTempFile::new().unwrap();
