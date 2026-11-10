@@ -14,7 +14,7 @@ Telegram-бот на Rust (`maksut`) для скачивания медиа по
 
 ## Запуск и обслуживание
 
-Бот работает через исходящие соединения, без `host network`, опубликованных портов и внешней СУБД. Для первого запуска создайте `.env` из `.env.example` (`chmod 600 .env`), задайте `BOT_TOKEN` и `OWNER_ID`, настройте SSH-ключ `cookie-refresh` по [`docs/guides/cookies.md`](./docs/guides/cookies.md) и создайте каталог `self-improve/`:
+Бот работает через исходящие соединения, без `host network` и внешней СУБД. Единственный опубликованный порт — `127.0.0.1:8090` для Telegram Mini App, и он слушает только после `[web] enabled = true`; до контейнера его достигает лишь хостовый reverse proxy. Для первого запуска создайте `.env` из `.env.example` (`chmod 600 .env`), задайте `BOT_TOKEN` и `OWNER_ID`, настройте SSH-ключ `cookie-refresh` по [`docs/guides/cookies.md`](./docs/guides/cookies.md) и создайте каталог `self-improve/`:
 
 ```sh
 mkdir -p self-improve
@@ -34,6 +34,36 @@ docker compose -f compose.yaml down
 ### Конфигурация
 
 Настройки читаются из `config.toml` в рабочем каталоге процесса (в образе это `/data`, поэтому файл кладётся в volume как `/data/config.toml`), другой путь задаёт `MAKSUT_CONFIG`; явно заданный, но отсутствующий путь считается ошибкой запуска. Шаблон со всеми секциями и значениями по умолчанию лежит в [`example.config.toml`](./example.config.toml). Приоритет: встроенные значения < файл < переменные окружения, поэтому переменные (`DATABASE_URL`, `DOWNLOAD_DIR`, `LLM_*` и остальные) по-прежнему переопределяют файл. Секреты (`BOT_TOKEN`, `OWNER_ID`, `LLM_API_KEY`, `TAVILY_API_KEY`) задаются только через окружение. Неизвестный ключ или значение вне допустимого диапазона останавливает запуск с сообщением об этом ключе. Уровень логов задаётся ключом `log.level`, строка лога несёт модуль и файл:строку, а `#[instrument]`-спаны добавляют имя функции.
+
+### Telegram Mini App
+
+`/settings` в личном чате (только `OWNER_ID`) отвечает кнопкой, открывающей мини-апп по `web.public_url`. В приложении две вкладки: память `bot_self_memory` (правка и удаление только код-фактов со `source_url`; директивы владельца остаются за `remember_self`) и настройки из whitelist (`src/web_config.rs`): изменения пишутся в `config.toml` и применяются после рестарта, ключи, перекрытые переменной окружения, недоступны.
+
+Включение в `/data/config.toml`:
+
+```toml
+[web]
+enabled = true
+listen = "0.0.0.0:8090"
+public_url = "https://maksut.example.org/"
+```
+
+Контейнер слушает все интерфейсы своей bridge-сети, а `compose.yaml` публикует только петлю (`127.0.0.1:8090`), поэтому снаружи есть один путь — хостовый nginx, который завершает TLS:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name maksut.example.org;
+    # ssl_certificate ...;
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+Авторизация — только Telegram `initData` (`HMAC-SHA256` с ключом `WebAppData` от `BOT_TOKEN`, свежесть `web.auth_max_age_secs`, `user.id == OWNER_ID`). Статика публична, потому что страница грузится до запуска JS; все `/api/*` закрыты. Подробности и границы — [ADR 027](./docs/adr/027-telegram-mini-app.md).
 
 Запуск хостового оркестратора самоулучшения и вебхука автодеплоя из GHCR:
 

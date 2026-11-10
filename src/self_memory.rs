@@ -10,6 +10,20 @@
 use crate::qdrant::QdrantClient;
 use crate::*;
 
+/// Storage failures keep these exact strings: `src/web_api.rs` maps them to a
+/// 500, and every other error is a rejected value. Hoisted so a reword is a
+/// build error rather than a silent status regression.
+pub(crate) const STORE_FACT_FAILURE: &str = "не удалось сохранить факт";
+pub(crate) const MEMORY_UPDATE_FAILURE: &str = "не удалось обновить память";
+
+/// The Qdrant mirror runs after the row is committed, so it is best effort:
+/// a slow embedding service (`memory.embedding_*` budgets up to
+/// `llm.request_timeout_secs * retry.llm.attempts`) or a wedged Qdrant
+/// (`memory.qdrant_timeout_secs`, up to 60 s) must not hold the caller past
+/// `web::REQUEST_TIMEOUT`, which would answer 504 for a write that already
+/// succeeded. The indexer's idempotent backfill repairs a dropped point.
+const SELF_INDEX_BUDGET: Duration = Duration::from_secs(5);
+
 pub(crate) async fn record_self_fact(
     chat: &ChatConfig,
     pool: &SqlitePool,
@@ -62,8 +76,15 @@ pub(crate) async fn record_self_fact(
         }
         let deleted = delete_self_fact(pool, &topic).await?;
         if let Some(client) = QdrantClient::from_config() {
-            if let Err(reason) = crate::qdrant_index::delete_self_points(&client, &deleted).await {
-                tracing::warn!("self memory qdrant delete failed: {reason}");
+            let mirror = async {
+                if let Err(reason) =
+                    crate::qdrant_index::delete_self_points(&client, &deleted).await
+                {
+                    tracing::warn!("self memory qdrant delete failed: {reason}");
+                }
+            };
+            if time::timeout(SELF_INDEX_BUDGET, mirror).await.is_err() {
+                tracing::warn!(stage = "self-memory-index", "self memory delete timed out");
             }
         }
         return Ok(());
@@ -106,7 +127,7 @@ pub(crate) async fn record_self_fact(
     .bind(now)
     .execute(pool)
     .await
-    .map_err(|_| "не удалось сохранить факт".to_string())?;
+    .map_err(|_| STORE_FACT_FAILURE.to_string())?;
     // Eviction is part of the write, so the index must drop the same topics;
     // otherwise a later read could still surface an evicted fact from Qdrant.
     let evicted: Vec<String> = sqlx::query_scalar(
@@ -117,18 +138,25 @@ pub(crate) async fn record_self_fact(
     .await
     .unwrap_or_default();
     if let Some(client) = QdrantClient::from_config() {
-        if !evicted.is_empty() {
-            if let Err(reason) = crate::qdrant_index::delete_self_points(&client, &evicted).await {
-                tracing::warn!("self memory qdrant eviction failed: {reason}");
+        let mirror = async {
+            if !evicted.is_empty() {
+                if let Err(reason) =
+                    crate::qdrant_index::delete_self_points(&client, &evicted).await
+                {
+                    tracing::warn!("self memory qdrant eviction failed: {reason}");
+                }
             }
-        }
-        if !source_url.is_empty() {
-            match crate::qdrant_index::index_self_fact(chat, &client, &topic, &fact, source_url)
-                .await
-            {
-                Ok(()) => {}
-                Err(reason) => tracing::warn!("self memory qdrant write failed: {reason}"),
+            if !source_url.is_empty() {
+                match crate::qdrant_index::index_self_fact(chat, &client, &topic, &fact, source_url)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(reason) => tracing::warn!("self memory qdrant write failed: {reason}"),
+                }
             }
+        };
+        if time::timeout(SELF_INDEX_BUDGET, mirror).await.is_err() {
+            tracing::warn!(stage = "self-memory-index", "self memory write timed out");
         }
     }
     Ok(())
@@ -145,7 +173,7 @@ async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<Vec<String>,
         .bind(topic)
         .execute(pool)
         .await
-        .map_err(|_| "не удалось обновить память".to_string())?;
+        .map_err(|_| MEMORY_UPDATE_FAILURE.to_string())?;
     if exact.rows_affected() > 0 {
         return Ok(vec![topic.to_owned()]);
     }
@@ -193,9 +221,88 @@ async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<Vec<String>,
         request
             .execute(pool)
             .await
-            .map_err(|_| "не удалось обновить память".to_string())?;
+            .map_err(|_| MEMORY_UPDATE_FAILURE.to_string())?;
     }
     Ok(doomed)
+}
+
+/// One `bot_self_memory` row as the Mini App renders it.
+#[derive(Clone, Debug)]
+pub(crate) struct SelfFact {
+    pub(crate) topic: String,
+    pub(crate) fact: String,
+    pub(crate) source_url: String,
+    pub(crate) updated_at: i64,
+}
+
+pub(crate) async fn list_self_facts(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<SelfFact>, sqlx::Error> {
+    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT topic, fact, source_url, updated_at FROM bot_self_memory \
+         ORDER BY updated_at DESC, topic ASC LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(topic, fact, source_url, updated_at)| SelfFact {
+            topic,
+            fact,
+            source_url,
+            updated_at,
+        })
+        .collect())
+}
+
+pub(crate) async fn get_self_fact(
+    pool: &SqlitePool,
+    topic: &str,
+) -> Result<Option<SelfFact>, sqlx::Error> {
+    let row: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT topic, fact, source_url, updated_at FROM bot_self_memory WHERE topic = ?",
+    )
+    .bind(topic)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(topic, fact, source_url, updated_at)| SelfFact {
+        topic,
+        fact,
+        source_url,
+        updated_at,
+    }))
+}
+
+/// Deletes one code fact by exact topic and drops its Qdrant point. The web
+/// editor must not call `delete_self_fact`: that path exists for
+/// `remember_self` and its fuzzy fallback could remove a row the UI never
+/// showed. Owner directives (`source_url` empty) are not deletable here.
+pub(crate) async fn delete_self_topic(pool: &SqlitePool, topic: &str) -> Result<bool, String> {
+    let deleted =
+        sqlx::query("DELETE FROM bot_self_memory WHERE topic = ? AND trim(source_url) <> ''")
+            .bind(topic)
+            .execute(pool)
+            .await
+            .map_err(|_| MEMORY_UPDATE_FAILURE.to_string())?
+            .rows_affected()
+            > 0;
+    if deleted {
+        if let Some(client) = QdrantClient::from_config() {
+            let mirror = async {
+                if let Err(reason) =
+                    crate::qdrant_index::delete_self_points(&client, &[topic.to_owned()]).await
+                {
+                    tracing::warn!("self memory qdrant delete failed: {reason}");
+                }
+            };
+            if time::timeout(SELF_INDEX_BUDGET, mirror).await.is_err() {
+                tracing::warn!(stage = "self-memory-index", "self memory delete timed out");
+            }
+        }
+    }
+    Ok(deleted)
 }
 
 fn render_self_memory(rows: impl Iterator<Item = (String, String, String)>) -> Option<String> {

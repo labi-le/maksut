@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Максут — настройки</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Максут</h1>
+    <p class="hint" id="who"></p>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-memory" aria-selected="true">Память</button>
+    <button type="button" role="tab" id="tab-config" aria-selected="false">Настройки</button>
+  </nav>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+  <main id="panel-memory">
+    <p class="hint" id="memory-empty" hidden>Записей нет.</p>
+    <ul class="topics" id="topics"></ul>
+  </main>
+  <main id="panel-config" hidden>
+    <p class="hint">Изменения пишутся в config.toml и применяются после рестарта бота.</p>
+    <ul class="settings" id="settings"></ul>
+  </main>
+</body>
+</html>

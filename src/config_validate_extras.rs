@@ -16,6 +16,28 @@ impl VoiceSettings {
     }
 }
 
+impl WebSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.listen.parse::<SocketAddr>().is_err() {
+            return Err("web.listen must be a socket address like 0.0.0.0:8090".into());
+        }
+        if let Some(raw) = &self.public_url {
+            let url = parse_http_endpoint(raw, "web.public_url")?;
+            if url.scheme() != "https" {
+                return Err("web.public_url must use https".into());
+            }
+            // The router serves `/`, `/app.js`, `/style.css` and `/api/*` at the
+            // root and the documented nginx snippet does not strip a prefix, so
+            // a path segment would load a page whose API calls 404.
+            if url.path() != "/" {
+                return Err("web.public_url must not carry a path prefix".into());
+            }
+        }
+        count("web.auth_max_age_secs", self.auth_max_age_secs, 60, 604_800)?;
+        usize_count("web.max_body_bytes", self.max_body_bytes, 1024, 1_048_576)
+    }
+}
+
 impl CodeSettings {
     pub(crate) fn validate(&self) -> Result<(), String> {
         count(

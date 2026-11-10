@@ -26,6 +26,7 @@ impl Config {
         self.image_fetch.validate()?;
         self.cleanup.validate()?;
         self.usage.validate()?;
+        self.web.validate()?;
         self.retry.validate()
     }
 }
