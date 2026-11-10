@@ -2,8 +2,9 @@ use crate::prelude::*;
 use crate::search::{SearchClient, SearchProvider};
 use crate::{llm_request_built, llm_response};
 use crate::{
-    CompleteError, Completion, CompletionRequest, ResearchRegistry, TitleResult, ToolRegistry,
-    Usage, COMMUNICATION_GUIDE, FEATURE_TITLE_PROMPT, SYSTEM_PROMPT,
+    CompleteError, Completion, CompletionRequest, LlmSettings, ReasoningJudge, ReasoningMode,
+    ResearchRegistry, TitleResult, ToolRegistry, Usage, COMMUNICATION_GUIDE, FEATURE_TITLE_PROMPT,
+    SYSTEM_PROMPT,
 };
 use serde_json::json;
 use tokio::sync::{Mutex, OwnedSemaphorePermit};
@@ -34,7 +35,7 @@ pub(crate) struct ChatConfig {
     pub(crate) profile_cache: Arc<Mutex<crate::chat_profile::ProfileCache>>,
     pub(crate) research_cooldown: Duration,
     pub(crate) code_dir: PathBuf,
-    reasoning_effort: Option<String>,
+    judge: Arc<ReasoningJudge>,
 }
 
 impl ChatConfig {
@@ -60,6 +61,11 @@ impl ChatConfig {
             .unwrap_or_else(|_| reqwest::Client::new());
         let system_prompt: Arc<str> =
             Arc::from(format!("{COMMUNICATION_GUIDE}\n\n---\n\n{SYSTEM_PROMPT}"));
+        let judge = Arc::new(ReasoningJudge {
+            mode: ReasoningMode::from_settings(&settings.llm),
+            classifier: None,
+            slots: None,
+        });
         Self {
             base_url,
             system_prompt,
@@ -83,8 +89,37 @@ impl ChatConfig {
             profile_cache: Arc::new(Mutex::new(crate::chat_profile::ProfileCache::default())),
             research_cooldown: Duration::from_secs(settings.research.cooldown_secs),
             code_dir: PathBuf::from(&settings.paths.code_dir),
-            reasoning_effort: reasoning_effort(),
+            judge,
         }
+    }
+
+    /// Enables the `auto` classifier. Production attaches it once from the
+    /// loaded settings; a chat config without it keeps the policy default, which
+    /// also keeps the test suite off the network.
+    pub(crate) fn with_reasoning_classifier(self, settings: &LlmSettings) -> Self {
+        let (classifier, slots) = build_classifier(settings, &self.judge.mode);
+        self.with_classifier(classifier, slots)
+    }
+
+    /// The testable half of the attachment seam: it takes an already built
+    /// client and never reads the environment or the global config.
+    pub(crate) fn with_classifier(
+        mut self,
+        classifier: Option<crate::jev::JevClient>,
+        slots: Option<Arc<Semaphore>>,
+    ) -> Self {
+        self.judge = Arc::new(ReasoningJudge {
+            mode: self.judge.mode.clone(),
+            classifier,
+            slots,
+        });
+        self
+    }
+
+    /// A cheap handle a turn can move into a spawned task: it carries only the
+    /// mode, the client and the semaphore, never the tool registry or the pool.
+    pub(crate) fn judge(&self) -> Arc<ReasoningJudge> {
+        self.judge.clone()
     }
 
     pub(crate) async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
@@ -250,7 +285,7 @@ impl ChatConfig {
         request: &CompletionRequest<'_>,
     ) -> Result<Completion, CompleteError> {
         match self.complete_with(request, true, request.reasoning).await {
-            Err(CompleteError::Rejected) if self.reasoning_effort.is_some() => {
+            Err(CompleteError::Rejected) if self.judge.mode.is_configured() => {
                 let mut fallback = *request;
                 fallback.reasoning = true;
                 match self.complete_with(&fallback, true, false).await {
@@ -278,11 +313,14 @@ impl ChatConfig {
         body.insert("messages".to_owned(), json!(request.messages));
         body.insert("max_tokens".to_owned(), json!(request.max_tokens));
         body.insert("temperature".to_owned(), json!(request.temperature));
-        if with_reasoning {
-            if let Some(effort) = self.reasoning_effort.as_deref() {
-                body.insert("reasoning_effort".to_owned(), json!(effort));
-            }
-        } else if !request.reasoning && self.reasoning_effort.is_some() {
+        let effort = match (&self.judge.mode, with_reasoning) {
+            (ReasoningMode::Fixed(effort), true) => Some(effort.as_str()),
+            (ReasoningMode::Auto(policy), true) => Some(policy.resolve(request.effort).as_str()),
+            _ => None,
+        };
+        if let Some(effort) = effort {
+            body.insert("reasoning_effort".to_owned(), json!(effort));
+        } else if !request.reasoning && self.judge.mode.is_configured() {
             body.insert("reasoning_effort".to_owned(), json!("none"));
         }
         if with_tools {
@@ -406,7 +444,7 @@ impl ChatConfig {
                 usage.map(|u| u.input_tokens as u64),
                 usage.map(|u| u.output_tokens as u64),
             );
-            if with_reasoning && self.reasoning_effort.is_some() {
+            if with_reasoning && self.judge.mode.is_configured() {
                 if let (Some(obj), Some(fr)) = (
                     msg.as_object_mut(),
                     value
@@ -428,12 +466,47 @@ impl ChatConfig {
     }
 }
 
-fn reasoning_effort() -> Option<String> {
-    config()
-        .llm
-        .reasoning_effort
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"))
-        .map(str::to_owned)
+/// Builds the `auto` classifier once at startup. A missing `JEV_API_KEY`
+/// disables classification loudly and leaves the policy default in place, so a
+/// chat turn never depends on the tiny model being reachable; a malformed
+/// `[llm.reasoning]` section already fails startup validation.
+fn build_classifier(
+    settings: &LlmSettings,
+    mode: &ReasoningMode,
+) -> (Option<crate::jev::JevClient>, Option<Arc<Semaphore>>) {
+    if mode.policy().is_none() {
+        return (None, None);
+    }
+    let key = env::var("JEV_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let Some(key) = key else {
+        tracing::warn!("llm.reasoning_effort = auto without JEV_API_KEY: using the fallback tier");
+        return (None, None);
+    };
+    let url = match crate::parse_http_endpoint(&settings.reasoning.url, "llm.reasoning.url") {
+        Ok(url) => url,
+        Err(error) => {
+            tracing::warn!(%error, "reasoning classifier disabled");
+            return (None, None);
+        }
+    };
+    let policy = &settings.reasoning;
+    match crate::jev::JevClient::new(
+        url,
+        key,
+        policy.model.clone(),
+        Duration::from_millis(policy.timeout_ms),
+        policy.max_response_bytes,
+        policy.min_confidence,
+    ) {
+        Ok(client) => (
+            Some(client),
+            Some(Arc::new(Semaphore::new(policy.concurrency))),
+        ),
+        Err(error) => {
+            tracing::warn!(%error, "reasoning classifier disabled");
+            (None, None)
+        }
+    }
 }

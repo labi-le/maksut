@@ -61,14 +61,17 @@ impl Settings {
                     .clone()
                     .unwrap_or_else(|| search_default(cfg.search.provider).to_string());
                 let search = parse_http_endpoint(&search, "search.url")?;
-                Some(ChatConfig::new(
-                    base,
-                    key,
-                    cfg.llm.model.clone(),
-                    search,
-                    cfg.search.provider,
-                    tavily_key,
-                ))
+                Some(
+                    ChatConfig::new(
+                        base,
+                        key,
+                        cfg.llm.model.clone(),
+                        search,
+                        cfg.search.provider,
+                        tavily_key,
+                    )
+                    .with_reasoning_classifier(&cfg.llm),
+                )
             }
             _ => None,
         };

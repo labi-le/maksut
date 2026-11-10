@@ -12,6 +12,9 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) owner: bool,
     pub(crate) prompt: &'a str,
     pub(crate) image: Option<&'a ChatImage>,
+    /// Tier resolved by the `auto` judge before the model slot was taken;
+    /// `None` for a fixed mode, vision turns and blank prompts.
+    pub(crate) effort: Option<Effort>,
     pub(crate) followup: bool,
     pub(crate) sticker_mode: bool,
     pub(crate) reply_context: Option<&'a str>,
@@ -61,6 +64,17 @@ pub(crate) async fn reply_with_chat(
     if !matches!(decision, Decision::Reply | Decision::Sticker) {
         return;
     }
+    // The tiny judge runs while the turn waits for its pacing slot, chat locks
+    // and media download, and the result is awaited before the model slot is
+    // taken: a slow classifier cannot starve the model concurrency. Vision
+    // turns and blank prompts cannot vary the answer, so they skip it.
+    let judge = chat.judge();
+    let judge_task =
+        (judge.can_classify() && input.pending_media.is_none() && !input.prompt.trim().is_empty())
+            .then(|| {
+                let prompt = input.prompt.clone();
+                tokio::spawn(async move { judge.resolve(&prompt).await })
+            });
     chat.pace(sender.id).await;
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
     let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
@@ -77,12 +91,19 @@ pub(crate) async fn reply_with_chat(
         .await
     {
         tracing::debug!("skip: burst continuation already answered");
+        if let Some(task) = &judge_task {
+            task.abort();
+        }
         return;
     }
     // Hold the image permit across `chat.acquire()` so downloaded bytes stay
     // bounded without occupying a model slot while Telegram serves the file.
     let (downloaded_image, image_permit) =
         download_pending_image(bot, input.pending_media.as_ref()).await;
+    let turn_effort = match judge_task {
+        Some(task) => task.await.ok().flatten(),
+        None => None,
+    };
     let Some(_permit) = chat.acquire().await else {
         return;
     };
@@ -106,6 +127,7 @@ pub(crate) async fn reply_with_chat(
         owner,
         prompt: effective_prompt,
         image: downloaded_image.as_ref(),
+        effort: turn_effort,
         followup: input.followup,
         sticker_mode: decision == Decision::Sticker,
         reply_context: input.reply_context.as_deref(),
@@ -317,6 +339,7 @@ pub(crate) async fn chat_reply_with_proposal(
         author_name: turn.sender_name.to_owned(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);
+    let turn_effort = turn.effort;
     let max_rounds = config().chat.tool_rounds;
     for round in 0..max_rounds {
         let c = &config().chat;
@@ -332,6 +355,9 @@ pub(crate) async fn chat_reply_with_proposal(
             .allow_feature(state.allow_feature);
         if turn.image.is_some() {
             request = request.without_reasoning();
+        }
+        if let Some(effort) = turn_effort {
+            request = request.effort(effort);
         }
         let force_synthesis = max_rounds > 1 && round + 1 == max_rounds;
         llm_round(round, max_tokens, request.reasoning, state.research.used);

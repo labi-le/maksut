@@ -1615,22 +1615,53 @@ async fn empty_reasoning_reply_retries_without_reasoning() {
     assert_eq!(reply.text, "ответ после повтора");
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    let expected = crate::config()
-        .llm
-        .reasoning_effort
-        .clone()
-        .filter(|value| !value.trim().is_empty() && !value.eq_ignore_ascii_case("none"));
     assert_eq!(
         body_of(&requests[0])
             .get("reasoning_effort")
             .and_then(Value::as_str),
-        expected.as_deref()
+        Some("low"),
+        "auto without a reachable classifier must send the configured default tier"
     );
     assert_eq!(
         body_of(&requests[1])
             .get("reasoning_effort")
             .and_then(Value::as_str),
         Some("none")
+    );
+    assert!(
+        requests.iter().all(|request| body_of(request)
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            != Some("auto")),
+        "the literal auto must never reach the provider"
+    );
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn auto_mode_sends_the_resolved_tier() {
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"ок"}}]}"#.into(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let messages = [serde_json::json!({"role": "user", "content": "объясни, почему"})];
+    let request = crate::CompletionRequest::new(&messages, true, 100).effort(Effort::High);
+    let _ = config.complete_with(&request, false, true).await.unwrap();
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(
+        body_of(&requests[0])
+            .get("reasoning_effort")
+            .and_then(Value::as_str),
+        Some("high"),
+        "the tier resolved for the turn must reach the request body"
     );
     llm.task.abort();
 }
@@ -1960,6 +1991,7 @@ async fn research_request_marks_the_message_with_eyes() {
         owner: true,
         prompt: "сделай ресерч по rust",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2032,6 +2064,7 @@ async fn plain_reply_does_not_react_to_the_message() {
         owner: true,
         prompt: "привет",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2098,6 +2131,7 @@ async fn web_search_marks_the_message_on_every_pass() {
         owner: true,
         prompt: "погугли rust",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2180,6 +2214,7 @@ async fn read_url_marks_the_message_on_every_pass() {
         owner: true,
         prompt: &prompt,
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2992,6 +3027,7 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         owner: false,
         prompt: "ору с этого деплоя",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: true,
         reply_context: None,
@@ -3091,6 +3127,7 @@ async fn normal_turn_sticker_placeholder_picks_sticker_and_burst_dedup_detects_a
         owner: true,
         prompt: "давай гачимучи",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -3326,6 +3363,7 @@ async fn final_tool_round_forces_tool_free_synthesis_instead_of_tools_error() {
         owner: true,
         prompt: "изучи",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,

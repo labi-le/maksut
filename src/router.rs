@@ -470,7 +470,9 @@ fn is_short_reaction(text: &str) -> bool {
 
 const MAX_STATE_CHARS: usize = 2000;
 
-fn clamp_state(value: &str) -> String {
+/// Bounds what the tiny classifier sees; the router and the reasoning judge
+/// share one cap so an enormous message cannot inflate a classification call.
+pub(crate) fn clamp_state(value: &str) -> String {
     value.chars().take(MAX_STATE_CHARS).collect()
 }
 
