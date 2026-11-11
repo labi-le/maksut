@@ -149,6 +149,13 @@ fn followup_questions_and_requests_reply() {
     assert_eq!(decide_rules(&followup("загугли это")), Decision::Reply);
     assert_eq!(decide_rules(&followup("изучай ебать")), Decision::Reply);
     assert_eq!(decide_rules(&followup("а другой любимый")), Decision::Reply);
+    assert_eq!(
+        decide_rules(&followup(
+            "cравни с Радиатор для SSD M.2 ID-Cooling ZERO M05"
+        )),
+        Decision::Reply,
+        "Latin 'c' typo in 'cравни' must still trigger a reply"
+    );
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
     assert_eq!(decide_rules(&followup("понял тебя")), Decision::Silent);
     assert_eq!(decide_rules(&followup("принял")), Decision::Silent);
@@ -162,6 +169,12 @@ fn followup_questions_and_requests_reply() {
         decide_rules(&followup("что это значит вадик")),
         Decision::Wait
     );
+    assert_eq!(
+        decide_rules(&followup("он тут главные экспериментатор с ии")),
+        Decision::Wait,
+        "third-person statement starting with 'он' without question or bot name must stay Wait"
+    );
+    assert_eq!(decide_rules(&followup("ему не понравился")), Decision::Wait);
     assert!(crate::chat_style::is_stop_followup("молчи"));
     assert!(crate::chat_style::is_stop_followup("тише"));
     assert!(crate::chat_style::is_stop_followup("оффнись"));

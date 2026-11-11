@@ -169,6 +169,30 @@ async fn chat_lock_allows_concurrent_turns_while_blocking_compaction_write() {
         chat_lock_a.try_write().is_ok(),
         "memory_compactor write() succeeds once active turns finish"
     );
+    let now = crate::memory::unix_now();
+    for (mid, role, author, text, offset) in [
+        (100, "user", 10, "25 190 стоит", 25),
+        (101, "user", 10, "да и всё что ты скинул нет в наличии", 22),
+        (102, "assistant", 10, "на озоне есть за 8500", 1),
+    ] {
+        sqlx::query(
+            "INSERT INTO chat_messages (chat_id, author_id, author_name, role, text, message_id, flags, created_at) VALUES (?, ?, 'Денис', ?, ?, ?, 0, ?)",
+        )
+        .bind(chat_id.0)
+        .bind(author)
+        .bind(role)
+        .bind(text)
+        .bind(mid)
+        .bind(now - offset)
+        .execute(&settings.database)
+        .await
+        .unwrap();
+    }
+    assert!(
+        crate::memory::burst_already_answered(&settings.database, chat_id, UserId(10), 101, now)
+            .await,
+        "burst continuation waiting on user_turn_lock while a 25s tool turn finishes must be detected as already answered"
+    );
 }
 
 #[tokio::test]

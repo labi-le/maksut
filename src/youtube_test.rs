@@ -252,6 +252,7 @@ case "$*" in
     esac
     exit 0 ;;
 esac
+ALL_ARGS="$*"
 selected=no
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -270,6 +271,25 @@ if [ "$selected" = yes ]; then
     huge) printf '%0700001d' 0 > "$dir/huge.mp4.part"; exit 9 ;;
     slow) sleep 2; exit 9 ;;
     success) printf done > "$dir/finished.mp4"; printf '%s\n' "$dir/finished.mp4" > "$manifest"; exit 0 ;;
+    authfallback) exit 9 ;;
+  esac
+fi
+if [ "$url" = authfallback ]; then
+  cookie=
+  for arg in $ALL_ARGS; do
+    if [ "$prev" = --cookies ]; then cookie=$arg; fi
+    prev=$arg
+  done
+  case "$(cat "$cookie" 2>/dev/null)" in
+    *fresh-synthetic-marker*)
+      printf refreshed > "$dir/finished.mp4"
+      printf '%s\n' "$dir/finished.mp4" > "$manifest"
+      exit 0
+      ;;
+    *)
+      printf '%s\n' 'ERROR: [youtube] authfallback: The provided YouTube cookies are no longer valid.' >&2
+      exit 1
+      ;;
   esac
 fi
 [ "$url" != unselected ] || exit 9
@@ -360,11 +380,42 @@ printf '%s\n' "$dir/finished.mp4" > "$manifest"
         fs::read_to_string(root.path().join("unselected-attempts")).unwrap(),
         "no\n"
     );
+    let cookies = root.path().join("mounted-cookies.txt");
+    fs::write(&cookies, cookie_refresh_jar(false)).unwrap();
+    let (refresh_url, refresh_calls, _sources, refresh_server) =
+        fake_cookie_service(cookies.clone(), 200).await;
+    cfg.cookies_file = Some(cookies);
+    cfg.cookie_refresh_url = Some(refresh_url);
+    let auth_fb = tempfile::tempdir_in(root.path()).unwrap();
+    let refreshed = download_videos(
+        &allowed_url("https://youtu.be/authfallback").unwrap(),
+        &cfg,
+        auth_fb.path(),
+        Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    refresh_server.abort();
+    assert!(refreshed.process_ok);
+    assert_eq!(refreshed.selection.files.len(), 1);
+    assert_eq!(
+        fs::read(&refreshed.selection.files[0].path).unwrap(),
+        b"refreshed"
+    );
+    assert_eq!(
+        refresh_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "auth error on fallback must trigger a single cookie refresh"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("authfallback-attempts")).unwrap(),
+        "yes\nno\nno\n"
+    );
     assert_eq!(
         fs::read_to_string(root.path().join("probes"))
             .unwrap()
             .lines()
             .count(),
-        6
+        7
     );
 }

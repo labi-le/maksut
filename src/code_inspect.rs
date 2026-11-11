@@ -37,6 +37,29 @@ fn is_skipped_path(base: &Path, candidate: &Path) -> bool {
         .unwrap_or(true)
 }
 
+fn normalize_inspect_path(relative: &str) -> &str {
+    let trimmed = relative.trim().trim_start_matches('/');
+    let without_hash = trimmed
+        .split_once('#')
+        .map_or(trimmed, |(path, _)| path.trim());
+    let stripped = match without_hash.rsplit_once(':') {
+        Some((path, suffix))
+            if !suffix.is_empty()
+                && suffix
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, 'L' | 'l' | '-' | '.')) =>
+        {
+            path.trim()
+        }
+        _ => without_hash,
+    };
+    if stripped == "config.toml" {
+        "src/config_sections.rs"
+    } else {
+        stripped
+    }
+}
+
 fn safe_path(base: &Path, relative: &str) -> Option<PathBuf> {
     let candidate = std::fs::canonicalize(base.join(relative)).ok()?;
     if !candidate.starts_with(base) || !candidate.is_file() || !allowed(&candidate) {
@@ -146,7 +169,8 @@ pub(crate) fn inspect(base: &Path, query: &str, path: Option<&str>) -> String {
     let started = time::Instant::now();
     let mut search_root = base.clone();
     if let Some(raw_path) = path.map(str::trim).filter(|path| !path.is_empty()) {
-        if let Some(file_path) = safe_path(&base, raw_path) {
+        let normalized_path = normalize_inspect_path(raw_path);
+        if let Some(file_path) = safe_path(&base, normalized_path) {
             let Some(text) = read_text(&file_path) else {
                 tracing::warn!(reason = "read", "code inspection rejected");
                 return "Файл пуст или слишком большой.".to_owned();

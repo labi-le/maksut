@@ -56,61 +56,12 @@ pub(crate) async fn download_videos(
     if let Some(diagnostic) = first.diagnostic {
         trace_event(&mut first.events, diagnostic);
     }
-    let auth_failure = !first.process_ok
-        && !first.limited
-        && !interrupted
-        && first.selection.files.is_empty()
-        && first
-            .diagnostic
-            .is_some_and(|diagnostic| is_cookie_auth_detail(diagnostic.detail));
-    if auth_failure {
-        if cfg.cookies_file.is_some()
-            && time::Instant::now() < deadline
-            && retryable_output(dir, cfg.max_media_bytes).await
-            && request_cookie_refresh(cfg, cookie_source(url), deadline, &mut first.events).await
-            && time::Instant::now() < deadline
-        {
-            // Reuse the selected format, without a second metadata probe or fallback.
-            if clear_failed_attempt(dir).await.is_ok() && time::Instant::now() < deadline {
-                trace_event(
-                    &mut first.events,
-                    FailureDiagnostic::new("retry", "Started"),
-                );
-                match download_videos_attempt(url, cfg, dir, deadline, selected_format.as_deref())
-                    .await
-                {
-                    Ok((mut retry, _)) => {
-                        if let Some(diagnostic) = retry.diagnostic {
-                            trace_event(&mut first.events, diagnostic);
-                        }
-                        if !retry.process_ok {
-                            retry.diagnostic = first.diagnostic;
-                        }
-                        retry.events = first.events;
-                        finish(retry.selection.files.len());
-                        return Ok(retry);
-                    }
-                    Err(reason) => trace_event(
-                        &mut first.events,
-                        FailureDiagnostic::new(
-                            "retry",
-                            if reason == "Не удалось запустить yt-dlp" {
-                                "Launch failed"
-                            } else {
-                                "Attempt failed"
-                            },
-                        ),
-                    ),
-                }
-            } else {
-                trace_event(
-                    &mut first.events,
-                    FailureDiagnostic::new("retry", "Preparation failed"),
-                );
-            }
-        }
-        finish(first.selection.files.len());
-        return Ok(first);
+    if is_auth_retry_candidate(&first, interrupted) {
+        let retried =
+            retry_after_cookie_refresh(url, cfg, dir, deadline, selected_format.as_deref(), first)
+                .await;
+        finish(retried.selection.files.len());
+        return Ok(retried);
     }
     let can_fallback_after_timeout = interrupted
         && deadline.saturating_duration_since(time::Instant::now()) >= Duration::from_secs(15);
@@ -140,26 +91,92 @@ pub(crate) async fn download_videos(
         &mut first.events,
         FailureDiagnostic::new("format", "Fallback started"),
     );
-    let (mut fallback, _) = match download_videos_attempt(url, cfg, dir, deadline, None).await {
-        Ok(fallback) => fallback,
-        Err(reason) => {
-            trace_event(
-                &mut first.events,
-                FailureDiagnostic::new("format", "Fallback failed"),
-            );
-            return Err(DownloadFailure {
-                reason,
-                diagnostic: FailureDiagnostic::new("yt-dlp", "Download failed"),
-                events: first.events,
-            });
-        }
-    };
+    let (mut fallback, fallback_interrupted) =
+        match download_videos_attempt(url, cfg, dir, deadline, None).await {
+            Ok(fallback) => fallback,
+            Err(reason) => {
+                trace_event(
+                    &mut first.events,
+                    FailureDiagnostic::new("format", "Fallback failed"),
+                );
+                return Err(DownloadFailure {
+                    reason,
+                    diagnostic: FailureDiagnostic::new("yt-dlp", "Download failed"),
+                    events: first.events,
+                });
+            }
+        };
     if let Some(diagnostic) = fallback.diagnostic {
         trace_event(&mut first.events, diagnostic);
     }
     fallback.events = first.events;
+    if is_auth_retry_candidate(&fallback, fallback_interrupted) {
+        fallback = retry_after_cookie_refresh(url, cfg, dir, deadline, None, fallback).await;
+    }
     finish(fallback.selection.files.len());
     Ok(fallback)
+}
+
+fn is_auth_retry_candidate(result: &DownloadResult, interrupted: bool) -> bool {
+    !result.process_ok
+        && !result.limited
+        && !interrupted
+        && result.selection.files.is_empty()
+        && result
+            .diagnostic
+            .is_some_and(|diagnostic| is_cookie_auth_detail(diagnostic.detail))
+}
+
+async fn retry_after_cookie_refresh(
+    url: &Url,
+    cfg: &Settings,
+    dir: &Path,
+    deadline: time::Instant,
+    selected_format: Option<&str>,
+    mut attempt: DownloadResult,
+) -> DownloadResult {
+    if cfg.cookies_file.is_some()
+        && time::Instant::now() < deadline
+        && retryable_output(dir, cfg.max_media_bytes).await
+        && request_cookie_refresh(cfg, cookie_source(url), deadline, &mut attempt.events).await
+        && time::Instant::now() < deadline
+    {
+        if clear_failed_attempt(dir).await.is_ok() && time::Instant::now() < deadline {
+            trace_event(
+                &mut attempt.events,
+                FailureDiagnostic::new("retry", "Started"),
+            );
+            match download_videos_attempt(url, cfg, dir, deadline, selected_format).await {
+                Ok((mut retry, _)) => {
+                    if let Some(diagnostic) = retry.diagnostic {
+                        trace_event(&mut attempt.events, diagnostic);
+                    }
+                    if !retry.process_ok {
+                        retry.diagnostic = attempt.diagnostic;
+                    }
+                    retry.events = attempt.events;
+                    return retry;
+                }
+                Err(reason) => trace_event(
+                    &mut attempt.events,
+                    FailureDiagnostic::new(
+                        "retry",
+                        if reason == "Не удалось запустить yt-dlp" {
+                            "Launch failed"
+                        } else {
+                            "Attempt failed"
+                        },
+                    ),
+                ),
+            }
+        } else {
+            trace_event(
+                &mut attempt.events,
+                FailureDiagnostic::new("retry", "Preparation failed"),
+            );
+        }
+    }
+    attempt
 }
 
 pub(crate) async fn download_videos_attempt(

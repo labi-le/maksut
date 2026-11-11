@@ -272,6 +272,7 @@ const REQUEST_STEMS: &[&str] = &[
     "исправ",
     "добав",
     "сравн",
+    "cравн",
     "подскаж",
     "дай",
     "напомн",
@@ -338,7 +339,18 @@ const OTHER_PARTICIPANT_VOCATIVES: &[&str] = &[
     "олег",
     "олежа",
     "иван",
+    "лейла",
+    "павел",
+    "паша",
+    "евгений",
+    "женя",
+    "виталий",
+    "виталик",
+    "марина",
+    "даниил",
 ];
+
+const THIRD_PERSON_LEAD_PRONOUNS: &[&str] = &["он", "она", "оно", "они", "ему", "ей", "им"];
 
 fn addresses_other_participant(text: &str) -> bool {
     if text
@@ -357,6 +369,14 @@ fn addresses_other_participant(text: &str) -> bool {
         return false;
     };
     if OTHER_PARTICIPANT_VOCATIVES.contains(&first.as_str()) {
+        return true;
+    }
+    if THIRD_PERSON_LEAD_PRONOUNS.contains(&first.as_str())
+        && !words
+            .iter()
+            .any(|w| crate::addressing::BOT_NAME_FORMS.contains(&w.as_str()))
+        && !expects_answer(text)
+    {
         return true;
     }
     words.len() >= 2

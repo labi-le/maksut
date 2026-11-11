@@ -290,7 +290,7 @@ pub(crate) async fn burst_already_answered(
         return false;
     };
     let (uid, mid) = (user_id.0 as i64, i64::from(message_id));
-    let fresh = |t: i64| now.saturating_sub(t) <= 30;
+    let fresh = |t: i64| now.saturating_sub(t) <= 60;
     let Some(curr_idx) = rows
         .iter()
         .position(|(a, r, m, t)| *a == uid && r == "user" && *m == Some(mid) && fresh(*t))

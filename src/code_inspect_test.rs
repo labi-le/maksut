@@ -44,6 +44,8 @@ fn inspect_rejects_traversal_and_unknown_files() {
     std::fs::write(dir.path().join("secret.txt"), "hello\n").unwrap();
     assert!(!inspect(dir.path(), "hello", Some("../README.md")).contains("hello"));
     assert!(!inspect(dir.path(), "hello", Some("secret.txt")).contains("hello"));
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/config_sections.rs"), "model = 1\n").unwrap();
     let file_view = inspect(dir.path(), "", Some("README.md"));
     assert!(
         file_view
@@ -51,6 +53,25 @@ fn inspect_rejects_traversal_and_unknown_files() {
         "{file_view}"
     );
     assert!(file_view.contains("#L1: hello"), "{file_view}");
+    assert!(
+        inspect(dir.path(), "", Some("/README.md#L1-L5")).contains("#L1: hello"),
+        "leading slash and #L line anchor must be normalized"
+    );
+    assert!(
+        inspect(dir.path(), "", Some("README.md:1-5")).contains("#L1: hello"),
+        ":line range suffix must be normalized"
+    );
+    assert!(
+        inspect(dir.path(), "model", Some("config.toml")).contains("src/config_sections.rs:1"),
+        "config.toml must resolve to mounted src/config_sections.rs"
+    );
+    assert!(
+        !crate::code_inspect::valid_self_source_url(
+            dir.path(),
+            "https://github.com/labi-le/maxwell/blob/main/README.md:1-5"
+        ),
+        "valid_self_source_url must reject :line range suffixes"
+    );
 }
 
 #[test]

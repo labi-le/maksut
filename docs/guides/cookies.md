@@ -17,7 +17,7 @@ Cookies come from an authenticated Chrome profile (`~/.config/google-chrome/Defa
 - Ordinary HTTP `403`, private/deleted posts, or missing metadata never trigger a refresh. A `cookies are no longer valid` warning on a download that succeeded does not trigger a retry ([ADR 007](../adr/007-telegram-timeout-and-cookie-warnings.md)).
 - Refresh responses are deduplicated for 5 seconds so parallel video + X photo extraction on one link does not run two SSH exports.
 - After a successful refresh, the bot retries the failed operation **at most once**:
-  - Video and metadata downloads retry only when no completed files were already produced.
+  - Video and metadata downloads retry only when no completed files were already produced (including when a YouTube selected-format attempt times out or fails and the subsequent default-format fallback hits an authentication or expired-cookie failure).
   - For X/Twitter, if the video already succeeded and only the photo helper failed with an auth error, only the photo helper is retried.
   - For TikTok and Pinterest/Instagram photo posts, cookies are refreshed before re-reading post metadata.
 
