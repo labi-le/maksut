@@ -21,7 +21,7 @@ A model answer that fails schema validation is retried once with the rejection r
 
 The reviewer is whichever account owns `REVIEWER_TOKEN`. Two workable choices:
 
-- **Owner's own account (recommended).** Create a *fine-grained* PAT scoped to `labi-le/maxwell` with the single writable permission **Pull requests: Read and write**, plus the mandatory **Metadata: Read**; set an expiry and leave everything else, including **Contents**, at **No access**. A personal account owns the repository, so the fine-grained token can select it — the limitation described below only applies to accounts that do not own the repository. No collaborator invitation is needed, and the token cannot touch any other repository. Reviews appear under the owner's login and carry only the summary and findings; an approval with no findings has an empty body, so the login is the only authorship signal. Do not merge on an approval without reading it.
+- **Owner's own account (recommended).** Create a *fine-grained* PAT scoped to `labi-le/maksut` with the single writable permission **Pull requests: Read and write**, plus the mandatory **Metadata: Read**; set an expiry and leave everything else, including **Contents**, at **No access**. A personal account owns the repository, so the fine-grained token can select it — the limitation described below only applies to accounts that do not own the repository. No collaborator invitation is needed, and the token cannot touch any other repository. Reviews appear under the owner's login and carry only the summary and findings; an approval with no findings has an empty body, so the login is the only authorship signal. Do not merge on an approval without reading it.
 - **Dedicated reviewer account.** Invite it as a collaborator with **Write** (an outside account cannot submit an approving or requesting-changes review without it; only collaborators' reviews count for branch protection) and create a **classic** PAT with the `repo` scope. A fine-grained token owned by a personal account cannot be scoped to repositories that account does not own, the same limitation `docs/buer.md` records for the triage bot; keep that account invited to this repository only, so the classic scope reaches nothing else.
 
 Classic scopes cannot express "review only": the smallest scope that can publish a review is `public_repo`, which also grants read/write access to code, collaborators, commit statuses, and deployments in every public repository the account can write to. A classic token therefore does not meet the read-only requirement this workflow assumes; use it only on an account invited to this repository alone, and prefer the fine-grained token above.
@@ -29,13 +29,13 @@ Classic scopes cannot express "review only": the smallest scope that can publish
 Then store two repository secrets:
 
 ```sh
-gh secret set REVIEWER_TOKEN --repo labi-le/maxwell       # PAT of the chosen reviewer identity
-gh secret set REVIEWER_LLM_API_KEY --repo labi-le/maxwell # LiteLLM key with gemini-4-argon access
+gh secret set REVIEWER_TOKEN --repo labi-le/maksut       # PAT of the chosen reviewer identity
+gh secret set REVIEWER_LLM_API_KEY --repo labi-le/maksut # LiteLLM key with gemini-4-argon access
 ```
 
 The bot's own `LLM_API_KEY` is restricted to `deepseek-v4.1-flash` and answers `403 The requested model 'gemini-4-argon' is not available for this API key`; the reviewer needs a key that lists that model. Switching identities later only means replacing `REVIEWER_TOKEN`; reviews already published stay attributed to the account that posted them.
 
-Optionally pin the model per repository without editing the workflow: `gh variable set PR_REVIEW_MODEL --repo labi-le/maxwell --body gemini-4-argon`. `LLM_BASE_URL` defaults to `https://llm.labile.cc/v1`.
+Optionally pin the model per repository without editing the workflow: `gh variable set PR_REVIEW_MODEL --repo labi-le/maksut --body gemini-4-argon`. `LLM_BASE_URL` defaults to `https://llm.labile.cc/v1`.
 
 ## Token scope and trust boundary
 
@@ -61,7 +61,7 @@ What keeps the token away from pull-request code:
 The review event alone does not stop a merge; GitHub needs branch protection to act on it. This payload requires one approving review, dismisses stale approvals, and also requires the `review` job itself, so a reviewer that crashes blocks the merge instead of letting it through:
 
 ```sh
-cat >/tmp/maxwell-protection.json <<'JSON'
+cat >/tmp/maksut-protection.json <<'JSON'
 {
   "required_status_checks": {"strict": true, "contexts": ["review"]},
   "enforce_admins": false,
@@ -72,7 +72,7 @@ cat >/tmp/maxwell-protection.json <<'JSON'
   "restrictions": null
 }
 JSON
-gh api -X PUT repos/labi-le/maxwell/branches/main/protection --input /tmp/maxwell-protection.json
+gh api -X PUT repos/labi-le/maksut/branches/main/protection --input /tmp/maksut-protection.json
 ```
 
 Run it only after `REVIEWER_TOKEN` works: until the reviewer can submit an `APPROVE`, every pull request is blocked. The required `review` check also blocks fork pull requests, which never receive the secrets; keep the requirement off if forks should merge without the bot.
@@ -96,4 +96,4 @@ With `enforce_admins: false` an administrator can still merge without the approv
 
 - Diff content is capped at 120 000 characters, the PR body at 6 000, `AGENTS.md` at 24 000, each preloaded guide or `read_file` response at 16 000 (up to 6 `read_file` calls per review), and the published body at 60 000; anything larger is truncated with a visible marker so the finding set is honest about its own coverage.
 - One review per head SHA per repository: one gateway conversation per push (typically a single call when preloaded guides suffice, plus up to 6 `read_file` tool rounds when the model inspects extra files), plus one retry when the final answer is malformed.
-- The workflow inherits the repository's Actions minutes; `labi-le/maxwell` is public, so they are free.
+- The workflow inherits the repository's Actions minutes; `labi-le/maksut` is public, so they are free.

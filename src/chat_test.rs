@@ -43,7 +43,7 @@ fn chat_prompt_needs_the_name_in_groups() {
         Some("спроси у")
     );
     assert_eq!(
-        chat_prompt("максвелл что такое Rust", false, "MyBot", false),
+        chat_prompt("игорёк что такое Rust", false, "MyBot", false),
         None
     );
     assert_eq!(
@@ -77,7 +77,7 @@ fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
     );
     assert_eq!(
         style_reply("пруф в /docs/adr/012-free-chat.md#L8, docs/guides/chat.md#delivery, см. src/chat.rs:10:, config_sections.rs#L275-277 и (src/memory.rs:15)."),
-        "пруф в [docs/adr/012-free-chat.md#L8](https://github.com/labi-le/maxwell/blob/main/docs/adr/012-free-chat.md#L8), [docs/guides/chat.md#delivery](https://github.com/labi-le/maxwell/blob/main/docs/guides/chat.md#delivery), см. [src/chat.rs#L10](https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10):, [src/config_sections.rs#L275-L277](https://github.com/labi-le/maxwell/blob/main/src/config_sections.rs#L275-L277) и ([src/memory.rs#L15](https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L15))"
+        "пруф в [docs/adr/012-free-chat.md#L8](https://github.com/labi-le/maksut/blob/main/docs/adr/012-free-chat.md#L8), [docs/guides/chat.md#delivery](https://github.com/labi-le/maksut/blob/main/docs/guides/chat.md#delivery), см. [src/chat.rs#L10](https://github.com/labi-le/maksut/blob/main/src/chat.rs#L10):, [src/config_sections.rs#L275-L277](https://github.com/labi-le/maksut/blob/main/src/config_sections.rs#L275-L277) и ([src/memory.rs#L15](https://github.com/labi-le/maksut/blob/main/src/memory.rs#L15))"
     );
     let near_limit = format!("{} src/chat.rs#L10 хвост", "слово ".repeat(645));
     let styled_near_limit = style_reply(&near_limit);
@@ -87,22 +87,22 @@ fn replies_keep_casing_stay_bounded_and_drop_the_trailing_period() {
         styled_near_limit.chars().count()
     );
     let with_url = format!(
-        "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10. {}",
+        "смотри https://github.com/labi-le/maksut/blob/main/src/chat.rs#L10. {}",
         "длинное продолжение ".repeat(20)
     );
     assert!(
         style_reply(&with_url)
-            .contains("https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10"),
+            .contains("https://github.com/labi-le/maksut/blob/main/src/chat.rs#L10"),
         "{}",
         style_reply(&with_url)
     );
     let no_sentence_end = format!(
-        "смотри https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10 {}",
+        "смотри https://github.com/labi-le/maksut/blob/main/src/chat.rs#L10 {}",
         "длинное продолжение без точек ".repeat(20)
     );
     assert!(
         style_reply(&no_sentence_end)
-            .contains("https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10"),
+            .contains("https://github.com/labi-le/maksut/blob/main/src/chat.rs#L10"),
         "{}",
         style_reply(&no_sentence_end)
     );
@@ -162,10 +162,10 @@ fn style_reply_keeps_fenced_code_blocks_on_their_own_lines() {
     let prose_only = "первая строка\nвторая строка";
     assert_eq!(style_reply(prose_only), "первая строка\nвторая строка");
     assert_eq!(render_telegram_html(&style_reply(prose_only)), None);
-    let md_link = style_reply("смотри [snapcompact.rs#L400](snapcompact.rs:400) и `fn build` в [chat.rs](https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L300).");
+    let md_link = style_reply("смотри [snapcompact.rs#L400](snapcompact.rs:400) и `fn build` в [chat.rs](https://github.com/labi-le/maksut/blob/main/src/chat.rs#L300).");
     assert_eq!(
         render_telegram_html(&md_link).as_deref(),
-        Some("смотри <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L400\">snapcompact.rs#L400</a> и <code>fn build</code> в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L300\">chat.rs</a>")
+        Some("смотри <a href=\"https://github.com/labi-le/maksut/blob/main/src/snapcompact.rs#L400\">snapcompact.rs#L400</a> и <code>fn build</code> в <a href=\"https://github.com/labi-le/maksut/blob/main/src/chat.rs#L300\">chat.rs</a>")
     );
     let bold_and_heading = style_reply("## Заголовок\n\n**Суть.** текст с `<tag>`.");
     assert_eq!(
@@ -900,7 +900,7 @@ async fn non_owner_can_use_stickers_and_inspect_code_but_not_remember_self() {
     .await
     .unwrap();
     let llm = mock_server(vec![
-        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_sticker","arguments":"{\"name\":\"pizda\"}"}},{"id":"call_2","type":"function","function":{"name":"remember_self","arguments":"{\"topic\":\"t\",\"fact\":\"f\",\"source_url\":\"https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L1\"}"}}]}}]}"#.into(),
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"send_sticker","arguments":"{\"name\":\"pizda\"}"}},{"id":"call_2","type":"function","function":{"name":"remember_self","arguments":"{\"topic\":\"t\",\"fact\":\"f\",\"source_url\":\"https://github.com/labi-le/maksut/blob/main/src/chat.rs#L1\"}"}}]}}]}"#.into(),
         r#"{"choices":[{"message":{"role":"assistant","content":"ок"}}]}"#.into(),
     ]).await;
     let config = ChatConfig::new(
@@ -1752,7 +1752,7 @@ async fn owner_can_save_directive_without_inspect_code_and_history_tags_owner() 
                 .contains("- [owner] даня: говорить пошёл нахуй и добавлять от себя"),
         "owner directives must be reinforced right before the current turn: {last_non_owner_msg}"
     );
-    let sample = "- код: лимит (https://github.com/labi-le/maxwell/blob/main/src/a.rs#L1)\n- [owner] даня: Даню (@newmdoupdate) материть\n- [owner] клон: (@newmdoupdate2) не трогать\n- [owner] тезка: (@даня) другой\n- [owner] денис: С Денисом (@crudoshlepa) на суржике\n- [owner] почта: писать на test@example.com, (https://t.me/@channel) и t.me/@other коротко";
+    let sample = "- код: лимит (https://github.com/labi-le/maksut/blob/main/src/a.rs#L1)\n- [owner] даня: Даню (@newmdoupdate) материть\n- [owner] клон: (@newmdoupdate2) не трогать\n- [owner] тезка: (@даня) другой\n- [owner] денис: С Денисом (@crudoshlepa) на суржике\n- [owner] почта: писать на test@example.com, (https://t.me/@channel) и t.me/@other коротко";
     let filtered = crate::code_inspect::speaker_owner_directives(
         sample,
         "Даня",
@@ -2462,11 +2462,11 @@ async fn inspect_code_injects_github_link_reminder_and_expands_bare_filenames() 
     .unwrap();
     assert_eq!(
         reply.text,
-        "сжатие контекста лежит в [snapcompact.rs#L1](https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1), а вызов идёт из [src/memory.rs#L260](https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260)"
+        "сжатие контекста лежит в [snapcompact.rs#L1](https://github.com/labi-le/maksut/blob/main/src/snapcompact.rs#L1), а вызов идёт из [src/memory.rs#L260](https://github.com/labi-le/maksut/blob/main/src/memory.rs#L260)"
     );
     assert_eq!(
         render_telegram_html(&reply.text).as_deref(),
-        Some("сжатие контекста лежит в <a href=\"https://github.com/labi-le/maxwell/blob/main/src/snapcompact.rs#L1\">snapcompact.rs#L1</a>, а вызов идёт из <a href=\"https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L260\">src/memory.rs#L260</a>")
+        Some("сжатие контекста лежит в <a href=\"https://github.com/labi-le/maksut/blob/main/src/snapcompact.rs#L1\">snapcompact.rs#L1</a>, а вызов идёт из <a href=\"https://github.com/labi-le/maksut/blob/main/src/memory.rs#L260\">src/memory.rs#L260</a>")
     );
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
@@ -3246,11 +3246,11 @@ fn expand_repo_blob_links_ignores_nonexistent_paths_inline_code_and_unmatched_ba
     let styled = style_reply(text);
     assert!(
         !styled.contains("blob/main/tools/runner.py"),
-        "non-existent tools/runner.py must not become a maxwell link: {styled}"
+        "non-existent tools/runner.py must not become a maksut link: {styled}"
     );
     assert!(
         styled.contains(
-            "[src/chat.rs#L10](https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L10)"
+            "[src/chat.rs#L10](https://github.com/labi-le/maksut/blob/main/src/chat.rs#L10)"
         ),
         "{styled}"
     );

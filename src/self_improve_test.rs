@@ -1459,7 +1459,7 @@ fn planned_notification_names_the_proposer_and_links_the_issue() {
         "id": "plan-1",
         "status": "issue_created",
         "goal": "добавь кнопку",
-        "issue_url": "https://github.com/labi-le/maxwell/issues/1",
+        "issue_url": "https://github.com/labi-le/maksut/issues/1",
         "requested_by": 1,
         "proposed_by": 2,
         "proposed_by_name": "bob",
@@ -1467,7 +1467,7 @@ fn planned_notification_names_the_proposer_and_links_the_issue() {
     let text = crate::self_improve::notification_text(&value).unwrap();
     assert!(text.contains("предложил: bob"));
     assert!(text.contains("issue создана"));
-    assert!(text.contains("https://github.com/labi-le/maxwell/issues/1"));
+    assert!(text.contains("https://github.com/labi-le/maksut/issues/1"));
     assert!(crate::self_improve::notification_markup(&value).is_none());
 }
 
@@ -1611,7 +1611,7 @@ fn parse_owner_command_handles_all_russian_and_slash_variants() {
     assert_eq!(addressed.action, OwnerAction::Approve);
     assert_eq!(addressed.targets, vec!["plan-7"]);
 
-    let punctured = command("Максвелл, отклони #plan-8!");
+    let punctured = command("Максутка, отклони #plan-8!");
     assert_eq!(punctured.action, OwnerAction::Reject);
     assert_eq!(punctured.targets, vec!["plan-8"]);
 
@@ -1653,7 +1653,7 @@ fn bound_result_truncates_oversized_fields_under_cap() {
                 "goal": "ц".repeat(2000),
                 "summary": "с".repeat(500),
                 "files": ["src/a.rs", "src/b.rs"],
-                "issue_url": "https://github.com/labi-le/maxwell/issues/1",
+                "issue_url": "https://github.com/labi-le/maksut/issues/1",
                 "decision": "plan",
                 "already_decided": null,
             })

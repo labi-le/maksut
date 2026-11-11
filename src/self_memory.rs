@@ -74,7 +74,7 @@ pub(crate) async fn record_self_fact(
     } else {
         if !crate::code_inspect::valid_self_source_url(base, source_url) {
             return Err(
-                "source_url должен быть ссылкой https://github.com/labi-le/maxwell/blob/main/<path>[#L<n>]"
+                "source_url должен быть ссылкой https://github.com/labi-le/maksut/blob/main/<path>[#L<n>]"
                     .into(),
             );
         }

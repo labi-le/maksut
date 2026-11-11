@@ -417,7 +417,7 @@ async fn feature_status_tool_call_returns_snapshot() {
         "plan-1.json",
         json!({
             "id": "plan-1", "status": "issue_created", "requested_by": 1, "goal": "сделай кнопку",
-            "summary": "готово", "issue_url": "https://github.com/labi-le/maxwell/issues/1",
+            "summary": "готово", "issue_url": "https://github.com/labi-le/maksut/issues/1",
             "spec": "SECRET SPEC", "review": "SECRET REVIEW", "worktree": "/host/path",
             "created_at": 1,
         }),
@@ -463,7 +463,7 @@ async fn feature_status_tool_call_returns_snapshot() {
     .unwrap();
     assert_eq!(
         reply.text,
-        "#plan-1: issue создана: сделай кнопку\nhttps://github.com/labi-le/maxwell/issues/1"
+        "#plan-1: issue создана: сделай кнопку\nhttps://github.com/labi-le/maksut/issues/1"
     );
     assert!(
         !reply.text.contains("остальное"),
@@ -480,7 +480,7 @@ async fn feature_status_tool_call_returns_snapshot() {
     assert!(result.contains("plan-1"), "{result}");
     assert!(result.contains("issue_created"), "{result}");
     assert!(
-        result.contains("https://github.com/labi-le/maxwell/issues/1"),
+        result.contains("https://github.com/labi-le/maksut/issues/1"),
         "{result}"
     );
     for secret in ["SECRET SPEC", "SECRET REVIEW", "/host/path"] {
@@ -835,7 +835,7 @@ async fn feature_status_rejects_a_fake_issue_url() {
         json!({
             "id": "plan-1", "status": "planned", "requested_by": 1,
             "goal": "сделай кнопку", "created_at": 1,
-            "issue_url": "https://github.com/labi-le/maxwell/issues/1",
+            "issue_url": "https://github.com/labi-le/maksut/issues/1",
         }),
     );
     let pool = open_database(&format!(
@@ -846,7 +846,7 @@ async fn feature_status_rejects_a_fake_issue_url() {
     .unwrap();
     let llm = mock_server(vec![
         tool_response("feature_status", json!({"view": "links"})),
-        reply_response("https://github.com/labi-le/maxwell/issues/999"),
+        reply_response("https://github.com/labi-le/maksut/issues/999"),
     ])
     .await;
     let config = ChatConfig::new(
@@ -1259,7 +1259,7 @@ async fn feature_status_returns_issue_links_for_ready_plans() {
         json!({
             "id": id, "status": "planned", "requested_by": 1,
             "goal": "threads links", "created_at": 1,
-            "issue_url": "https://github.com/labi-le/maxwell/issues/7",
+            "issue_url": "https://github.com/labi-le/maksut/issues/7",
         }),
     );
     write_inbox(
@@ -1308,12 +1308,12 @@ async fn feature_status_returns_issue_links_for_ready_plans() {
     )
     .await
     .unwrap();
-    assert_eq!(reply.text, "Ссылки на issue:\n\n#214537 — issue создана: threads links\nhttps://github.com/labi-le/maxwell/issues/7");
+    assert_eq!(reply.text, "Ссылки на issue:\n\n#214537 — issue создана: threads links\nhttps://github.com/labi-le/maksut/issues/7");
     assert!(!reply.text.contains("остальное"), "{}", reply.text);
     let requests = llm.requests.lock().unwrap();
     let result = tool_contents(&requests[1]).join("\n");
     assert!(
-        result.contains("https://github.com/labi-le/maxwell/issues/7"),
+        result.contains("https://github.com/labi-le/maksut/issues/7"),
         "{result}"
     );
     llm.task.abort();
@@ -1891,7 +1891,7 @@ async fn lookup_in_tasks_matches_github_issue_number_and_strips_duplicate_self_f
             "id": "20261103T120000Z-aaaa1111",
             "status": "issue_created",
             "goal": "telegraph long replies",
-            "issue_url": "https://github.com/labi-le/maxwell/issues/70",
+            "issue_url": "https://github.com/labi-le/maksut/issues/70",
         }),
         true,
     )];

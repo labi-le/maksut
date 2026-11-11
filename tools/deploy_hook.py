@@ -18,11 +18,11 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-REPO = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maxwell"))
+REPO = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maksut"))
 BRANCH = os.environ.get("AUTO_DEPLOY_BRANCH", "main")
 SECRET_FILE = Path(
     os.environ.get(
-        "MAKSUT_HOOK_SECRET_FILE", "/home/labile/projects/maxwell/.secrets/deploy-hook.secret"
+        "MAKSUT_HOOK_SECRET_FILE", "/home/labile/projects/maksut/.secrets/deploy-hook.secret"
     )
 )
 HOST = os.environ.get("MAKSUT_HOOK_HOST", "127.0.0.1")

@@ -20,11 +20,11 @@ import sys
 import tarfile
 from pathlib import Path
 
-REPO = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maxwell"))
+REPO = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maksut"))
 STATE_DIR = Path(os.environ.get("AUTO_DEPLOY_STATE_DIR", str(REPO / "self-improve")))
 REMOTE = os.environ.get("AUTO_DEPLOY_REMOTE", "origin")
 BRANCH = os.environ.get("AUTO_DEPLOY_BRANCH", "main")
-IMAGE_REPO = os.environ.get("AUTO_DEPLOY_IMAGE_REPO", "ghcr.io/labi-le/maxwell")
+IMAGE_REPO = os.environ.get("AUTO_DEPLOY_IMAGE_REPO", "ghcr.io/labi-le/maksut")
 COMPOSE_FILE = os.environ.get("AUTO_DEPLOY_COMPOSE_FILE", "compose.yaml")
 SERVICE = os.environ.get("AUTO_DEPLOY_SERVICE", "maksut")
 QDRANT_SERVICE = os.environ.get("AUTO_DEPLOY_QDRANT_SERVICE", "qdrant")

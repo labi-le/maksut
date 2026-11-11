@@ -7,7 +7,7 @@
 The self-improvement intake is split across two isolated processes so the Telegram bot never executes shell or `gh` commands directly:
 
 1. **Bot (`src/self_improve.rs`, inside the `maksut` container):** writes feature requests (wishlist items) to `self-improve/inbox/*.json`, reads status from `self-improve/outbox/*.json`, sends notifications (`improvement_notifier` polling every 5s and tracking `notified/`), and writes owner decisions to `approvals/` and `rejections/`.
-2. **Host orchestrator (`tools/self_improve_orchestrator.py`, systemd user unit `packaging/maksut-self-improve.service`):** polls `self-improve/inbox`, moves valid proposals to `outbox/<id>.json` with `status: "proposed"`, and when the owner approves a request (`approvals/<id>.json`), opens a GitHub issue (`SELF_IMPROVE_GITHUB_REPO`, default `labi-le/maxwell`) via `gh` and writes `status: "issue_created"` with `issue_url`. Further discussion, implementation, and PR review happen on GitHub (via `roboomp` / `buer`).
+2. **Host orchestrator (`tools/self_improve_orchestrator.py`, systemd user unit `packaging/maksut-self-improve.service`):** polls `self-improve/inbox`, moves valid proposals to `outbox/<id>.json` with `status: "proposed"`, and when the owner approves a request (`approvals/<id>.json`), opens a GitHub issue (`SELF_IMPROVE_GITHUB_REPO`, default `labi-le/maksut`) via `gh` and writes `status: "issue_created"` with `issue_url`. Further discussion, implementation, and PR review happen on GitHub (via `roboomp` / `buer`).
 
 ## Single-gate lifecycle: `proposed` -> `issue_created`
 
@@ -32,7 +32,7 @@ The self-improvement intake is split across two isolated processes so the Telegr
 
 ## Running the orchestrator and GHCR auto-deploy on the host
 
-After the first `.github/workflows/publish-image.yml` run creates the `ghcr.io/labi-le/maxwell` package, either set its package visibility to **Public** in GitHub Package Settings (recommended — the image contains only compiled artifacts from the public repository) or authenticate Docker on the host once with `gh auth token | docker login ghcr.io -u labi-le --password-stdin`.
+After the first `.github/workflows/publish-image.yml` run creates the `ghcr.io/labi-le/maksut` package, either set its package visibility to **Public** in GitHub Package Settings (recommended — the image contains only compiled artifacts from the public repository) or authenticate Docker on the host once with `gh auth token | docker login ghcr.io -u labi-le --password-stdin`.
 
 ```sh
 mkdir -p .secrets

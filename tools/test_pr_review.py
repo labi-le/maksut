@@ -74,7 +74,7 @@ def reviewer(github, answer=CLEAN, **kwargs):
     return pr_review.Reviewer(
         github=github,
         complete=complete,
-        repo="labi-le/maxwell",
+        repo="labi-le/maksut",
         number=31,
         model="gemini-4-argon",
         log=lambda message: None,
@@ -134,7 +134,7 @@ class GitHubErrorTests(unittest.TestCase):
         pr_review._request = failed
         try:
             with self.assertRaises(pr_review.ReviewError) as caught:
-                pr_review.GitHub("token", "labi-le/maxwell")._call("/pulls/31/reviews", method="POST", payload={})
+                pr_review.GitHub("token", "labi-le/maksut")._call("/pulls/31/reviews", method="POST", payload={})
         finally:
             pr_review._request = original
         self.assertIn("accepted: pull_requests=write", str(caught.exception))
@@ -409,18 +409,18 @@ class MainTests(unittest.TestCase):
     def test_missing_repository_or_number_fails(self):
         with redirect_stderr(io.StringIO()):
             self.assertEqual(pr_review.main({}), 1)
-            self.assertEqual(pr_review.main({"GITHUB_REPOSITORY": "labi-le/maxwell"}), 1)
+            self.assertEqual(pr_review.main({"GITHUB_REPOSITORY": "labi-le/maksut"}), 1)
 
     def test_missing_token_exits_zero_without_network(self):
         with redirect_stderr(io.StringIO()) as log:
-            code = pr_review.main({"GITHUB_REPOSITORY": "labi-le/maxwell", "PR_NUMBER": "31"})
+            code = pr_review.main({"GITHUB_REPOSITORY": "labi-le/maksut", "PR_NUMBER": "31"})
         self.assertEqual(code, 0)
         self.assertIn("GH_TOKEN is empty", log.getvalue())
 
     def test_missing_api_key_fails(self):
         with redirect_stderr(io.StringIO()):
             self.assertEqual(
-                pr_review.main({"GITHUB_REPOSITORY": "labi-le/maxwell", "PR_NUMBER": "31", "GH_TOKEN": "t"}),
+                pr_review.main({"GITHUB_REPOSITORY": "labi-le/maksut", "PR_NUMBER": "31", "GH_TOKEN": "t"}),
                 1,
             )
 

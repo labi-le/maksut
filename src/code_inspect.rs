@@ -1,7 +1,7 @@
 use crate::code_inspect_finished;
 use crate::prelude::*;
 
-pub(crate) const GITHUB_BLOB_BASE: &str = "https://github.com/labi-le/maxwell/blob/main";
+pub(crate) const GITHUB_BLOB_BASE: &str = "https://github.com/labi-le/maksut/blob/main";
 const SKIP_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -291,7 +291,7 @@ pub(crate) fn valid_self_source_url(base: &Path, url: &str) -> bool {
     if url.chars().count() > config().code.url_max_chars || url.chars().any(char::is_whitespace) {
         return false;
     }
-    let Some(rest) = url.strip_prefix("https://github.com/labi-le/maxwell/blob/main/") else {
+    let Some(rest) = url.strip_prefix("https://github.com/labi-le/maksut/blob/main/") else {
         return false;
     };
     let (path, frag) = match rest.split_once('#') {

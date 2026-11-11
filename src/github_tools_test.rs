@@ -4,7 +4,7 @@ use serde_json::json;
 
 fn settings(api_base: &str) -> GithubSettings {
     GithubSettings {
-        repo: "labi-le/maxwell".to_owned(),
+        repo: "labi-le/maksut".to_owned(),
         api_base: api_base.trim_end_matches('/').to_owned(),
         timeout_secs: 5,
         max_response_bytes: 64 * 1024,
@@ -53,7 +53,7 @@ async fn issue_renders_state_comments_and_pr_details_then_serves_cache() {
     let requests = llm.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 3);
     assert!(
-        requests[0].starts_with("GET /repos/labi-le/maxwell/issues/90 "),
+        requests[0].starts_with("GET /repos/labi-le/maksut/issues/90 "),
         "{}",
         requests[0]
     );
@@ -65,7 +65,7 @@ async fn issue_renders_state_comments_and_pr_details_then_serves_cache() {
         requests[0]
     );
     assert!(
-        requests[1].starts_with("GET /repos/labi-le/maxwell/pulls/90 "),
+        requests[1].starts_with("GET /repos/labi-le/maksut/pulls/90 "),
         "{}",
         requests[1]
     );
@@ -123,7 +123,7 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
             "state": "closed",
             "user": {"login": "labi-le"},
             "labels": [{"name": "deploy"}],
-            "html_url": "https://github.com/labi-le/maxwell/pull/55",
+            "html_url": "https://github.com/labi-le/maksut/pull/55",
             "pull_request": {"merged_at": null}
         }]
     })
@@ -146,7 +146,7 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
     assert!(text.contains("#55 PR [closed] deploy hook"), "{text}");
     assert!(text.contains("автор: labi-le"), "{text}");
     assert!(
-        text.contains("https://github.com/labi-le/maxwell/pull/55"),
+        text.contains("https://github.com/labi-le/maksut/pull/55"),
         "{text}"
     );
     let empty_text = crate::github_tools::search(
@@ -169,14 +169,13 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
     let request = &requests[0];
     assert!(request.starts_with("GET /search/issues?"), "{request}");
     assert!(
-        request.contains(
-            "q=deploy+repo%3Alabi-le%2Fmaxwell+state%3Aopen+label%3A%22deploy%22+is%3Apr"
-        ),
+        request
+            .contains("q=deploy+repo%3Alabi-le%2Fmaksut+state%3Aopen+label%3A%22deploy%22+is%3Apr"),
         "{request}"
     );
     assert!(request.contains("per_page=3"), "{request}");
     assert!(
-        requests[1].contains("q=repo%3Alabi-le%2Fmaxwell+state%3Aclosed+is%3Apr"),
+        requests[1].contains("q=repo%3Alabi-le%2Fmaksut+state%3Aclosed+is%3Apr"),
         "{}",
         requests[1]
     );
@@ -186,7 +185,7 @@ async fn search_scopes_the_query_to_the_fixed_repo() {
 #[tokio::test]
 async fn comment_refuses_bad_input_and_posts_a_valid_body() {
     let llm = mock_server(vec![json!({
-        "html_url": "https://github.com/labi-le/maxwell/issues/90#issuecomment-1"
+        "html_url": "https://github.com/labi-le/maksut/issues/90#issuecomment-1"
     })
     .to_string()])
     .await;
@@ -212,13 +211,13 @@ async fn comment_refuses_bad_input_and_posts_a_valid_body() {
 
     let sent = crate::github_tools::comment(&cfg, Some("token"), 90, "thanks").await;
     assert!(
-        sent.contains("https://github.com/labi-le/maxwell/issues/90#issuecomment-1"),
+        sent.contains("https://github.com/labi-le/maksut/issues/90#issuecomment-1"),
         "{sent}"
     );
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert!(
-        requests[0].starts_with("POST /repos/labi-le/maxwell/issues/90/comments "),
+        requests[0].starts_with("POST /repos/labi-le/maksut/issues/90/comments "),
         "{}",
         requests[0]
     );
@@ -462,7 +461,7 @@ async fn search_commits_lists_and_filters_recent_commits() {
     let response = json!([
         {
             "sha": "b01fc761e38b0f0713112948261d061b5ab502d4",
-            "html_url": "https://github.com/labi-le/maxwell/commit/b01fc76",
+            "html_url": "https://github.com/labi-le/maksut/commit/b01fc76",
             "author": {"login": "crudoshlepa"},
             "commit": {
                 "message": "chat: store vectors only in qdrant and add local embeddings service\n\ndetailed body",
@@ -471,7 +470,7 @@ async fn search_commits_lists_and_filters_recent_commits() {
         },
         {
             "sha": "67fefcc111111111111111111111111111111111",
-            "html_url": "https://github.com/labi-le/maxwell/commit/67fefcc",
+            "html_url": "https://github.com/labi-le/maksut/commit/67fefcc",
             "author": {"login": "crudoshlepa"},
             "commit": {
                 "message": "deploy: run qdrant as 1000:1000 and check src mount and status",
@@ -518,12 +517,12 @@ async fn search_commits_lists_and_filters_recent_commits() {
     assert!(!filtered.contains("67fefcc"), "{filtered}");
     let requests = llm.requests.lock().unwrap();
     assert!(
-        requests[0].starts_with("GET /repos/labi-le/maxwell/commits?per_page=5 "),
+        requests[0].starts_with("GET /repos/labi-le/maksut/commits?per_page=5 "),
         "{}",
         requests[0]
     );
     assert!(
-        requests[1].starts_with("GET /repos/labi-le/maxwell/commits?per_page=30 "),
+        requests[1].starts_with("GET /repos/labi-le/maksut/commits?per_page=30 "),
         "{}",
         requests[1]
     );

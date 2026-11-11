@@ -439,7 +439,7 @@ defaults!(ChatSettings {
 });
 
 defaults!(GithubSettings {
-    repo: "labi-le/maxwell".into(),
+    repo: "labi-le/maksut".into(),
     api_base: "https://api.github.com".into(),
     timeout_secs: 15,
     max_response_bytes: 512 * 1024,

@@ -220,7 +220,7 @@ async fn self_fact_upsert_and_delete_hit_the_same_point() {
         &client,
         "память",
         "хранит summary",
-        "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L11",
+        "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L11",
     )
     .await
     .unwrap();
@@ -260,7 +260,7 @@ async fn self_sync_embeds_only_missing_facts_and_drops_stale_points() {
             base.path(),
             topic,
             fact,
-            "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1",
+            "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L1",
         )
         .await
         .unwrap();
@@ -269,7 +269,7 @@ async fn self_sync_embeds_only_missing_facts_and_drops_stale_points() {
     let existing_id = point_id("self:память");
     let stale_id = point_id("self:удалено");
     let model = config().memory.embedding_model.trim().to_owned();
-    let source = "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1";
+    let source = "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L1";
     let qdrant = mock_server(
         [
             ready_responses(),
@@ -334,7 +334,7 @@ async fn self_memory_keeps_owner_directives_while_ranking_facts() {
         base.path(),
         "память",
         "хранит summary",
-        "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1",
+        "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L1",
     )
     .await
     .unwrap();
@@ -347,7 +347,7 @@ async fn self_memory_keeps_owner_directives_while_ranking_facts() {
             base.path(),
             &format!("факт{index}"),
             "просто факт",
-            "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1",
+            "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L1",
         )
         .await
         .unwrap();
@@ -363,7 +363,7 @@ async fn self_memory_keeps_owner_directives_while_ranking_facts() {
                     "payload": {
                         "topic": "память",
                         "fact": "хранит summary",
-                        "source_url": "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1",
+                        "source_url": "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L1",
                     },
                 }]},
             })
@@ -421,7 +421,7 @@ async fn self_sync_refreshes_changed_fact_payload() {
     let base = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(base.path().join("src")).unwrap();
     std::fs::write(base.path().join("src/memory.rs"), "// memory\n").unwrap();
-    let source = "https://github.com/labi-le/maxwell/blob/main/src/memory.rs#L1";
+    let source = "https://github.com/labi-le/maksut/blob/main/src/memory.rs#L1";
     let offline = offline_chat();
     crate::code_inspect::record_self_fact(
         &offline,

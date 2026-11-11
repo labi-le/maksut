@@ -23,7 +23,7 @@ fn bare_name_has_no_content() {
 fn name_with_text_counts_as_addressed() {
     assert!(named_content_left("максут, что нового?", "MyBot"));
     assert!(named_content_left("Maksut привет", "MyBot"));
-    assert!(!named_content_left("почему максвелл молчит", "MyBot"));
+    assert!(!named_content_left("почему игорёк молчит", "MyBot"));
 }
 
 #[test]

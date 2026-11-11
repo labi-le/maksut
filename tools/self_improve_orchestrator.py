@@ -20,10 +20,10 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(os.environ.get("SELF_IMPROVE_REPO", "/home/labile/projects/maxwell"))
+REPO = Path(os.environ.get("SELF_IMPROVE_REPO", "/home/labile/projects/maksut"))
 QUEUE = Path(os.environ.get("SELF_IMPROVE_DIR", str(REPO / "self-improve")))
 OWNER = int(os.environ.get("OWNER_ID", "0"))
-GITHUB_REPO = os.environ.get("SELF_IMPROVE_GITHUB_REPO", "labi-le/maxwell")
+GITHUB_REPO = os.environ.get("SELF_IMPROVE_GITHUB_REPO", "labi-le/maksut")
 GH = os.environ.get("SELF_IMPROVE_GH", shutil.which("gh") or "gh")
 POLL_SECONDS = 5
 MAX_PROCESSED = 1000

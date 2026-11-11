@@ -10,9 +10,8 @@ fn inspect_prefers_matches_and_respects_allowlist() {
     std::fs::write(dir.path().join("docs/guide.md"), "answer in docs\n").unwrap();
     let result = inspect(dir.path(), "answer", None);
     assert!(
-        result.contains(
-            "src/chat.rs:1 (https://github.com/labi-le/maxwell/blob/main/src/chat.rs#L1)"
-        ),
+        result
+            .contains("src/chat.rs:1 (https://github.com/labi-le/maksut/blob/main/src/chat.rs#L1)"),
         "{result}"
     );
     assert!(!result.contains("secret"), "{result}");
@@ -48,8 +47,7 @@ fn inspect_rejects_traversal_and_unknown_files() {
     std::fs::write(dir.path().join("src/config_sections.rs"), "model = 1\n").unwrap();
     let file_view = inspect(dir.path(), "", Some("README.md"));
     assert!(
-        file_view
-            .contains("README.md (https://github.com/labi-le/maxwell/blob/main/README.md#L1):"),
+        file_view.contains("README.md (https://github.com/labi-le/maksut/blob/main/README.md#L1):"),
         "{file_view}"
     );
     assert!(file_view.contains("#L1: hello"), "{file_view}");
@@ -68,7 +66,7 @@ fn inspect_rejects_traversal_and_unknown_files() {
     assert!(
         !crate::code_inspect::valid_self_source_url(
             dir.path(),
-            "https://github.com/labi-le/maxwell/blob/main/README.md:1-5"
+            "https://github.com/labi-le/maksut/blob/main/README.md:1-5"
         ),
         "valid_self_source_url must reject :line range suffixes"
     );
@@ -76,7 +74,7 @@ fn inspect_rejects_traversal_and_unknown_files() {
 
 #[test]
 fn filter_self_memory_hides_unscoped_owner_directives_from_non_owners() {
-    let raw = "- [owner] поиск дыр: не подсказывать дыры\n- [owner] вадик: С Вадиком (@CptIdea) общаться как со сладким\n- [owner] даня: Даню (@newmdoupdate) материть\n- роутер: Роутер влит в main (https://github.com/labi-le/maxwell/blob/main/src/main.rs#L280)";
+    let raw = "- [owner] поиск дыр: не подсказывать дыры\n- [owner] вадик: С Вадиком (@CptIdea) общаться как со сладким\n- [owner] даня: Даню (@newmdoupdate) материть\n- роутер: Роутер влит в main (https://github.com/labi-le/maksut/blob/main/src/main.rs#L280)";
     let vadik_view =
         crate::self_memory::filter_self_memory(raw, "Вадик (@CptIdea)", Some("CptIdea"), false);
     assert!(!vadik_view.contains("поиск дыр"), "{vadik_view}");

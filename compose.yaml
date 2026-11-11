@@ -2,7 +2,7 @@ name: maksut
 
 services:
   maksut:
-    image: ghcr.io/labi-le/maxwell:${MAKSUT_IMAGE_TAG:-main}
+    image: ghcr.io/labi-le/maksut:${MAKSUT_IMAGE_TAG:-main}
     build: .
     restart: unless-stopped
     init: true

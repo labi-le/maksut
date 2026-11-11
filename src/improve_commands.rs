@@ -107,7 +107,8 @@ pub(crate) fn parse_owner_command(text: &str) -> Option<OwnerCommand> {
     let normalized = text.replacen(':', " ", 1);
     let mut words = normalized.split_whitespace();
     let mut head = clean_word(words.next()?);
-    if matches!(head.as_str(), "максут" | "максвелл" | "maksut") {
+    if matches!(head.as_str(), "максут" | "максутка" | "максутик" | "maksut")
+    {
         head = clean_word(words.next()?);
     }
     let action = action_word(&head)?;

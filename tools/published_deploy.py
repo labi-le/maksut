@@ -44,7 +44,7 @@ def published_source(repo: Path, branch: str) -> bytes | None:
 
 
 def main() -> int:
-    repo = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maxwell"))
+    repo = Path(os.environ.get("AUTO_DEPLOY_REPO", "/home/labile/projects/maksut"))
     branch = os.environ.get("AUTO_DEPLOY_BRANCH", "main")
     state_dir = Path(os.environ.get("AUTO_DEPLOY_STATE_DIR", str(repo / "self-improve")))
     if is_paused(state_dir):

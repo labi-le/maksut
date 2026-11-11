@@ -21,7 +21,7 @@ possible because the workflow only depends on the token.
 
 - The reviewer identity is whatever account owns `REVIEWER_TOKEN`, and it must
   not be the pull-request author. The owner's own account is acceptable and is
-  the chosen path: it can hold a *fine-grained* PAT scoped to `labi-le/maxwell`
+  the chosen path: it can hold a *fine-grained* PAT scoped to `labi-le/maksut`
   with Pull requests read/write and Metadata read only, so the token cannot reach
   any other repository and cannot write code, workflows, secrets or settings. A dedicated reviewer account remains an alternative, but as
   an outside account it can only use a **classic** `repo` PAT and needs a Write

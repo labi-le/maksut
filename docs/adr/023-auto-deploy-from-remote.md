@@ -15,7 +15,7 @@ uncommitted work instead of the commit the container was built from.
 ## Decision
 
 - A deploy is derived from `origin/main` alone. `git fetch` resolves the target
-  SHA; `docker pull ghcr.io/labi-le/maxwell:<sha>` fetches the image;
+  SHA; `docker pull ghcr.io/labi-le/maksut:<sha>` fetches the image;
   `compose.yaml` comes from `git show <sha>:compose.yaml`, written to
   `.auto-deploy.compose.yaml` beside the checkout so relative bind mounts and
   `env_file` resolve exactly as before and removed afterwards.

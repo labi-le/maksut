@@ -74,7 +74,7 @@ class ApprovalTests(unittest.TestCase):
                 json.dumps({"id": "plan-2", "requested_by": 42})
             )
             module.create_issue = (
-                lambda value: "https://github.com/labi-le/maxwell/issues/15"
+                lambda value: "https://github.com/labi-le/maksut/issues/15"
             )
             module.process_approvals()
             value = json.loads(
@@ -82,7 +82,7 @@ class ApprovalTests(unittest.TestCase):
             )
             self.assertEqual(value["status"], "issue_created")
             self.assertEqual(
-                value["issue_url"], "https://github.com/labi-le/maxwell/issues/15"
+                value["issue_url"], "https://github.com/labi-le/maksut/issues/15"
             )
             self.assertFalse(
                 (pathlib.Path(tmp) / "queue" / "approvals" / "plan-2.json").exists()
@@ -196,7 +196,7 @@ class ApprovalTests(unittest.TestCase):
                     (),
                     {
                         "returncode": 0,
-                        "stdout": "https://github.com/labi-le/maxwell/issues/9\n",
+                        "stdout": "https://github.com/labi-le/maksut/issues/9\n",
                     },
                 )()
 
@@ -212,7 +212,7 @@ class ApprovalTests(unittest.TestCase):
                     "feedback": "сделай синей",
                 }
             )
-            self.assertEqual(url, "https://github.com/labi-le/maxwell/issues/9")
+            self.assertEqual(url, "https://github.com/labi-le/maksut/issues/9")
             self.assertIn("--body-file", calls[0])
             self.assertIn("добавь кнопку", captured_body[0])
             self.assertIn("предложение от @bob", captured_body[0])

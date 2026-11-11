@@ -327,12 +327,12 @@ fn url_selectors_slice_and_raw_render_cached_pages() {
 
 #[test]
 fn special_site_rewrites_and_json_renderers_format_cleanly() {
-    let gh = Url::parse("https://github.com/labi-le/maxwell/blob/main/src/main.rs").unwrap();
+    let gh = Url::parse("https://github.com/labi-le/maksut/blob/main/src/main.rs").unwrap();
     let (raw_gh, method) = rewrite_special_target(&gh).unwrap();
     assert_eq!(method, "github-raw");
     assert_eq!(
         raw_gh.as_str(),
-        "https://raw.githubusercontent.com/labi-le/maxwell/main/src/main.rs"
+        "https://raw.githubusercontent.com/labi-le/maksut/main/src/main.rs"
     );
 
     let wiki = Url::parse("https://ru.wikipedia.org/wiki/Rust").unwrap();

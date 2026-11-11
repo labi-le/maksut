@@ -25,7 +25,7 @@
   ответил.
 - `tools/omp_worker.py` входит в `FORBIDDEN`: self-improve не может менять
   собственный execution-слой.
-- Control plane остаётся в Maxwell: очередь, approval-файлы, base snapshot,
+- Control plane остаётся в Maksut: очередь, approval-файлы, base snapshot,
   тесты, deploy, health check и rollback. Worker не получает GitHub PAT и не
   пишет в очередь.
 
@@ -33,7 +33,7 @@
 
 RoboMP — готовый GitHub triage/PR-бот, но не execution plane общего назначения.
 Его `enhancement`/`proposal` flow не открывает PR, plan approval отсутствует, а
-локальный deploy/rollback не входит в scope. Перенос Maxwell в roboomp потребовал
+локальный deploy/rollback не входит в scope. Перенос Maksut в roboomp потребовал
 бы форка его task routing, approval и deploy, то есть потери главного
 преимущества — готового продукта.
 

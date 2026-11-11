@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent pull-request review for `labi-le/maxwell`, run from GitHub Actions.
+"""Independent pull-request review for `labi-le/maksut`, run from GitHub Actions.
 
 The workflow checks out the *base* revision, so this file and `AGENTS.md` are the
 trusted versions from `main` even when the pull request modifies them. The PR is
@@ -153,7 +153,7 @@ SEVERITIES = ("P0", "P1", "P2", "P3")
 BLOCKING = frozenset({"P0", "P1"})
 
 SYSTEM_PROMPT = """\
-You review one pull request in the Rust repository `labi-le/maxwell` (Telegram bot
+You review one pull request in the Rust repository `labi-le/maksut` (Telegram bot
 for media download, LLM chat, and a sandboxed self-improvement pipeline).
 
 Work in two passes and keep them distinct:

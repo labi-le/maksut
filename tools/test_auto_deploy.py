@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-IMAGE = "ghcr.io/labi-le/maxwell"
+IMAGE = "ghcr.io/labi-le/maksut"
 # Pinned literally so a narrowed export list cannot silently drop a mounted path.
 EXPORTED_PATHS = ("src", "tools", "docs", "Cargo.toml", "README.md", "AGENTS.md")
 
