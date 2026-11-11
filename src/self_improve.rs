@@ -88,10 +88,7 @@ pub(crate) async fn handle_improve(
         return true;
     }
     let as_owner_message = |reply: String| async move {
-        let _ = bot
-            .send_message(message.chat.id, reply)
-            .disable_notification(true)
-            .await;
+        let _ = crate::rich_message::send_quiet_message(bot, message.chat.id, reply).await;
     };
     if message.forward_origin().is_some() {
         as_owner_message("Форварды не используются для решений по очереди.".to_owned()).await;
@@ -224,10 +221,7 @@ pub(crate) async fn handle_owner_text(
     let reply = run_blocking(move || apply_owner_command(&dir, owner, command, &title))
         .await
         .unwrap_or_else(|| "Не смог обработать команду.".to_owned());
-    let _ = bot
-        .send_message(message.chat.id, reply)
-        .disable_notification(true)
-        .await;
+    let _ = crate::rich_message::send_quiet_message(bot, message.chat.id, reply).await;
     true
 }
 
@@ -417,15 +411,33 @@ async fn send_update(
         .into_iter()
         .enumerate()
     {
-        let mut request = bot
-            .send_message(ChatId(chat_id), chunk)
-            .disable_notification(true);
-        if index == 0 {
-            if let Some(markup) = markup.clone() {
-                request = request.reply_markup(markup);
+        let mut delivered = false;
+        for attempt in 0..2u8 {
+            let mut request = bot
+                .send_message(ChatId(chat_id), chunk.clone())
+                .disable_notification(true);
+            if index == 0 {
+                if let Some(markup) = markup.clone() {
+                    request = request.reply_markup(markup);
+                }
+            }
+            match request.await {
+                Ok(_) => {
+                    delivered = true;
+                    break;
+                }
+                Err(err) => {
+                    if attempt == 0 {
+                        if let Some(delay) = crate::rich_message::retryable_telegram_error(&err) {
+                            time::sleep(delay).await;
+                            continue;
+                        }
+                    }
+                    return false;
+                }
             }
         }
-        if request.await.is_err() {
+        if !delivered {
             return false;
         }
     }

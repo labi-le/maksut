@@ -914,4 +914,49 @@ async fn telegram_bot_client_drops_idle_pooled_socket_after_idle_timeout() {
     assert_eq!(me.user.username.as_deref(), Some("MyBot"));
     assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
     server.abort();
+    let fake = std::net::SocketAddr::from(([198, 18, 1, 6], 443));
+    let ordered = ordered_telegram_addrs([fake]).expect("fake-IP triggers fallback ordering");
+    assert_eq!(
+        ordered.first().copied(),
+        Some(fake),
+        "resolved split-tunnel fake-IP must stay first ahead of direct public Telegram IPs"
+    );
+    assert!(ordered.len() >= 3);
+    let public = std::net::SocketAddr::from(([149, 154, 167, 220], 443));
+    assert!(
+        ordered_telegram_addrs([public]).is_none(),
+        "normal public DNS must not be overridden"
+    );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = Arc::clone(&attempts);
+    let server = tokio::spawn(async move {
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = read_bot_api_request(&mut stream).await;
+            if attempt == 0 {
+                drop(stream);
+                continue;
+            }
+            let body = r#"{"ok":true,"result":{"message_id":99,"date":1700000000,"chat":{"id":1,"type":"private"},"text":"ok"}}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        }
+    });
+    let bot = telegram_bot("123:test-token".into())
+        .expect("Bot client builds")
+        .set_api_url(Url::parse(&format!("http://{addr}/")).unwrap());
+    assert!(
+        crate::rich_message::send_quiet_message(&bot, ChatId(1), "warning").await,
+        "send_quiet_message must retry once after a transient Bot API disconnect"
+    );
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    server.abort();
 }

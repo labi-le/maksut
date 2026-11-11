@@ -245,10 +245,24 @@ pub(crate) fn is_pass_reply(text: &str) -> bool {
 }
 
 pub(crate) fn is_stop_followup(text: &str) -> bool {
-    if text.split_whitespace().count() > 7 {
+    let words = text.split_whitespace().count();
+    if words > 10 {
         return false;
     }
     let lower = text.to_lowercase();
+    const COMPLAINT_STOPS: &[&str] = &[
+        "на рандом сообщения отвечает",
+        "на рандом отвечает",
+        "кто тебя звал",
+        "кто тебя спрашивал",
+        "только если к нему обратит",
+    ];
+    if COMPLAINT_STOPS.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+    if words > 7 {
+        return false;
+    }
     if [" он ", " он,", " ему ", " него ", " мне ", " сначала"]
         .iter()
         .any(|t| lower.contains(t))
@@ -265,7 +279,6 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
         "заткни ебало",
         "не пизди",
         "хватит пиздеть",
-        "кто тебя звал",
         "пошёл нахуй",
         "пошел нахуй",
         "иди нахуй",

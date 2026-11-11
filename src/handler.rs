@@ -35,18 +35,32 @@ async fn reply_with_sticker(bot: &Bot, message: &Message, cfg: &Settings, text: 
     {
         return false;
     }
-    let request = bot
-        .send_sticker(message.chat.id, InputFile::file_id(file_id.clone()))
-        .reply_parameters(ReplyParameters::new(message.id).allow_sending_without_reply())
-        .disable_notification(true);
-    if let Ok(sent) = request.await {
-        let _ = crate::memory::record_message(
-            &cfg.database,
-            RecordMessage::new(message.chat.id, 0, "максут", "assistant", "[стикер]")
-                .with_message_id(Some(sent.id.0))
-                .with_flags(crate::memory::FLAG_JUNK),
-        )
-        .await;
+    for attempt in 0..2u8 {
+        let request = bot
+            .send_sticker(message.chat.id, InputFile::file_id(file_id.clone()))
+            .reply_parameters(ReplyParameters::new(message.id).allow_sending_without_reply())
+            .disable_notification(true);
+        match request.await {
+            Ok(sent) => {
+                let _ = crate::memory::record_message(
+                    &cfg.database,
+                    RecordMessage::new(message.chat.id, 0, "максут", "assistant", "[стикер]")
+                        .with_message_id(Some(sent.id.0))
+                        .with_flags(crate::memory::FLAG_JUNK),
+                )
+                .await;
+                break;
+            }
+            Err(err) => {
+                if attempt == 0 {
+                    if let Some(delay) = crate::rich_message::retryable_telegram_error(&err) {
+                        time::sleep(delay).await;
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
     }
     true
 }
@@ -309,9 +323,7 @@ pub(crate) async fn handle_message(
                         FailureDiagnostic::new("caption", "Caption too long"),
                     )
                     .await;
-                    let _ = bot
-                        .send_message(message.chat.id, reason)
-                        .disable_notification(true)
+                    let _ = crate::rich_message::send_quiet_message(&bot, message.chat.id, reason)
                         .await;
                     return Ok(());
                 }
@@ -340,9 +352,7 @@ pub(crate) async fn handle_message(
                         "Не все медиа доставлены; исходная ссылка сохранена. {}",
                         error.reason
                     );
-                    let _ = bot
-                        .send_message(message.chat.id, warning)
-                        .disable_notification(true)
+                    let _ = crate::rich_message::send_quiet_message(&bot, message.chat.id, warning)
                         .await;
                     return Ok(());
                 }
@@ -362,10 +372,12 @@ pub(crate) async fn handle_message(
                 FailureDiagnostic::new("storage", "Download directory unavailable"),
             )
             .await;
-            let _ = bot
-                .send_message(message.chat.id, "Не удалось создать папку загрузки.")
-                .disable_notification(true)
-                .await;
+            let _ = crate::rich_message::send_quiet_message(
+                &bot,
+                message.chat.id,
+                "Не удалось создать папку загрузки.",
+            )
+            .await;
             return Ok(());
         }
     };
@@ -399,10 +411,7 @@ pub(crate) async fn handle_message(
                 )
             };
             reply.push_str(&format_failure_context(&url, &failure.events));
-            let _ = bot
-                .send_message(message.chat.id, reply)
-                .disable_notification(true)
-                .await;
+            let _ = crate::rich_message::send_quiet_message(&bot, message.chat.id, reply).await;
             return Ok(());
         }
     };
@@ -430,10 +439,7 @@ pub(crate) async fn handle_message(
             cfg.max_media_bytes,
         );
         reply.push_str(&format_failure_context(&url, &events));
-        let _ = bot
-            .send_message(message.chat.id, reply)
-            .disable_notification(true)
-            .await;
+        let _ = crate::rich_message::send_quiet_message(&bot, message.chat.id, reply).await;
         return Ok(());
     }
     let report = deliver_fresh(

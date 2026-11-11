@@ -10,7 +10,7 @@ pub(crate) async fn handle_command(bot: &Bot, message: &Message, cfg: &Settings,
                 .as_ref()
                 .is_some_and(|user| user.id == cfg.owner_id)
         {
-            let _ = bot.send_message(message.chat.id, "Команды /maksut status|on|off работают только в группе; в личном чате ссылки доступны только владельцу бота.").disable_notification(true).await;
+            let _ = crate::rich_message::send_quiet_message(bot, message.chat.id, "Команды /maksut status|on|off работают только в группе; в личном чате ссылки доступны только владельцу бота.").await;
         }
         return;
     }
@@ -30,13 +30,12 @@ pub(crate) async fn handle_command(bot: &Bot, message: &Message, cfg: &Settings,
             .await
             .map(|()| false),
         _ => {
-            let _ = bot
-                .send_message(
-                    message.chat.id,
-                    "Используйте /maksut status, /maksut on или /maksut off.",
-                )
-                .disable_notification(true)
-                .await;
+            let _ = crate::rich_message::send_quiet_message(
+                bot,
+                message.chat.id,
+                "Используйте /maksut status, /maksut on или /maksut off.",
+            )
+            .await;
             return;
         }
     };
@@ -46,10 +45,7 @@ pub(crate) async fn handle_command(bot: &Bot, message: &Message, cfg: &Settings,
         Err(_) => "Не удалось прочитать или сохранить настройки группы.",
     };
     tracing::info!(command, ok = result.is_ok(), "group command handled");
-    let _ = bot
-        .send_message(message.chat.id, reply)
-        .disable_notification(true)
-        .await;
+    let _ = crate::rich_message::send_quiet_message(bot, message.chat.id, reply).await;
 }
 
 pub(crate) fn maksut_command<'a>(text: &'a str, username: &str) -> Option<&'a str> {

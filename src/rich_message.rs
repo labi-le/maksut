@@ -261,3 +261,32 @@ pub(crate) async fn send_chat_chunk(
     }
     None
 }
+
+/// Sends a non-reply notification or diagnostic message with `disable_notification`,
+/// retrying once on a transient Bot API transport or 5xx/429 error.
+pub(crate) async fn send_quiet_message(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: impl Into<String>,
+) -> bool {
+    let text = text.into();
+    for attempt in 0..2u8 {
+        match bot
+            .send_message(chat_id, text.clone())
+            .disable_notification(true)
+            .await
+        {
+            Ok(_) => return true,
+            Err(err) => {
+                if attempt == 0 {
+                    if let Some(delay) = retryable_telegram_error(&err) {
+                        time::sleep(delay).await;
+                        continue;
+                    }
+                }
+                return false;
+            }
+        }
+    }
+    false
+}

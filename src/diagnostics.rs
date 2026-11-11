@@ -217,8 +217,5 @@ pub(crate) async fn report_incomplete_delivery(
         ));
     }
     warning.push_str(&format_failure_context(url, &events));
-    let _ = bot
-        .send_message(chat_id, warning)
-        .disable_notification(true)
-        .await;
+    let _ = crate::rich_message::send_quiet_message(bot, chat_id, warning).await;
 }

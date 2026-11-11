@@ -171,36 +171,45 @@ const TELEGRAM_FALLBACK_ADDRS: &[std::net::SocketAddr] = &[
 ];
 
 /// When a split-tunnel resolver returns an RFC 2544 benchmark fake-IP for
-/// `api.telegram.org`, place Telegram's real public endpoints first so `reqwest`
-/// connects directly when the tunnel drops.
+/// `api.telegram.org`, keep the resolved tunnel address first (because direct
+/// Telegram DC IPs are blocked when the ISP filters Telegram) and append
+/// Telegram's public endpoints after it as a fallback if the local tunnel drops.
 pub(crate) fn apply_telegram_dns_fallback(
     mut builder: reqwest::ClientBuilder,
 ) -> reqwest::ClientBuilder {
     if let Ok(resolved) = std::net::ToSocketAddrs::to_socket_addrs(&(TELEGRAM_API_HOST, 443)) {
-        let mut resolved_addrs: Vec<std::net::SocketAddr> = Vec::new();
-        let mut has_fake_ip = false;
-        for addr in resolved {
-            if let std::net::IpAddr::V4(ip) = addr.ip() {
-                let octets = ip.octets();
-                if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
-                    has_fake_ip = true;
-                }
-            }
-            if !resolved_addrs.contains(&addr) {
-                resolved_addrs.push(addr);
-            }
-        }
-        if has_fake_ip {
-            let mut addrs = TELEGRAM_FALLBACK_ADDRS.to_vec();
-            for addr in resolved_addrs {
-                if !addrs.contains(&addr) {
-                    addrs.push(addr);
-                }
-            }
+        if let Some(addrs) = ordered_telegram_addrs(resolved) {
             builder = builder.resolve_to_addrs(TELEGRAM_API_HOST, &addrs);
         }
     }
     builder
+}
+
+pub(crate) fn ordered_telegram_addrs(
+    resolved: impl IntoIterator<Item = std::net::SocketAddr>,
+) -> Option<Vec<std::net::SocketAddr>> {
+    let mut addrs: Vec<std::net::SocketAddr> = Vec::new();
+    let mut has_fake_ip = false;
+    for addr in resolved {
+        if let std::net::IpAddr::V4(ip) = addr.ip() {
+            let octets = ip.octets();
+            if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+                has_fake_ip = true;
+            }
+        }
+        if !addrs.contains(&addr) {
+            addrs.push(addr);
+        }
+    }
+    if !has_fake_ip {
+        return None;
+    }
+    for &fallback in TELEGRAM_FALLBACK_ADDRS {
+        if !addrs.contains(&fallback) {
+            addrs.push(fallback);
+        }
+    }
+    Some(addrs)
 }
 
 pub(crate) fn telegram_bot(token: String) -> Result<Bot, reqwest::Error> {

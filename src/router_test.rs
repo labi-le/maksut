@@ -165,6 +165,12 @@ fn followup_questions_and_requests_reply() {
     assert!(crate::chat_style::is_stop_followup("молчи"));
     assert!(crate::chat_style::is_stop_followup("тише"));
     assert!(crate::chat_style::is_stop_followup("оффнись"));
+    assert!(crate::chat_style::is_stop_followup(
+        "бля он по приколу на рандом сообщения отвечает?"
+    ));
+    assert!(crate::chat_style::is_stop_followup(
+        "я думал только если к нему обратится"
+    ));
     assert!(!crate::chat_style::is_stop_followup("почему ты молчишь?"));
     assert!(!crate::chat_style::is_stop_followup("почему молчит"));
     assert!(!crate::chat_style::is_stop_followup("сделай потише"));
