@@ -273,6 +273,20 @@ input_price_per_m = 0.27
 cached_input_price_per_m = 0.07
 output_price_per_m = 1.10
 
+# Telegram Mini App. The process serves plain HTTP on `listen`; TLS terminates
+# at the host reverse proxy, which forwards to the published loopback port. The
+# container binds 0.0.0.0 inside its own bridge network while compose publishes
+# only 127.0.0.1, so the proxy stays the only reachable path.
+# `public_url` is the https address Telegram opens through the owner-only
+# `/settings` button; leave it unset to run the listener for local debugging
+# with the button hidden. `auth_max_age_secs` bounds how long a captured
+# `initData` stays valid; `max_body_bytes` caps every JSON request.
+[web]
+enabled = false
+listen = "0.0.0.0:8090"
+auth_max_age_secs = 86400
+max_body_bytes = 16384
+
 # attempts counts the first try: 1 disables retries. Backoff grows as
 # base_backoff_ms * 2^(attempt-1), capped at max_backoff_ms.
 [retry.llm]

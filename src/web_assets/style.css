@@ -1,0 +1,138 @@
+:root {
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --fg: var(--tg-theme-text-color, #111111);
+  --hint: var(--tg-theme-hint-color, #707579);
+  --link: var(--tg-theme-link-color, #2481cc);
+  --button: var(--tg-theme-button-color, #2481cc);
+  --button-text: var(--tg-theme-button-text-color, #ffffff);
+  --secondary: var(--tg-theme-secondary-bg-color, #f4f4f5);
+  --border: rgba(127, 127, 127, 0.25);
+  --danger: #d0342c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px 16px 48px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 16px;
+  word-break: break-word;
+}
+
+a {
+  color: var(--link);
+  word-break: break-all;
+}
+
+.hint,
+.meta {
+  margin: 4px 0;
+  color: var(--hint);
+  font-size: 13px;
+}
+
+.status {
+  min-height: 20px;
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--hint);
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.tabs button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--secondary);
+  color: var(--fg);
+  font-size: 15px;
+}
+
+.tabs button[aria-selected="true"] {
+  background: var(--button);
+  border-color: var(--button);
+  color: var(--button-text);
+}
+
+.topics,
+.settings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.topics li,
+.settings li {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--secondary);
+}
+
+textarea,
+input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.actions button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--button);
+  color: var(--button-text);
+  font-size: 14px;
+}
+
+.actions button.secondary {
+  background: transparent;
+  color: var(--danger);
+}
+
+button:disabled {
+  opacity: 0.45;
+}
