@@ -141,6 +141,21 @@ fn shipped_mapping_is_valid_and_rejects_bad_tiers() {
     }
 }
 
+#[test]
+fn default_above_max_is_rejected() {
+    let error = ReasoningSettings {
+        default: "high".into(),
+        max: "medium".into(),
+        ..Default::default()
+    }
+    .validate()
+    .expect_err("a default above the ceiling would be silently clamped");
+    assert_eq!(
+        error, "llm.reasoning.default must not exceed llm.reasoning.max",
+        "the operator must learn which pair is inconsistent"
+    );
+}
+
 #[tokio::test]
 async fn classifier_reads_the_effort_answer_and_sends_the_ladder() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
@@ -265,6 +280,35 @@ async fn fixed_and_off_modes_do_not_classify() {
     );
 }
 
+#[test]
+fn judge_skips_turns_that_never_reach_the_model() {
+    let client = JevClient::new(
+        Url::parse("http://127.0.0.1:1/v1").unwrap(),
+        "test-key".into(),
+        "jev-latest".into(),
+        Duration::from_secs(1),
+        16 * 1024,
+        0.6,
+    )
+    .unwrap();
+    let eager = judge(ReasoningMode::Auto(policy()), Some(client), None);
+    assert!(eager.wants("объясни, почему это падает", false, false));
+    assert!(
+        !eager.wants("завали ебало", false, false),
+        "a stop-phrase never reaches the model"
+    );
+    assert!(
+        !eager.wants("завали ебало", true, false),
+        "a stop-phrase followup never reaches the model"
+    );
+    assert!(!eager.wants("объясни", false, true), "a vision turn");
+    assert!(!eager.wants("  ", false, false), "a blank prompt");
+    assert!(
+        !judge(ReasoningMode::Auto(policy()), None, None).wants("объясни", false, false),
+        "without a key the request would be pure cost"
+    );
+}
+
 #[tokio::test]
 async fn an_attached_classifier_reaches_the_chat_config() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
@@ -278,7 +322,11 @@ async fn an_attached_classifier_reaches_the_chat_config() {
         SearchProvider::DuckDuckGo,
         None,
     )
-    .with_classifier(Some(client), Some(Arc::new(Semaphore::new(4))));
+    .with_classifier(ReasoningJudge {
+        mode: ReasoningMode::Auto(policy()),
+        classifier: Some(client),
+        slots: Some(Arc::new(Semaphore::new(4))),
+    });
     assert_eq!(chat.judge().resolve("объясни").await, Some(Effort::High));
     assert_eq!(stub.requests.load(Ordering::SeqCst), 1);
 }

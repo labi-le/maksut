@@ -1,33 +1,6 @@
 use crate::*;
 use serde_json::json;
 
-/// One inbound chat message plus who sent it.
-pub(crate) struct ChatTurn<'a> {
-    pub(crate) chat_id: ChatId,
-    pub(crate) user_id: UserId,
-    pub(crate) sender_name: &'a str,
-    pub(crate) username: Option<&'a str>,
-    pub(crate) message_id: i32,
-    pub(crate) reply_user_id: Option<UserId>,
-    pub(crate) owner: bool,
-    pub(crate) prompt: &'a str,
-    pub(crate) image: Option<&'a ChatImage>,
-    /// Tier resolved by the `auto` judge before the model slot was taken;
-    /// `None` for a fixed mode, vision turns and blank prompts.
-    pub(crate) effort: Option<Effort>,
-    pub(crate) followup: bool,
-    pub(crate) sticker_mode: bool,
-    pub(crate) reply_context: Option<&'a str>,
-    pub(crate) bot: Option<&'a Bot>,
-}
-#[derive(Default)]
-pub(crate) struct ChatReply {
-    pub(crate) text: String,
-    pub(crate) sticker: Option<FileId>,
-    pub(crate) decision: Option<crate::self_improve::PendingDecision>,
-    pub(crate) proposed_feature: bool,
-}
-
 #[tracing::instrument(skip_all, fields(chat_id = message.chat.id.0, user_id = sender.id.0, owner = sender.id == cfg.owner_id))]
 pub(crate) async fn reply_with_chat(
     bot: &Bot,
@@ -64,17 +37,16 @@ pub(crate) async fn reply_with_chat(
     if !matches!(decision, Decision::Reply | Decision::Sticker) {
         return;
     }
-    // The tiny judge runs while the turn waits for its pacing slot, chat locks
-    // and media download, and the result is awaited before the model slot is
-    // taken: a slow classifier cannot starve the model concurrency. Vision
-    // turns and blank prompts cannot vary the answer, so they skip it.
+    // The judge runs while the turn waits for its pacing slot and chat locks,
+    // and its result is awaited before the model slot: a slow classifier cannot
+    // starve concurrency. Vision, blank, stop-phrase and fixed turns skip it.
     let judge = chat.judge();
-    let judge_task =
-        (judge.can_classify() && input.pending_media.is_none() && !input.prompt.trim().is_empty())
-            .then(|| {
-                let prompt = input.prompt.clone();
-                tokio::spawn(async move { judge.resolve(&prompt).await })
-            });
+    let judge_task = judge
+        .wants(&input.prompt, input.followup, input.pending_media.is_some())
+        .then(|| {
+            let prompt = clamp_state(&input.prompt);
+            tokio::spawn(async move { judge.resolve(&prompt).await })
+        });
     chat.pace(sender.id).await;
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
     let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
@@ -178,9 +150,7 @@ pub(crate) async fn chat_reply_with_proposal(
     turn: &ChatTurn<'_>,
     proposal: Option<&FeatureProposal>,
 ) -> Result<ChatReply, String> {
-    if is_stop_followup(turn.prompt)
-        && (turn.followup || turn.prompt.split_whitespace().count() <= 7)
-    {
+    if is_stop_turn(turn.prompt, turn.followup) {
         chat.clear_followup(turn.chat_id).await;
         return Ok(ChatReply::default());
     }

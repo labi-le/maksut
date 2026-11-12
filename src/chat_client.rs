@@ -97,22 +97,13 @@ impl ChatConfig {
     /// loaded settings; a chat config without it keeps the policy default, which
     /// also keeps the test suite off the network.
     pub(crate) fn with_reasoning_classifier(self, settings: &LlmSettings) -> Self {
-        let (classifier, slots) = build_classifier(settings, &self.judge.mode);
-        self.with_classifier(classifier, slots)
+        self.with_classifier(ReasoningJudge::from_settings(settings))
     }
 
     /// The testable half of the attachment seam: it takes an already built
-    /// client and never reads the environment or the global config.
-    pub(crate) fn with_classifier(
-        mut self,
-        classifier: Option<crate::jev::JevClient>,
-        slots: Option<Arc<Semaphore>>,
-    ) -> Self {
-        self.judge = Arc::new(ReasoningJudge {
-            mode: self.judge.mode.clone(),
-            classifier,
-            slots,
-        });
+    /// judge and never reads the environment or the global config.
+    pub(crate) fn with_classifier(mut self, judge: ReasoningJudge) -> Self {
+        self.judge = Arc::new(judge);
         self
     }
 
@@ -463,50 +454,5 @@ impl ChatConfig {
 
     pub(crate) async fn web_search_with(&self, q: &str, rec: Option<&str>, lim: usize) -> String {
         self.search.web_search_with(q, rec, lim).await
-    }
-}
-
-/// Builds the `auto` classifier once at startup. A missing `JEV_API_KEY`
-/// disables classification loudly and leaves the policy default in place, so a
-/// chat turn never depends on the tiny model being reachable; a malformed
-/// `[llm.reasoning]` section already fails startup validation.
-fn build_classifier(
-    settings: &LlmSettings,
-    mode: &ReasoningMode,
-) -> (Option<crate::jev::JevClient>, Option<Arc<Semaphore>>) {
-    if mode.policy().is_none() {
-        return (None, None);
-    }
-    let key = env::var("JEV_API_KEY")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-    let Some(key) = key else {
-        tracing::warn!("llm.reasoning_effort = auto without JEV_API_KEY: using the fallback tier");
-        return (None, None);
-    };
-    let url = match crate::parse_http_endpoint(&settings.reasoning.url, "llm.reasoning.url") {
-        Ok(url) => url,
-        Err(error) => {
-            tracing::warn!(%error, "reasoning classifier disabled");
-            return (None, None);
-        }
-    };
-    let policy = &settings.reasoning;
-    match crate::jev::JevClient::new(
-        url,
-        key,
-        policy.model.clone(),
-        Duration::from_millis(policy.timeout_ms),
-        policy.max_response_bytes,
-        policy.min_confidence,
-    ) {
-        Ok(client) => (
-            Some(client),
-            Some(Arc::new(Semaphore::new(policy.concurrency))),
-        ),
-        Err(error) => {
-            tracing::warn!(%error, "reasoning classifier disabled");
-            (None, None)
-        }
     }
 }
