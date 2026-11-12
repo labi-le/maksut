@@ -42,6 +42,8 @@ mod prompts;
 pub(crate) use prompts::*;
 mod chat;
 pub(crate) use chat::*;
+mod chat_turn;
+pub(crate) use chat_turn::*;
 mod chat_delivery;
 pub(crate) use chat_delivery::*;
 mod completion;

@@ -290,21 +290,24 @@ impl LlmSettings {
 }
 
 impl ReasoningSettings {
+    /// One of the three tiers `auto` can actually return; `none` and unknown
+    /// names are configuration errors, not fallbacks.
+    fn tier(key: &str, value: &str) -> Result<Effort, String> {
+        match Effort::parse(value) {
+            Some(tier @ (Effort::Low | Effort::Medium | Effort::High)) => Ok(tier),
+            _ => Err(format!(
+                "{key} must be one of {}",
+                ["low", "medium", "high"].join(", ")
+            )),
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         non_empty("llm.reasoning.model", &self.model)?;
-        for (key, value) in [
-            ("llm.reasoning.default", self.default.as_str()),
-            ("llm.reasoning.max", self.max.as_str()),
-        ] {
-            if !matches!(
-                Effort::parse(value),
-                Some(Effort::Low | Effort::Medium | Effort::High)
-            ) {
-                return Err(format!(
-                    "{key} must be one of {}",
-                    ["low", "medium", "high"].join(", ")
-                ));
-            }
+        let default = Self::tier("llm.reasoning.default", &self.default)?;
+        let max = Self::tier("llm.reasoning.max", &self.max)?;
+        if default > max {
+            return Err("llm.reasoning.default must not exceed llm.reasoning.max".into());
         }
         count("llm.reasoning.timeout_ms", self.timeout_ms, 100, 10_000)?;
         usize_count(

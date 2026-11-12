@@ -1,6 +1,6 @@
 use crate::jev::{ChoiceQuestion, JevClient};
 use crate::prelude::*;
-use crate::{clamp_state, LlmSettings, ReasoningSettings};
+use crate::{is_stop_turn, LlmSettings, ReasoningSettings};
 
 /// Resolved `reasoning_effort` tier. Ordered from cheapest to most expensive so
 /// `min` implements the configured ceiling and `max` the omp-style floor.
@@ -109,6 +109,74 @@ pub(crate) struct ReasoningJudge {
 }
 
 impl ReasoningJudge {
+    /// Builds the `auto` classifier once at startup. A missing `JEV_API_KEY`
+    /// disables classification loudly and leaves the policy default in place, so
+    /// a chat turn never depends on the tiny model being reachable; a malformed
+    /// `[llm.reasoning]` section already fails startup validation.
+    pub(crate) fn from_settings(settings: &LlmSettings) -> Self {
+        let mode = ReasoningMode::from_settings(settings);
+        let (classifier, slots) = Self::classifier(settings, &mode);
+        Self {
+            mode,
+            classifier,
+            slots,
+        }
+    }
+
+    fn classifier(
+        settings: &LlmSettings,
+        mode: &ReasoningMode,
+    ) -> (Option<JevClient>, Option<Arc<Semaphore>>) {
+        if mode.policy().is_none() {
+            return (None, None);
+        }
+        let key = env::var("JEV_API_KEY")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let Some(key) = key else {
+            tracing::warn!(
+                "llm.reasoning_effort = auto without JEV_API_KEY: using the fallback tier"
+            );
+            return (None, None);
+        };
+        let url = match crate::parse_http_endpoint(&settings.reasoning.url, "llm.reasoning.url") {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!(%error, "reasoning classifier disabled");
+                return (None, None);
+            }
+        };
+        let policy = &settings.reasoning;
+        match JevClient::new(
+            url,
+            key,
+            policy.model.clone(),
+            Duration::from_millis(policy.timeout_ms),
+            policy.max_response_bytes,
+            policy.min_confidence,
+        ) {
+            Ok(client) => (
+                Some(client),
+                Some(Arc::new(Semaphore::new(policy.concurrency))),
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "reasoning classifier disabled");
+                (None, None)
+            }
+        }
+    }
+
+    /// Whether a classification could actually change this turn's tier. A fixed
+    /// or disabled mode, a missing key and a pinned ceiling cannot; neither can
+    /// a turn that never reaches the model: a suppressed stop-phrase, a vision
+    /// turn or a blank prompt.
+    pub(crate) fn wants(&self, prompt: &str, followup: bool, has_media: bool) -> bool {
+        self.can_classify()
+            && !has_media
+            && !is_stop_turn(prompt, followup)
+            && !prompt.trim().is_empty()
+    }
+
     /// True when a classification could actually change the tier: a fixed or
     /// disabled mode, a missing key and a pinned ceiling all resolve to the same
     /// tier without a request.
@@ -120,9 +188,10 @@ impl ReasoningJudge {
                 .is_some_and(|policy| policy.max > Effort::Low)
     }
 
-    /// Resolves the tier for one turn. `None` means "not in auto mode"; a
-    /// classifier failure or a busy slot falls back to the policy default and
-    /// never fails the turn.
+    /// Resolves the tier for one turn from a prompt the caller already bounded
+    /// with `clamp_state`, so the spawned task owns only the truncated copy.
+    /// `None` means "not in auto mode"; a classifier failure or a busy slot
+    /// falls back to the policy default and never fails the turn.
     pub(crate) async fn resolve(&self, prompt: &str) -> Option<Effort> {
         let policy = self.mode.policy()?;
         let Some(classifier) = &self.classifier else {
@@ -168,10 +237,11 @@ pub(crate) const EFFORT_CRITERIA: &[(&str, &str)] = &[
 pub(crate) const EFFORT_QUESTION: &str = "effort";
 
 /// One bounded classification request against the configured tiny model.
+/// `prompt` is bounded by `clamp_state` before it reaches this call.
 pub(crate) async fn classify(classifier: &JevClient, prompt: &str) -> Option<Effort> {
     classifier
         .ask(
-            &clamp_state(prompt),
+            prompt,
             ChoiceQuestion {
                 name: EFFORT_QUESTION,
                 instructions: EFFORT_INSTRUCTIONS,
