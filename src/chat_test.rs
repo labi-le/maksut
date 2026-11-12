@@ -3060,6 +3060,39 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     assert!(empty_catalog_reply.sticker.is_none());
     assert!(empty_catalog_reply.text.is_empty());
     llm_pass.task.abort();
+
+    let llm_text_only = mock_server(vec![reply_response(
+        "выебываться? я просто предупреждаю, чтобы ты потом не ныл",
+    )])
+    .await;
+    let text_only_config = ChatConfig::new(
+        llm_text_only.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm_text_only.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let text_only_reply = chat_reply_with_proposal(
+        &text_only_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        text_only_reply.sticker.is_none(),
+        "sticker_mode text reply without send_sticker or [стикер] must not attach a random fallback sticker"
+    );
+    assert!(
+        text_only_reply.text.contains("предупреждаю"),
+        "{:?}",
+        text_only_reply.text
+    );
+    llm_text_only.task.abort();
 }
 
 #[tokio::test]

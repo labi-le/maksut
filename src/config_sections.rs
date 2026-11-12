@@ -555,7 +555,7 @@ defaults!(MemorySettings {
     embedding_model: "intfloat/multilingual-e5-small".into(),
     embedding_dim: 384,
     embedding_batch: 32,
-    embedding_max_chars: 500,
+    embedding_max_chars: 1200,
     embedding_max_response_bytes: 4 * 1024 * 1024,
     embedding_passes: 3,
     embedding_interval_secs: 120,
@@ -585,9 +585,9 @@ defaults!(CodeSettings {
     max_matches: 40,
     max_line_chars: 300,
     memory_max_rows: 50,
-    memory_max_chars: 1200,
+    memory_max_chars: 4000,
     topic_max_chars: 80,
-    fact_max_chars: 300,
+    fact_max_chars: 1000,
     url_max_chars: 300,
 });
 

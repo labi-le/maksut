@@ -91,6 +91,54 @@ fn reply_to_bot_media_post_is_not_addressed_to_bot() {
         ),
         AddressKind::Named
     );
+    assert_eq!(
+        address_kind(&reply_to_video, "это Максут", "MyBot"),
+        AddressKind::None,
+        "third-person 'это Максут' reply to another user must not address the bot"
+    );
+    assert_eq!(
+        address_kind(&reply_to_video, "опять максут акции обрушил", "MyBot"),
+        AddressKind::None,
+        "third-person mid-sentence mention in reply to another user must not address the bot"
+    );
+    assert_eq!(
+        address_kind(&reply_to_video, "у максута спроси", "MyBot"),
+        AddressKind::None,
+        "oblique case mention in reply to another user must not address the bot"
+    );
+    assert!(crate::chat_style::resolve_addressed_chat(
+        &reply_to_video,
+        "это Максут",
+        "MyBot",
+        false
+    )
+    .0
+    .is_none());
+    assert_eq!(
+        crate::chat_style::resolve_addressed_chat(
+            &reply_to_video,
+            "максут почему у него МакБук изогнутый",
+            "MyBot",
+            false
+        )
+        .0,
+        Some(("почему у него МакБук изогнутый".to_owned(), false))
+    );
+    let dm_reply_to_media: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 218900,
+        "date": 1700000180,
+        "chat": { "id": 395448554_i64, "type": "private" },
+        "from": { "id": 395448554_i64, "is_bot": false, "first_name": "Денис" },
+        "text": "а где звук?",
+        "reply_to_message": reply_msg
+    }))
+    .unwrap();
+    assert_eq!(
+        crate::chat_style::resolve_addressed_chat(&dm_reply_to_media, "а где звук?", "MyBot", true)
+            .0,
+        Some(("а где звук?".to_owned(), false)),
+        "private chat replies to non-bot/media messages must stay addressed with their full text"
+    );
 
     let reply_to_text: Message = serde_json::from_value(serde_json::json!({
         "message_id": 218899,

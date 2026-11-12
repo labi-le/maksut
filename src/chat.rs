@@ -409,10 +409,11 @@ pub(crate) async fn chat_reply_with_proposal(
                 st.unwrap_or_else(|| style_chat_reply(&content))
             };
             let q = sticker_request_query(prompt);
+            let fallback_sticker = state.allow_sticker && (!turn.sticker_mode || text.is_empty());
             let sticker = state
                 .sticker
-                .or_else(|| state.allow_sticker.then(|| catalog.pick(q)).flatten())
-                .or_else(|| state.allow_sticker.then(|| catalog.pick("")).flatten());
+                .or_else(|| fallback_sticker.then(|| catalog.pick(q)).flatten())
+                .or_else(|| fallback_sticker.then(|| catalog.pick("")).flatten());
             let empty = text.is_empty() && sticker.is_none() && state.decision.is_none();
             if !state.research.used && empty && !turn.followup && !bare_prompt && !turn.sticker_mode
             {

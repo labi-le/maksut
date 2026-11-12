@@ -446,7 +446,15 @@ pub(crate) fn resolve_addressed_chat(
     let private = message.chat.is_private();
     let bare_sticker_reply =
         !private && bot_reply && text.trim().is_empty() && message.sticker().is_some();
-    let addressed = match chat_prompt(text, private, bot_username, bot_reply) {
+    let reply_to_other = !private
+        && message.reply_to_message().is_some()
+        && !bot_reply
+        && !crate::addressing::explicit_mention(text, bot_username)
+        && !crate::addressing::vocative_bot_address(text, bot_username);
+    let addressed = match (!reply_to_other)
+        .then(|| chat_prompt(text, private, bot_username, bot_reply))
+        .flatten()
+    {
         Some(prompt) => Some((prompt, false)),
         None if (has_media || bare_sticker_reply) && (private || bot_reply) => {
             Some((String::new(), bare_sticker_reply))

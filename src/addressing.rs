@@ -19,6 +19,25 @@ pub(crate) const BOT_NAME_FORMS: &[&str] = &[
     "maksut",
 ];
 
+const BOT_VOCATIVE_FORMS: &[&str] = &["максут", "максутка", "максутик", "maksut"];
+
+const THIRD_PERSON_LEAD_WORDS: &[&str] = &[
+    "это",
+    "вот",
+    "опять",
+    "снова",
+    "просто",
+    "же",
+    "уже",
+    "там",
+    "тут",
+    "тоже",
+    "даже",
+    "как",
+    "зато",
+    "хотя",
+    "ведь",
+];
 /// How the message relates to the bot, as far as addressing goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AddressKind {
@@ -92,7 +111,9 @@ pub(crate) fn address_kind(
     let private = message.chat.is_private() || reply_to_bot(message, bot_username);
     let kind = if private || explicit_mention(text, bot_username) {
         AddressKind::Explicit
-    } else if named_content_left(text, bot_username) {
+    } else if named_content_left(text, bot_username)
+        && (message.reply_to_message().is_none() || vocative_bot_address(text, bot_username))
+    {
         AddressKind::Named
     } else {
         AddressKind::None
@@ -116,6 +137,40 @@ pub(crate) fn named_content_left(text: &str, bot_username: &str) -> bool {
         }
     }
     named && !trim_name_edges(&cleaned).is_empty()
+}
+
+/// When a group message replies to another human, a casual third-person mention
+/// (`"это Максут"`, `"опять максут акции обрушил"`, `"у максута спроси"`) is
+/// directed at the replied-to human, not the bot; only an edge vocative
+/// (`"максут, ..."`, `"... максут?"`) that is not a bare `"это максут"` clause
+/// addresses the bot directly.
+pub(crate) fn vocative_bot_address(text: &str, bot_username: &str) -> bool {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .filter_map(|w| {
+            let core = w.trim_matches(|ch: char| !ch.is_alphanumeric());
+            (!core.is_empty()).then(|| core.to_lowercase())
+        })
+        .collect();
+    if words.len() < 2 {
+        return false;
+    }
+    let bot_name = (!bot_username.is_empty()).then(|| bot_username.to_lowercase());
+    let is_vocative =
+        |w: &str| BOT_VOCATIVE_FORMS.contains(&w) || bot_name.as_deref().is_some_and(|b| w == b);
+    let first_voc = words.first().is_some_and(|w| is_vocative(w));
+    let last_voc = words.last().is_some_and(|w| is_vocative(w));
+    if !first_voc && !last_voc {
+        return false;
+    }
+    if !first_voc
+        && words
+            .first()
+            .is_some_and(|w| THIRD_PERSON_LEAD_WORDS.contains(&w.as_str()))
+    {
+        return false;
+    }
+    true
 }
 
 /// The same edge punctuation `chat_prompt` removes before deciding that a
