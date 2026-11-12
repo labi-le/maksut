@@ -284,7 +284,43 @@ impl LlmSettings {
             self.max_response_bytes,
             1024,
             4 * 1024 * 1024,
-        )
+        )?;
+        self.reasoning.validate()
+    }
+}
+
+impl ReasoningSettings {
+    /// One of the three tiers `auto` can actually return; `none` and unknown
+    /// names are configuration errors, not fallbacks.
+    fn tier(key: &str, value: &str) -> Result<Effort, String> {
+        match Effort::parse(value) {
+            Some(tier @ (Effort::Low | Effort::Medium | Effort::High)) => Ok(tier),
+            _ => Err(format!(
+                "{key} must be one of {}",
+                ["low", "medium", "high"].join(", ")
+            )),
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        non_empty("llm.reasoning.model", &self.model)?;
+        let default = Self::tier("llm.reasoning.default", &self.default)?;
+        let max = Self::tier("llm.reasoning.max", &self.max)?;
+        if default > max {
+            return Err("llm.reasoning.default must not exceed llm.reasoning.max".into());
+        }
+        count("llm.reasoning.timeout_ms", self.timeout_ms, 100, 10_000)?;
+        usize_count(
+            "llm.reasoning.max_response_bytes",
+            self.max_response_bytes,
+            1024,
+            1024 * 1024,
+        )?;
+        usize_count("llm.reasoning.concurrency", self.concurrency, 1, 64)?;
+        if !self.min_confidence.is_finite() || !(0.0..=1.0).contains(&self.min_confidence) {
+            return Err("llm.reasoning.min_confidence must be between 0 and 1".to_string());
+        }
+        parse_http_endpoint(&self.url, "llm.reasoning.url").map(|_| ())
     }
 }
 

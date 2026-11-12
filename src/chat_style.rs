@@ -289,6 +289,12 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
         .any(|w| WORD_STOPS.contains(&w))
 }
 
+/// A stop-phrase turn that ends the conversation: the model is never called, so
+/// the `auto` judge must not spend a request on it.
+pub(crate) fn is_stop_turn(prompt: &str, followup: bool) -> bool {
+    is_stop_followup(prompt) && (followup || prompt.split_whitespace().count() <= 7)
+}
+
 /// Suppresses repetitive copy-paste spam from a non-owner when their current
 /// message and their last two messages in recent chat history have the same
 /// normalized text, or when they parrot the bot's own previous reply verbatim.

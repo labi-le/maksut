@@ -42,10 +42,14 @@ mod prompts;
 pub(crate) use prompts::*;
 mod chat;
 pub(crate) use chat::*;
+mod chat_turn;
+pub(crate) use chat_turn::*;
 mod chat_delivery;
 pub(crate) use chat_delivery::*;
 mod completion;
 pub(crate) use completion::*;
+mod reasoning;
+pub(crate) use reasoning::*;
 mod chat_client;
 pub(crate) use chat_client::*;
 mod chat_media;
@@ -384,6 +388,8 @@ mod process_test;
 mod qdrant_test;
 #[cfg(test)]
 mod read_url_test;
+#[cfg(test)]
+mod reasoning_test;
 #[cfg(test)]
 mod research_registry_test;
 #[cfg(test)]

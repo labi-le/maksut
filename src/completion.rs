@@ -25,6 +25,9 @@ pub(crate) struct CompletionRequest<'a> {
     pub(crate) allow_sticker: bool,
     pub(crate) allow_feature: bool,
     pub(crate) reasoning: bool,
+    /// Tier the turn classifier resolved (`llm.reasoning_effort = "auto"`);
+    /// ignored for a fixed mode, where the configured value wins.
+    pub(crate) effort: Option<Effort>,
     pub(crate) temperature: f64,
 }
 
@@ -39,11 +42,16 @@ impl<'a> CompletionRequest<'a> {
             allow_sticker: false,
             allow_feature: false,
             reasoning: true,
+            effort: None,
             temperature: 0.7,
         }
     }
     pub(crate) fn without_reasoning(mut self) -> Self {
         self.reasoning = false;
+        self
+    }
+    pub(crate) fn effort(mut self, effort: Effort) -> Self {
+        self.effort = Some(effort);
         self
     }
     pub(crate) fn tool_mode(&self) -> ToolMode {

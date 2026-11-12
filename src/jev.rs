@@ -3,10 +3,30 @@ use crate::prelude::*;
 use crate::router::Decision;
 use crate::sanitize_text;
 
-/// Client for the TypeSafe System One (`Jev`) decisions API: one `choice`
-/// question with four named answers (`reply`, `sticker`, `wait`, `silent`).
-/// Any failure — transport, status, size, JSON shape, low confidence — returns
-/// `None`, and the caller falls back to the deterministic rules table.
+/// One `choice` question of the TypeSafe System One (`Jev`) API: a name, the
+/// task instruction, and the named answers with their criteria.
+pub(crate) struct ChoiceQuestion<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) instructions: &'a str,
+    pub(crate) criteria: &'a [(&'a str, &'a str)],
+}
+
+/// The router's four-answer question. The reasoning classifier builds its own.
+const ACTION: ChoiceQuestion<'static> = ChoiceQuestion {
+    name: "action",
+    instructions: crate::JEV_INSTRUCTIONS_PROMPT,
+    criteria: &[
+        ("reply", crate::JEV_REPLY_PROMPT),
+        ("sticker", crate::JEV_STICKER_PROMPT),
+        ("wait", crate::JEV_WAIT_PROMPT),
+        ("silent", crate::JEV_SILENT_PROMPT),
+    ],
+};
+
+/// Client for the TypeSafe System One (`Jev`) decisions API: one bounded
+/// `choice` question per call. Any failure — transport, status, size, JSON
+/// shape, low confidence — returns `None`, and the caller falls back to its
+/// deterministic table or default tier.
 #[derive(Clone)]
 pub(crate) struct JevClient {
     http: reqwest::Client,
@@ -48,21 +68,26 @@ impl JevClient {
         })
     }
 
-    pub(crate) async fn decide(&self, state: &str) -> Option<Decision> {
+    /// Asks one question and returns the chosen label once it clears
+    /// `min_confidence`. The body shape and the confidence ladder are shared by
+    /// every caller so the router and the reasoning judge cannot drift.
+    pub(crate) async fn ask(&self, state: &str, question: ChoiceQuestion<'_>) -> Option<String> {
         let started = time::Instant::now();
+        let criteria: serde_json::Map<String, Value> = question
+            .criteria
+            .iter()
+            .map(|(name, description)| {
+                ((*name).to_owned(), Value::String((*description).to_owned()))
+            })
+            .collect();
         let body = serde_json::json!({
             "model": self.model,
             "state": state,
             "questions": {
-                "action": {
+                question.name: {
                     "type": "choice",
-                    "instructions": crate::JEV_INSTRUCTIONS_PROMPT,
-                    "criteria": {
-                        "reply": crate::JEV_REPLY_PROMPT,
-                        "sticker": crate::JEV_STICKER_PROMPT,
-                        "wait": crate::JEV_WAIT_PROMPT,
-                        "silent": crate::JEV_SILENT_PROMPT
-                    }
+                    "instructions": question.instructions,
+                    "criteria": criteria
                 }
             }
         });
@@ -79,6 +104,7 @@ impl JevClient {
             Err(_) => {
                 tracing::warn!(
                     host = self.url.host_str(),
+                    question = question.name,
                     elapsed_ms = elapsed_ms(started),
                     "jev request failed"
                 );
@@ -88,6 +114,7 @@ impl JevClient {
         if !response.status().is_success() {
             tracing::warn!(
                 status = response.status().as_u16(),
+                question = question.name,
                 elapsed_ms = elapsed_ms(started),
                 "jev HTTP error"
             );
@@ -122,7 +149,8 @@ impl JevClient {
                 return None;
             }
         };
-        let answer = value.pointer("/answers/action")?;
+        let pointer = format!("/answers/{}", question.name);
+        let answer = value.pointer(&pointer)?;
         let choice = answer.get("choice")?.as_str()?;
         let confidence = answer
             .get("probabilities")
@@ -131,7 +159,7 @@ impl JevClient {
             .or_else(|| answer.get("confidence").and_then(Value::as_f64))?;
         if !confidence.is_finite() || confidence < self.min_confidence {
             tracing::debug!(
-                choice_len = choice.chars().count(),
+                question = question.name,
                 confidence,
                 min = self.min_confidence,
                 elapsed_ms = elapsed_ms(started),
@@ -139,7 +167,20 @@ impl JevClient {
             );
             return None;
         }
-        let decision = match choice {
+        tracing::debug!(
+            question = question.name,
+            choice_len = choice.chars().count(),
+            confidence,
+            elapsed_ms = elapsed_ms(started),
+            "jev answer"
+        );
+        Some(choice.to_owned())
+    }
+
+    /// The router's `reply` / `sticker` / `wait` / `silent` decision.
+    pub(crate) async fn decide(&self, state: &str) -> Option<Decision> {
+        let choice = self.ask(state, ACTION).await?;
+        let decision = match choice.as_str() {
             "reply" => Some(Decision::Reply),
             "sticker" => Some(Decision::Sticker),
             "wait" => Some(Decision::Wait),
@@ -148,21 +189,12 @@ impl JevClient {
         };
         match decision {
             Some(decision) => {
-                tracing::debug!(
-                    choice_len = choice.chars().count(),
-                    confidence,
-                    decision = ?decision,
-                    elapsed_ms = elapsed_ms(started),
-                    "jev decision"
-                );
+                tracing::debug!(decision = ?decision, "jev decision");
                 Some(decision)
             }
             None => {
-                tracing::warn!(
-                    choice_len = choice.chars().count(),
-                    "jev returned an unknown choice"
-                );
-                tracing::trace!(choice = %sanitize_text(choice), "jev raw choice");
+                tracing::warn!("jev returned an unknown action choice");
+                tracing::trace!(choice = %sanitize_text(&choice), "jev raw choice");
                 None
             }
         }

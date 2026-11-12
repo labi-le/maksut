@@ -110,10 +110,23 @@ concurrency = 2
 [llm]
 base_url = "https://llm.labile.cc/v1"
 model = "deepseek-v4.1-flash"
-# "low", "medium", "high", or "none"
-reasoning_effort = "low"
+# "none", "low", "medium", "high", or "auto" (per-turn tier from the judge below)
+reasoning_effort = "auto"
 request_timeout_secs = 40
 max_response_bytes = 65536
+
+# The tiny judge behind reasoning_effort = "auto": one bounded choice question
+# per turn (low / medium / high) over JEV_API_KEY. Any failure, timeout or low
+# confidence sends `default`, and `auto` never reaches the provider.
+[llm.reasoning]
+model = "jev-latest"
+url = "https://api.typesafe.ai/v1/systemone"
+timeout_ms = 1500
+max_response_bytes = 16384
+min_confidence = 0.6
+concurrency = 4
+default = "low"
+max = "high"
 
 [router]
 # off: historical addressing gate only;
