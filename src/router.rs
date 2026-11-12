@@ -2,16 +2,11 @@ use crate::addressing::AddressKind;
 use crate::prelude::*;
 use crate::{parse_http_endpoint, RouterMode, RouterSettings};
 
-/// One pre-model reply decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Decision {
-    /// Do not answer; a closed followup window is cleared by the caller.
     Silent,
-    /// Do not answer now, but keep listening for the next message.
     Wait,
-    /// Continue into the heavy chat model for a normal reply.
     Reply,
-    /// Continue into the chat model in emotional sticker-reaction mode.
     Sticker,
 }
 
@@ -23,9 +18,9 @@ pub(crate) struct RouterInput<'a> {
     pub(crate) followup: bool,
     pub(crate) stop: bool,
     pub(crate) private: bool,
+    pub(crate) forwarded: bool,
     pub(crate) reply_context: Option<&'a str>,
 }
-
 #[derive(Clone, Default)]
 pub(crate) struct Router {
     mode: RouterMode,
@@ -76,8 +71,6 @@ impl Router {
         self.mode
     }
 
-    /// Runs the decision and applies its side effect: silence closes the
-    /// followup window, wait leaves it, reply continues into the model.
     pub(crate) async fn gate(
         &self,
         chat: &crate::ChatConfig,
@@ -93,6 +86,7 @@ impl Router {
                 followup: input.followup,
                 stop,
                 private: message.chat.is_private(),
+                forwarded: message.forward_origin().is_some(),
                 reply_context: input.reply_context.as_deref(),
             })
             .await;
@@ -129,10 +123,6 @@ impl Router {
             return Decision::Reply;
         }
         let text = input.text.trim();
-        // Direct questions, requests, long addressed messages, or captionless
-        // addressed media/sticker turns (`text.is_empty()` with `Explicit`) go
-        // straight to the model; short emotional addressed remarks consult Jev
-        // so it can pick `Decision::Sticker` instead of a verbose text reply.
         if addressed && (text.is_empty() || expects_answer(text) || text.chars().count() > 140) {
             return Decision::Reply;
         }
@@ -140,14 +130,15 @@ impl Router {
             return Decision::Silent;
         }
         let rules = decide_rules(input);
-        if !addressed
-            && input.followup
-            && (input.reply_context.is_some() || addresses_other_participant(text))
+        if !addressed && input.followup && (input.reply_context.is_some() || addresses_other(text))
         {
             return Decision::Wait;
         }
-        if !addressed && input.followup && rules == Decision::Reply {
-            return Decision::Reply;
+        if !addressed && input.followup && (rules == Decision::Reply || is_short_reaction(text)) {
+            return rules;
+        }
+        if !addressed && !input.followup && !can_wake_ambient(input, text) {
+            return Decision::Silent;
         }
         let slot = self.jev_slots.as_ref().map(|slots| slots.try_acquire());
         let decision = if matches!(&slot, Some(Err(_))) {
@@ -203,7 +194,7 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
     if text.is_empty() {
         return Decision::Silent;
     }
-    if addresses_other_participant(text) {
+    if addresses_other(text) {
         return Decision::Wait;
     }
     if expects_answer(text) {
@@ -309,84 +300,28 @@ const REQUEST_STEMS: &[&str] = &[
     "нагугл",
 ];
 
+fn is_request_verb(w: &str) -> bool {
+    let Some(tail) = REQUEST_STEMS.iter().find_map(|stem| w.strip_prefix(*stem)) else {
+        return false;
+    };
+    const PAST: &[&str] = &[
+        "ал", "ала", "ало", "али", "ял", "яла", "яло", "яли", "ил", "ила", "ило", "или", "ул",
+        "ула", "уло", "ули", "ел", "ела", "ело", "ели",
+    ];
+    !(tail.starts_with('л') || PAST.iter().any(|s| tail.ends_with(s)))
+}
+
 fn lower_has_action_verb(text: &str) -> bool {
     text.to_lowercase()
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .any(|w| REQUEST_STEMS.iter().any(|stem| w.starts_with(stem)))
+        .any(is_request_verb)
 }
 
-const OTHER_PARTICIPANT_VOCATIVES: &[&str] = &[
-    "денис",
-    "дениска",
-    "вадик",
-    "даня",
-    "дань",
-    "ваня",
-    "вань",
-    "ваньок",
-    "ванёк",
-    "влад",
-    "владулик",
-    "владик",
-    "влудик",
-    "кирилл",
-    "кирюх",
-    "андрей",
-    "андрюх",
-    "андрюха",
-    "анрюх",
-    "олег",
-    "олежа",
-    "иван",
-    "лейла",
-    "павел",
-    "паша",
-    "евгений",
-    "женя",
-    "виталий",
-    "виталик",
-    "марина",
-    "даниил",
-];
-
-const THIRD_PERSON_LEAD_PRONOUNS: &[&str] = &["он", "она", "оно", "они", "ему", "ей", "им"];
-
-fn addresses_other_participant(text: &str) -> bool {
-    if text
-        .split_whitespace()
-        .any(|w| w.starts_with('@') && w.len() > 2)
-    {
-        return true;
-    }
-    let words: Vec<String> = text
-        .to_lowercase()
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_owned)
-        .collect();
-    let Some(first) = words.first() else {
-        return false;
-    };
-    if OTHER_PARTICIPANT_VOCATIVES.contains(&first.as_str()) {
-        return true;
-    }
-    if THIRD_PERSON_LEAD_PRONOUNS.contains(&first.as_str())
-        && !words
-            .iter()
-            .any(|w| crate::addressing::BOT_NAME_FORMS.contains(&w.as_str()))
-        && !expects_answer(text)
-    {
-        return true;
-    }
-    words.len() >= 2
-        && words
-            .last()
-            .is_some_and(|last| OTHER_PARTICIPANT_VOCATIVES.contains(&last.as_str()))
+fn addresses_other(text: &str) -> bool {
+    crate::addressing::addresses_other_participant(text, expects_answer(text))
 }
 
-/// Followup turns answer only when they look like a real request; a plain
-/// remark keeps the window open instead of paying for a heavy completion.
 fn expects_answer(text: &str) -> bool {
     if text.contains('?') {
         return true;
@@ -445,13 +380,27 @@ fn expects_answer(text: &str) -> bool {
     {
         return true;
     }
-    lower
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .any(|word| {
-            QUESTION_WORDS.contains(&word)
-                || REQUEST_STEMS.iter().any(|stem| word.starts_with(stem))
-        })
+    has_question_or_request(&lower)
+}
+
+fn has_question_or_request(lower: &str) -> bool {
+    lower.contains('?')
+        || lower
+            .split(|ch: char| !ch.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .any(|word| QUESTION_WORDS.contains(&word) || is_request_verb(word))
+}
+
+fn can_wake_ambient(input: &RouterInput<'_>, text: &str) -> bool {
+    let l = text.to_lowercase();
+    input.reply_context.is_none()
+        && !input.forwarded
+        && !addresses_other(text)
+        && !is_short_reaction(text)
+        && !l.starts_with("[переслано]")
+        && (has_question_or_request(&l)
+            || l.split(|c: char| !c.is_alphanumeric())
+                .any(|w| ["бот", "нейронк", "иишк"].iter().any(|s| w.starts_with(s))))
 }
 
 const REACTIONS: &[&str] = &[
@@ -496,8 +445,14 @@ const REACTIONS: &[&str] = &[
     "база",
     "жиза",
     "бывает",
+    "все верно",
+    "всё верно",
+    "логично",
+    "согласен",
+    "согласна",
+    "именно",
+    "точно",
 ];
-
 fn is_short_reaction(text: &str) -> bool {
     if text.chars().count() > 32 {
         return false;

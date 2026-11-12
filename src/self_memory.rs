@@ -42,7 +42,17 @@ pub(crate) async fn record_self_fact(
         .chars()
         .take(config().code.fact_max_chars)
         .collect();
-    let source_url = source_url.trim();
+    let normalized_source_url;
+    let source_url = match source_url
+        .trim()
+        .strip_prefix("https://github.com/labi-le/maxwell/blob/main/")
+    {
+        Some(rest) => {
+            normalized_source_url = format!("{}/{rest}", crate::code_inspect::GITHUB_BLOB_BASE);
+            normalized_source_url.as_str()
+        }
+        None => source_url.trim(),
+    };
     if topic.is_empty() {
         return Err("укажи topic".into());
     }

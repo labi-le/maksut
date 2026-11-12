@@ -69,6 +69,88 @@ static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });
+type PendingImage = (FileId, String);
+
+static RECENT_IMAGES: std::sync::LazyLock<
+    tokio::sync::Mutex<std::collections::HashMap<ChatId, (time::Instant, PendingImage)>>,
+> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+async fn note_recent_image(chat_id: ChatId, img: &PendingImage) {
+    let mut guard = RECENT_IMAGES.lock().await;
+    let now = time::Instant::now();
+    let ttl = Duration::from_secs(300);
+    if guard.len() >= 256 && !guard.contains_key(&chat_id) {
+        guard.retain(|_, (at, _)| now.duration_since(*at) < ttl);
+        while guard.len() >= 256 {
+            let Some(oldest) = guard
+                .iter()
+                .min_by_key(|(_, (at, _))| *at)
+                .map(|(chat, _)| *chat)
+            else {
+                break;
+            };
+            guard.remove(&oldest);
+        }
+    }
+    guard.insert(chat_id, (now, img.clone()));
+}
+
+pub(crate) async fn take_recent_image(chat_id: ChatId) -> Option<PendingImage> {
+    let mut guard = RECENT_IMAGES.lock().await;
+    let now = time::Instant::now();
+    if guard
+        .get(&chat_id)
+        .is_some_and(|(at, _)| now.duration_since(*at) >= Duration::from_secs(300))
+    {
+        guard.remove(&chat_id);
+        return None;
+    }
+    guard.remove(&chat_id).map(|(_, img)| img)
+}
+
+async fn peek_recent_image(chat_id: ChatId) -> Option<PendingImage> {
+    let mut guard = RECENT_IMAGES.lock().await;
+    let now = time::Instant::now();
+    match guard.get(&chat_id) {
+        Some((at, img)) if now.duration_since(*at) < Duration::from_secs(300) => Some(img.clone()),
+        Some(_) => {
+            guard.remove(&chat_id);
+            None
+        }
+        None => None,
+    }
+}
+
+fn references_recent_image(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    const STEMS: &[&str] = &["картинк", "фотк", "изображени", "пикч", "скриншот"];
+    const WORDS: &[&str] = &[
+        "скрин",
+        "скрине",
+        "скрина",
+        "скрину",
+        "скрином",
+        "фото",
+        "мем",
+        "меме",
+        "мема",
+    ];
+    const SHORT: &[&str] = &[
+        "че это",
+        "чё это",
+        "что это",
+        "а это",
+        "а тут",
+        "а здесь",
+        "держи еще раз",
+        "держи ещё раз",
+    ];
+    let word_hit = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|w| WORDS.contains(&w) || STEMS.iter().any(|s| w.starts_with(s)));
+    word_hit || (lower.chars().count() <= 40 && SHORT.iter().any(|k| lower.contains(k)))
+}
 
 pub(crate) async fn download_pending_image(
     bot: &Bot,
@@ -219,8 +301,14 @@ pub(crate) async fn resolve_chat_input(
     reply_ignored: bool,
 ) -> Option<ResolvedChatInput> {
     let chat = cfg.chat.as_ref()?;
+    let own_text = message.text().or_else(|| message.caption()).unwrap_or("");
     let current_media = message_image(message);
     let has_current_media = current_media.is_some();
+    if !message.chat.is_private() && own_text.trim().is_empty() && message_has_own_photo(message) {
+        if let Some(ref img) = current_media {
+            note_recent_image(message.chat.id, img).await;
+        }
+    }
     let has_reply_photo = !reply_ignored
         && message
             .reply_to_message()
@@ -243,6 +331,7 @@ pub(crate) async fn resolve_chat_input(
         &cfg.bot_username,
         media.is_some(),
     );
+    let is_addressed = addressed.is_some();
     let (prompt, followup) = match addressed {
         Some(pair) => pair,
         None if !message.chat.is_private() => {
@@ -268,7 +357,23 @@ pub(crate) async fn resolve_chat_input(
     let reply_context = message
         .reply_to_message()
         .and_then(|reply| crate::chat_style::format_reply_context(reply, reply_ignored));
-    let pending_media = media.filter(|_| !followup || has_current_media || has_reply_photo);
+    let direct_media = media.filter(|_| !followup || has_current_media || has_reply_photo);
+    let pending_media = match direct_media {
+        Some(img) => {
+            if has_current_media && !message.chat.is_private() && !own_text.trim().is_empty() {
+                let _ = take_recent_image(message.chat.id).await;
+            }
+            Some(img)
+        }
+        None if !message.chat.is_private()
+            && !reply_ignored
+            && (is_addressed || followup)
+            && references_recent_image(prompt.split("[файл ").next().unwrap_or(&prompt)) =>
+        {
+            peek_recent_image(message.chat.id).await
+        }
+        None => None,
+    };
     let warn_missing_image = pending_media.is_some() && !bare_sticker_reply;
     Some(ResolvedChatInput {
         prompt,

@@ -22,7 +22,7 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
   without it fails startup instead of degrading silently.
 - One decision type, `Decision::{Silent, Wait, Reply, Sticker}` (`src/router.rs`), fed by
   `RouterInput` (prompt text, `AddressKind`, followup flag, stop phrase, chat
-  kind, reply context). `src/chat_media.rs` classifies addressing once and may
+  kind, forwarded flag, reply context). `src/chat_media.rs` classifies addressing once and may
   surface an unaddressed group message to the router when a router mode is on;
   `src/chat.rs` applies the decision before pacing, chat locks, the typing
   keepalive, and any media download, and logs a structured `tracing::info!`
@@ -80,8 +80,12 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
   enter `Decision::Sticker` (`turn.sticker_mode`) so the bot responds with a
   sticker in a single round instead of generating a verbose text reply.
 - With `mode = "jev"` the router may also wake the bot on an unaddressed group
-  message (`Reply` or `Sticker`); that is the intended recall gain and the
-  reason it is not the default. A direct mention still always answers.
+  message (`Reply` or `Sticker`) when `can_wake_ambient` matches (a non-forwarded,
+  non-reply question/request not directed at another participant/bot, or a message
+  referencing a bot/AI stem `бот*`/`нейронк*`/`иишк*`); that is the intended recall
+  gain and the reason it is not the default. Short reactions (`is_short_reaction`)
+  in `followup` return `Silent` without calling Jev, and a direct mention still
+  always answers.
 - The router state is the current message plus reply context, not chat history:
   persisting history for the router would add a database read on every group
   message. This keeps the decision O(1) plus one bounded HTTP call.

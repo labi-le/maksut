@@ -232,4 +232,42 @@ fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_for
         crate::chat_doc::select_injection_text(typed, Some(vt), true, Some(dt), true, dt),
         "caption"
     );
+    assert_eq!(
+        crate::chat_urls::strip_prose_at_mentions(
+            "@alisa а водку в контуре ты бы допустила? пиши на `user@example.com` или `@alisa`"
+        ),
+        "alisa а водку в контуре ты бы допустила? пиши на `user@example.com` или `@alisa`"
+    );
+    let styled_maxwell = crate::chat_style::style_chat_reply(
+        "см. [src/voice.rs#L72](https://github.com/labi-le/maxwell/blob/main/src/voice.rs#L72)",
+    );
+    assert!(
+        styled_maxwell.contains("https://github.com/labi-le/maksut/blob/main/src/voice.rs#L72")
+            && !styled_maxwell.contains("labi-le/maxwell"),
+        "legacy maxwell blob URLs must normalize to labi-le/maksut: {styled_maxwell}"
+    );
+    let sources = vec![crate::research::ResearchSource {
+        id: 1,
+        title: "Doc".into(),
+        url: "https://example.com".into(),
+        domain: "example.com".into(),
+        snippet: "ok".into(),
+        queries: vec![1],
+        best_position: 1,
+    }];
+    let research_fenced = crate::chat_style::style_research_reply(
+        "вот пример [1] для @alisa:\n```python\n@dataclass\ndef f():\n    pass\n```",
+        &sources,
+    )
+    .unwrap();
+    assert!(
+        research_fenced.contains("```python\n@dataclass\ndef f():\n    pass\n```")
+            && !research_fenced.contains("для @alisa"),
+        "research reply must preserve fenced code and @decorators while stripping prose @mentions: {research_fenced}"
+    );
+    assert_eq!(
+        crate::chat_text::truncate_text("   abcdef", 5),
+        "   ab",
+        "truncate_text must not return empty string when only leading whitespace precedes a long token"
+    );
 }

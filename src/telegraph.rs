@@ -1,9 +1,4 @@
-//! Publishes long-form or explicitly requested article/code replies to `telegra.ph`
-//! (`>= 200` chars on explicit `telegra.ph` requests, `>= 500` chars on explicit
-//! article/detail requests, `>= 1800` chars across multiple lines/paragraphs/code
-//! blocks, or `> chat.reply_max_chars`), returning a concise chat message with a
-//! brief preview and the verified `https://telegra.ph/...` article link; falls back
-//! to `split_message` when Telegraph is unreachable or the text carries a credential.
+//! Publishes long-form or explicitly requested article replies to `telegra.ph`.
 
 use crate::chat_text::{fence_open_ticks, is_fence_close, shorten};
 use crate::config::config;
@@ -21,8 +16,6 @@ const TELEGRAPH_PREVIEW_CHARS: usize = 500;
 
 static TELEGRAPH_TOKEN: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
-/// Drops the backslash escapes Telegram's MarkdownV2 dialect puts before
-/// punctuation (`\-`, `\.`), which the model emits for chat rendering.
 fn unescape_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
@@ -41,12 +34,10 @@ fn unescape_markdown(text: &str) -> String {
     out
 }
 
-/// Removes emphasis markers and escapes from a line of prose.
 fn strip_marks(text: &str) -> String {
     unescape_markdown(text).replace("**", "").replace("__", "")
 }
 
-/// `Some((hashes, text))` for a `#`-prefixed heading line.
 fn heading_line(line: &str) -> Option<(usize, String)> {
     let trimmed = line.trim();
     let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
@@ -54,8 +45,6 @@ fn heading_line(line: &str) -> Option<(usize, String)> {
     ((1..=6).contains(&hashes) && !rest.is_empty()).then(|| (hashes, strip_marks(rest)))
 }
 
-/// `Some(text)` when the whole line is one `**bold**` run; the model uses that
-/// shape for section titles.
 fn bold_heading(line: &str) -> Option<String> {
     let inner = line.trim().strip_prefix("**")?.strip_suffix("**")?;
     (!inner.contains("**") && !inner.trim().is_empty()).then(|| unescape_markdown(inner.trim()))
@@ -468,9 +457,8 @@ pub(crate) async fn publish_telegraph_with_prompt(
 
 /// Publishes `text` to `https://api.telegra.ph` when `text` exceeds
 /// `config().chat.reply_max_chars` (or `>= 200` chars on an explicit `telegra.ph`
-/// request, `>= 500` chars when `prompt` asks for an article/detailed breakdown,
-/// or `>= 1800` chars across multiple paragraphs/code blocks), returning the
-/// formatted short chat message with the `telegra.ph` link.
+/// request, or `>= 500` chars when `prompt` explicitly asks for an article or
+/// longread), returning the formatted short chat message with the link.
 pub(crate) async fn maybe_publish_reply(prompt: &str, text: &str) -> Option<String> {
     if !should_publish_telegraph(prompt, text) {
         return None;
@@ -501,7 +489,7 @@ pub(crate) fn explicit_telegraph_request(prompt: &str) -> bool {
 pub(crate) fn explicit_article_request(prompt: &str) -> bool {
     let l = prompt.to_lowercase();
     const PROP: &[&str] = &["пропоз", "хотелк", "бэклог", "ишью", "issue", "задач"];
-    const ART: &[&str] = &["стать", "подробн", "развёрн", "разверн", "лонгрид"];
+    const ART: &[&str] = &["стать", "лонгрид", "longread"];
     explicit_telegraph_request(prompt)
         || (!PROP.iter().any(|k| l.contains(k)) && ART.iter().any(|k| l.contains(k)))
 }

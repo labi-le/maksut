@@ -1,13 +1,6 @@
-//! Text primitives and reply shaping shared by reply styling: fence-aware
-//! chunking to Telegram's limit, bounded truncation, scheme/control-character
-//! hygiene, prose/code flattening, and HTML code-block rendering.
-
+//! Text primitives, fence-aware chunking, prose/code flattening, and HTML rendering.
 use crate::config::config;
 
-/// Plain-text chunks within Telegram's message limit, split on line
-/// boundaries where possible. When a fenced code block spans a chunk boundary,
-/// the first chunk is closed with a matching fence and the next chunk reopens
-/// the fence header so every chunk renders balanced `<pre><code>` tags.
 pub(crate) fn split_message(text: &str) -> Vec<String> {
     let max_chars = config().chat.reply_max_chars;
     let mut chunks = Vec::new();
@@ -99,10 +92,6 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
     chunks
 }
 
-/// Normalizes reply prose and code fences: preserves intentional line breaks
-/// (collapsing runs of blank lines to a single blank line), keeps fenced code
-/// blocks verbatim, replaces em/en dashes in prose, and expands bare repository
-/// file paths into full GitHub blob URLs.
 pub(crate) fn flatten_reply_text(text: &str) -> String {
     let (cleaned_input, _) = crate::chat_urls::strip_raw_tool_call_tags(text);
     let mut out = String::with_capacity(cleaned_input.len());
@@ -143,17 +132,17 @@ pub(crate) fn flatten_reply_text(text: &str) -> String {
                 } else {
                     std::borrow::Cow::Borrowed(row)
                 };
-                push_line(&mut out, &expand_repo_blob_links(&prose));
+                let expanded = expand_repo_blob_links(&prose);
+                push_line(
+                    &mut out,
+                    &crate::chat_urls::strip_prose_at_mentions(&expanded),
+                );
             }
         }
     }
     out
 }
 
-/// Renders a styled plain-text chunk into Telegram HTML (`ParseMode::Html`)
-/// when it contains a fenced code block, inline backtick span, markdown link
-/// `[label](url)`, `**bold**` span, or `#` heading, or `None` when plain-text
-/// delivery suffices.
 pub(crate) fn render_telegram_html(text: &str) -> Option<String> {
     let has_table = has_markdown_table(text);
     if !text.contains('`')
@@ -455,8 +444,6 @@ fn push_escaped_html(out: &mut String, text: &str) {
     }
 }
 
-/// `true` when `text` ends inside an unclosed fenced code block, so trailing
-/// prose punctuation must not be stripped from code.
 pub(crate) fn ends_inside_fence(text: &str) -> bool {
     text.lines()
         .fold((false, 0), |(in_code, ticks), line| {
@@ -469,17 +456,12 @@ pub(crate) fn ends_inside_fence(text: &str) -> bool {
         .0
 }
 
-/// Backtick count of an opening fence line (at least three), or `None` for
-/// prose. Four-backtick fences wrap examples that contain three-backtick ones,
-/// so the closing line must match this length.
 pub(crate) fn fence_open_ticks(line: &str) -> Option<usize> {
     let trimmed = line.trim_start();
     let ticks = trimmed.len() - trimmed.trim_start_matches('`').len();
     (3..=8).contains(&ticks).then_some(ticks)
 }
 
-/// `true` for a line that closes a fence opened with `open_ticks` backticks:
-/// a run of at least that many backticks and nothing else.
 pub(crate) fn is_fence_close(line: &str, open_ticks: usize) -> bool {
     let trimmed = line.trim();
     trimmed.len() >= open_ticks && trimmed.bytes().all(|byte| byte == b'`')
@@ -493,34 +475,23 @@ fn push_line(out: &mut String, line: &str) {
 }
 
 pub(crate) use crate::chat_urls::expand_repo_blob_links;
-/// Cuts at the last whitespace before `max_chars` so a shortened reply never
-/// ends mid-word.
 pub(crate) fn shorten(text: &str, max_chars: usize) -> &str {
-    let Some((limit, _)) = text.char_indices().nth(max_chars) else {
-        return text;
-    };
-    let Some(head) = text.get(..limit) else {
+    let Some(head) = text
+        .char_indices()
+        .nth(max_chars)
+        .and_then(|(i, _)| text.get(..i))
+    else {
         return text;
     };
     head.rfind(char::is_whitespace)
-        .and_then(|index| head.get(..index))
+        .and_then(|i| head.get(..i))
         .map(str::trim_end)
-        .unwrap_or(head)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| head.trim_end())
 }
 
 pub(crate) fn truncate_text(text: &str, max_chars: usize) -> String {
-    let Some((limit, _)) = text.char_indices().nth(max_chars) else {
-        return text.to_owned();
-    };
-    let Some(head) = text.get(..limit) else {
-        return text.to_owned();
-    };
-    let cut = head.rfind(char::is_whitespace).unwrap_or(head.len());
-    let head = (cut != 0)
-        .then(|| head.get(..cut))
-        .flatten()
-        .unwrap_or(head);
-    head.trim_end().to_owned()
+    shorten(text, max_chars).to_owned()
 }
 
 pub(crate) use crate::chat_urls::{format_moscow_time, is_bidi_or_control, strip_url_schemes};

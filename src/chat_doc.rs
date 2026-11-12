@@ -98,7 +98,11 @@ pub(crate) async fn clear_recent_doc(chat_id: ChatId) {
     RECENT_DOCS.lock().await.remove(&chat_id);
 }
 
-async fn take_recent_doc(chat_id: ChatId, sender_id: Option<UserId>) -> Option<DocCandidate> {
+async fn take_recent_doc(
+    chat_id: ChatId,
+    sender_id: Option<UserId>,
+    addressed: bool,
+) -> Option<DocCandidate> {
     let mut guard = RECENT_DOCS.lock().await;
     let now = time::Instant::now();
     match guard.get(&chat_id) {
@@ -106,7 +110,9 @@ async fn take_recent_doc(chat_id: ChatId, sender_id: Option<UserId>) -> Option<D
             guard.remove(&chat_id);
             return None;
         }
-        Some((_, cand)) if cand.author_id.is_some() && cand.author_id != sender_id => {
+        Some((_, cand))
+            if !addressed && cand.author_id.is_some() && cand.author_id != sender_id =>
+        {
             return None;
         }
         _ => {}
@@ -298,10 +304,10 @@ pub(crate) async fn turn(
             quoted: false,
         };
     }
-    if !message.chat.is_private()
-        && crate::addressing::address_kind(message, typed.trim(), &cfg.bot_username)
-            == crate::addressing::AddressKind::None
-    {
+    let addressed = message.chat.is_private()
+        || crate::addressing::address_kind(message, typed.trim(), &cfg.bot_username)
+            != crate::addressing::AddressKind::None;
+    if !addressed {
         let active = match cfg.chat.as_ref() {
             Some(chat) => chat.followup_active(message.chat.id).await,
             None => false,
@@ -317,12 +323,12 @@ pub(crate) async fn turn(
     let cand = match direct_cand {
         Some(cand) => {
             if !cand.from_reply && !message.chat.is_private() {
-                let _ = take_recent_doc(message.chat.id, sender_id).await;
+                let _ = take_recent_doc(message.chat.id, sender_id, true).await;
             }
             cand
         }
         None if !reply_ignored && !typed.trim().is_empty() => {
-            let Some(cand) = take_recent_doc(message.chat.id, sender_id).await else {
+            let Some(cand) = take_recent_doc(message.chat.id, sender_id, addressed).await else {
                 return DocTurn {
                     text: None,
                     quoted: false,
@@ -350,6 +356,18 @@ pub(crate) async fn turn(
             quoted: false,
         };
     };
+    let foreign = cand.from_reply || (cand.author_id.is_some() && cand.author_id != sender_id);
+    if foreign
+        && !cand.from_reply
+        && (crate::memory_guard::detect_flags(&block)
+            & (crate::memory::FLAG_INJECTION | crate::memory::FLAG_SECRET))
+            != 0
+    {
+        return DocTurn {
+            text: None,
+            quoted: false,
+        };
+    }
     let merged = if typed.trim().is_empty() {
         block
     } else {
@@ -357,7 +375,7 @@ pub(crate) async fn turn(
     };
     DocTurn {
         text: Some(merged),
-        quoted: cand.from_reply,
+        quoted: foreign,
     }
 }
 

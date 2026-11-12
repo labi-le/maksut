@@ -44,22 +44,7 @@ pub(crate) fn style_research_reply(
 ) -> Result<String, String> {
     let cleaned = text.replace('\r', "");
     let normalized = strip_trailing_sources_block(&cleaned);
-    let mut body = String::new();
-    let mut blank = 0;
-    for line in normalized.lines() {
-        let line = line.trim_end();
-        if line.trim().is_empty() {
-            blank += 1;
-            if blank <= 2 {
-                body.push('\n');
-            }
-        } else {
-            blank = 0;
-            body.push_str(line);
-            body.push('\n');
-        }
-    }
-    let body = body.replace(['—', '–'], "-");
+    let body = flatten_reply_text(normalized);
     let body = truncate_text(body.trim(), config().chat.research_body_chars);
     let (body, cited) = sanitize_citations(&body, sources.len());
     let selected = citation_ids(cited, sources.len());
@@ -358,9 +343,12 @@ fn normalize_spam_text(text: &str) -> String {
     }
     stripped
         .split_whitespace()
-        .filter(|word| {
-            let core = word.trim_matches(|ch: char| !ch.is_alphanumeric());
-            !word.contains('@') || !core.to_lowercase().ends_with("bot")
+        .filter(|w| {
+            !w.contains('@')
+                || !w
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase()
+                    .ends_with("bot")
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -372,49 +360,9 @@ fn normalize_spam_text(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-pub(crate) fn explicit_sticker_request(text: &str) -> bool {
-    const VERBS: &[&str] = &[
-        "скинь",
-        "покажи",
-        "добавь",
-        "кинь",
-        "перестал",
-        "не шл",
-        "найди",
-        "отправь",
-        "пришли",
-        "давай",
-    ];
-    const NOUNS: &[&str] = &["стикер", "пак", "девоч", "девуш", "гачи", "пися", "котик"];
-    let t = text.to_lowercase();
-    VERBS.iter().any(|v| t.contains(v)) && NOUNS.iter().any(|k| t.contains(k))
-}
-
-pub(crate) fn explicit_feature_request(text: &str) -> bool {
-    const VERBS: &[&str] = &["добавь", "измени", "убери", "запили", "почини"];
-    const NOUNS: &[&str] = &["бот", "фич", "функци", "поведени", "возможност"];
-    let t = text.to_lowercase();
-    VERBS.iter().any(|v| t.contains(v)) && NOUNS.iter().any(|k| t.contains(k))
-}
-
-pub(crate) fn sticker_request_query(text: &str) -> &'static str {
-    let t = text.to_lowercase();
-    if t.contains("девоч") || t.contains("девуш") {
-        "девушка"
-    } else if t.contains("гачи") {
-        "гачимучи"
-    } else if t.contains("пися") || t.contains("член") {
-        "пися"
-    } else if t.contains("кот") {
-        "кот"
-    } else if t.contains("собак") {
-        "собака"
-    } else if t.contains("груст") {
-        "грустный"
-    } else {
-        "стикер"
-    }
-}
+pub(crate) use crate::addressing::{
+    explicit_feature_request, explicit_sticker_request, sticker_request_query,
+};
 
 pub(crate) fn display_author_name(user: &teloxide::types::User) -> String {
     match user.username.as_deref().map(str::trim) {

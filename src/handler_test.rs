@@ -1037,6 +1037,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         handler_text_response("99.7% зига и 0.3% си"),
         handler_text_response("это пнг скрин"),
         handler_text_response("скрин не прогрузился"),
+        handler_text_response("хуан на фоне ракеты"),
         handler_text_response("молчу"),
     ])
     .await;
@@ -1347,6 +1348,28 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         llm.requests.lock().unwrap().len(),
         6,
         "bare uncaptioned photo without bot mention/reply during followup must not call LLM"
+    );
+    let ask_recent_photo: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 211,
+        "date": 1700000008,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 64, "is_bot": false, "first_name": "Евгений", "username": "MatveevEvgeniyN"},
+        "text": "максут, дашь комментарий по картинке?",
+    }))
+    .unwrap();
+    handle_message(api.bot.clone(), ask_recent_photo, Arc::clone(&cfg))
+        .await
+        .unwrap();
+    let seventh_body = crate::test_support::body_of(&llm.requests.lock().unwrap()[6]);
+    let seventh_content = &seventh_body["messages"].as_array().unwrap().last().unwrap()["content"];
+    assert!(
+        seventh_content
+            .as_array()
+            .is_some_and(|parts| parts.iter().any(|part| part["type"] == "image_url"
+                && part["image_url"]["url"]
+                    .as_str()
+                    .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")))),
+        "addressed question about 'картинке' after an uncaptioned group photo must attach the recent photo: {seventh_content}"
     );
     assert!(
         cfg.chat.as_ref().unwrap().followup_active(group).await,

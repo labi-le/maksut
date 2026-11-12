@@ -76,9 +76,6 @@ impl ChatConfig {
     }
 }
 
-/// Expands repository paths (`src/foo.rs#L10`, `chat_client.rs#L275-277`,
-/// `tools/omp_worker.py:12`, `/docs/adr/012-free-chat.md:8`) into full GitHub
-/// blob URLs while leaving inline code spans and `http(s)://` URLs untouched.
 pub(crate) fn expand_repo_blob_links(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -96,6 +93,46 @@ pub(crate) fn expand_repo_blob_links(text: &str) -> String {
     }
     expand_prose_repo_tokens(&mut out, rest);
     out
+}
+
+pub(crate) fn strip_prose_at_mentions(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('@') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        strip_at_tokens(&mut out, rest.get(..open).unwrap_or(""));
+        let after_prefix = rest.get(open..).unwrap_or("");
+        let ticks = after_prefix.len() - after_prefix.trim_start_matches('`').len();
+        let after_open = after_prefix.get(ticks..).unwrap_or("");
+        if let Some(close) = crate::chat_text::find_closing_ticks(after_open, ticks) {
+            out.push_str(after_prefix.get(..ticks + close + ticks).unwrap_or(""));
+            rest = after_open.get(close + ticks..).unwrap_or("");
+        } else {
+            rest = after_open;
+        }
+    }
+    strip_at_tokens(&mut out, rest);
+    std::borrow::Cow::Owned(out)
+}
+
+fn strip_at_tokens(out: &mut String, text: &str) {
+    let mut prev: Option<char> = None;
+    let mut iter = text.chars().peekable();
+    while let Some(ch) = iter.next() {
+        let prev_ok = prev.is_none_or(|p| {
+            !p.is_alphanumeric()
+                && !matches!(p, '_' | '.' | '/' | ':' | '=' | '&' | '?' | '#' | '%')
+        });
+        let next_ok = iter
+            .peek()
+            .is_some_and(|&n| n.is_ascii_alphanumeric() || n == '_');
+        if !(ch == '@' && prev_ok && next_ok) {
+            out.push(ch);
+        }
+        prev = Some(ch);
+    }
 }
 
 fn expand_prose_repo_tokens(out: &mut String, mut rest: &str) {
@@ -125,7 +162,14 @@ fn expand_prose_repo_tokens(out: &mut String, mut rest: &str) {
 
 fn push_expanded_repo_token(out: &mut String, word: &str) {
     if word.contains("://") {
-        out.push_str(word);
+        if word.contains("github.com/labi-le/maxwell/blob/") {
+            out.push_str(&word.replace(
+                "github.com/labi-le/maxwell/blob/",
+                "github.com/labi-le/maksut/blob/",
+            ));
+        } else {
+            out.push_str(word);
+        }
         return;
     }
     if let Some((open_bracket, mid)) = word.split_once("](") {
@@ -220,10 +264,7 @@ pub(crate) fn resolve_repo_target(core: &str) -> Option<String> {
     } else {
         return None;
     };
-    if !repo_file_exists(&repo_path) {
-        return None;
-    }
-    Some(match anchor {
+    repo_file_exists(&repo_path).then(|| match anchor {
         Some(a) => format!("{repo_path}#{a}"),
         None => repo_path,
     })
@@ -231,12 +272,12 @@ pub(crate) fn resolve_repo_target(core: &str) -> Option<String> {
 
 static REPO_FILES: std::sync::LazyLock<std::collections::HashSet<String>> =
     std::sync::LazyLock::new(|| {
-        let code_dir = Path::new(&config().paths.code_dir);
-        if code_dir.is_dir() {
-            crate::code_inspect::snapshot_relative_files(code_dir)
+        let dir = Path::new(&config().paths.code_dir);
+        crate::code_inspect::snapshot_relative_files(if dir.is_dir() {
+            dir
         } else {
-            crate::code_inspect::snapshot_relative_files(Path::new("."))
-        }
+            Path::new(".")
+        })
     });
 
 pub(crate) fn warm_repo_files() {
@@ -328,15 +369,13 @@ pub(crate) fn strip_url_schemes(text: &str) -> String {
             .get(..index)
             .and_then(|head| head.chars().next_back())
             .is_none_or(|ch| !ch.is_alphanumeric());
-        let matched = if boundary {
-            SCHEMES.into_iter().find(|scheme| {
-                lower
-                    .get(index..)
-                    .is_some_and(|tail| tail.starts_with(*scheme))
+        let matched = boundary
+            .then(|| {
+                SCHEMES
+                    .into_iter()
+                    .find(|s| lower.get(index..).is_some_and(|t| t.starts_with(*s)))
             })
-        } else {
-            None
-        };
+            .flatten();
         if let Some(scheme) = matched {
             index += scheme.len();
             continue;
@@ -361,9 +400,6 @@ pub(crate) fn non_owner_system_notice(tools: &crate::ToolRegistry, has_proposal:
     format!("Это не владелец бота. Доступные инструменты: {available}.{scope} Можешь передать техническую заявку владельцу, искать по коду и отправлять стикеры, но никого не тегай, не обещай исполнение заявки без аппрува владельца, не вызывай propose_feature на просьбы оскорблять/дразнить людей и никогда не упоминай вслух служебные теги [owner], <self_memory>, <memory> и «метки».")
 }
 
-/// Strips raw `<tool_call>...</tool_call>` XML blocks and Parses an inline JSON
-/// `send_sticker` query/name/sticker_id when the model emits a textual tool tag
-/// instead of a structured `tool_calls` array.
 pub(crate) fn strip_raw_tool_call_tags(text: &str) -> (String, Option<String>) {
     if !text.contains("<tool_call>") && !text.contains("</tool_call>") {
         return (text.to_owned(), None);

@@ -2559,19 +2559,30 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
         "напиши три статьи про тайлинг"
     ));
     assert!(crate::telegraph::explicit_article_request(
-        "расскажи подробнее"
+        "сделай лонгрид про ядро"
     ));
-    assert!(crate::telegraph::explicit_article_request("разверни тему"));
+    assert!(
+        !crate::telegraph::explicit_article_request("подробнее логами"),
+        "conversational 'подробнее' without article/longread/telegraph request must stay in chat instead of hijacking to telegra.ph"
+    );
+    assert!(
+        !crate::telegraph::explicit_article_request("расскажи подробнее"),
+        "conversational 'расскажи подробнее' must not force telegra.ph publishing"
+    );
     assert!(crate::telegraph::should_publish_telegraph(
-        "расскажи подробнее",
+        "напиши статью про тайлинг",
         &"а".repeat(500)
     ));
     assert!(!crate::telegraph::should_publish_telegraph(
-        "расскажи подробнее",
+        "напиши статью про тайлинг",
         &"а".repeat(499)
     ));
     assert!(!crate::telegraph::should_publish_telegraph(
-        "давай добавим пропоз и максимально подробно логировать контекст",
+        "подробнее логами",
+        &"а".repeat(868)
+    ));
+    assert!(!crate::telegraph::should_publish_telegraph(
+        "давай добавим пропоз и статью в бэклог",
         &"а".repeat(700)
     ));
     assert!(crate::telegraph::should_publish_telegraph(

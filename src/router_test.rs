@@ -12,6 +12,7 @@ fn input<'a>(text: &'a str, address: AddressKind) -> RouterInput<'a> {
         followup: false,
         stop: false,
         private: false,
+        forwarded: false,
         reply_context: None,
     }
 }
@@ -132,8 +133,8 @@ fn followup_questions_and_requests_reply() {
         Decision::Reply
     );
     assert_eq!(decide_rules(&followup("извинись")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("удали вот это")), Decision::Reply);
     assert_eq!(decide_rules(&followup("оформи заявку")), Decision::Reply);
-    assert_eq!(decide_rules(&followup("а щас")), Decision::Reply);
     assert_eq!(decide_rules(&followup("але")), Decision::Reply);
     assert_eq!(decide_rules(&followup("што думаешь")), Decision::Reply);
     assert_eq!(
@@ -159,6 +160,8 @@ fn followup_questions_and_requests_reply() {
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
     assert_eq!(decide_rules(&followup("понял тебя")), Decision::Silent);
     assert_eq!(decide_rules(&followup("принял")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("Всё верно.")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("логично")), Decision::Silent);
     assert_eq!(
         decide_rules(&followup("влудик когда уже ты выпустишь анаконду")),
         Decision::Wait
@@ -349,11 +352,11 @@ async fn jev_choices_map_to_decisions_and_send_state() {
         assert_eq!(stub.requests.load(Ordering::SeqCst), 1, "{choice}");
     }
 
-    let stub = jev_stub("200 OK", choice_body("reply", 0.9), Duration::ZERO).await;
+    let stub = jev_stub("200 OK", choice_body("sticker", 0.9), Duration::ZERO).await;
     let router = jev_router(&stub, Duration::from_secs(2), 0.6);
-    let mut with_context = input("а что думаешь?", AddressKind::None);
+    let mut with_context = input("вот это поворот", AddressKind::Explicit);
     with_context.reply_context = Some("(в ответ Аня: «смотрела новый фильм?»)");
-    assert_eq!(router.decide(&with_context).await, Decision::Reply);
+    assert_eq!(router.decide(&with_context).await, Decision::Sticker);
     let bodies = stub.bodies.lock().unwrap();
     let body = bodies.first().expect("captured request body");
     assert!(body.contains("\"action\""));
@@ -361,7 +364,7 @@ async fn jev_choices_map_to_decisions_and_send_state() {
     assert!(body.contains("\"sticker\""));
     assert!(body.contains("\"wait\""));
     assert!(body.contains("\"silent\""));
-    assert!(body.contains("сообщение: а что думаешь?"));
+    assert!(body.contains("сообщение: вот это поворот"));
     assert!(body.contains("контекст ответа:"));
 }
 
@@ -408,7 +411,46 @@ async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
         "followup reply to another human must stay Wait without calling Jev"
     );
     assert_eq!(stub.requests.load(Ordering::SeqCst), 2);
-
+    // Short reactions in followup ("Всё верно.", "по факту") and unaddressed
+    // forwarded posts, commands to other bots ("@alisa ..."), or plain room
+    // statements outside followup must return Silent without calling Jev.
+    assert_eq!(
+        router.decide(&followup("Всё верно.")).await,
+        Decision::Silent
+    );
+    let mut forwarded_question = input("а что думаешь про вакцину?", AddressKind::None);
+    forwarded_question.forwarded = true;
+    assert_eq!(router.decide(&forwarded_question).await, Decision::Silent);
+    let mut unaddressed_reply = input("а что думаешь?", AddressKind::None);
+    unaddressed_reply.reply_context = Some("(в ответ Аня: «смотрела новый фильм?»)");
+    assert_eq!(router.decide(&unaddressed_reply).await, Decision::Silent);
+    assert_eq!(
+        router
+            .decide(&input(
+                "@alisa Спросить: надо сейчас крипту покупать?",
+                AddressKind::None
+            ))
+            .await,
+        Decision::Silent
+    );
+    assert_eq!(
+        router
+            .decide(&input(
+                "от рака придумали лекарство в европе уже давно",
+                AddressKind::None
+            ))
+            .await,
+        Decision::Silent
+    );
+    assert_eq!(
+        router.decide(&input("а это не я", AddressKind::None)).await,
+        Decision::Silent
+    );
+    assert_eq!(
+        stub.requests.load(Ordering::SeqCst),
+        2,
+        "short followup reactions, forwarded posts, @other_bot commands, and plain statements outside followup must not call Jev"
+    );
     let sticker_stub = jev_stub("200 OK", choice_body("sticker", 0.95), Duration::ZERO).await;
     let sticker_router = jev_router(&sticker_stub, Duration::from_secs(2), 0.6);
     assert_eq!(
