@@ -914,18 +914,6 @@ async fn telegram_bot_client_drops_idle_pooled_socket_after_idle_timeout() {
     assert_eq!(me.user.username.as_deref(), Some("MyBot"));
     assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
     server.abort();
-    let fake = std::net::SocketAddr::from(([198, 18, 1, 6], 443));
-    let ordered = ordered_telegram_addrs([fake]).expect("fake-IP triggers tunnel pinning");
-    assert_eq!(
-        ordered,
-        vec![fake],
-        "resolved split-tunnel fake-IP must not append unreachable public Telegram DC IPs"
-    );
-    let public = std::net::SocketAddr::from(([149, 154, 167, 220], 443));
-    assert!(
-        ordered_telegram_addrs([public]).is_none(),
-        "normal public DNS must not be overridden"
-    );
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();

@@ -52,13 +52,12 @@ static VOICE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
 /// `voice.timeout_secs` instead of the longer model timeout.
 static VOICE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     let cfg = config();
-    let builder = reqwest::Client::builder()
+    reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(cfg.telegram.connect_timeout_secs))
         .timeout(Duration::from_secs(cfg.voice.timeout_secs))
         .pool_idle_timeout(Duration::from_secs(cfg.telegram.pool_idle_timeout_secs))
         .tcp_keepalive(Duration::from_secs(cfg.telegram.tcp_keepalive_secs))
-        .tcp_nodelay(true);
-    crate::apply_telegram_dns_fallback(builder)
+        .tcp_nodelay(true)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });

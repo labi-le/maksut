@@ -158,52 +158,17 @@ pub(crate) use cleanup::*;
 const TIKTOK_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
 
-const TELEGRAM_API_HOST: &str = "api.telegram.org";
-
-/// When a split-tunnel resolver returns an RFC 2544 benchmark fake-IP for
-/// `api.telegram.org`, pin only the resolved tunnel address (because direct
-/// Telegram DC IPs are blocked and time out when the ISP filters Telegram).
-pub(crate) fn apply_telegram_dns_fallback(
-    mut builder: reqwest::ClientBuilder,
-) -> reqwest::ClientBuilder {
-    if let Ok(resolved) = std::net::ToSocketAddrs::to_socket_addrs(&(TELEGRAM_API_HOST, 443)) {
-        if let Some(addrs) = ordered_telegram_addrs(resolved) {
-            builder = builder.resolve_to_addrs(TELEGRAM_API_HOST, &addrs);
-        }
-    }
-    builder
-}
-
-pub(crate) fn ordered_telegram_addrs(
-    resolved: impl IntoIterator<Item = std::net::SocketAddr>,
-) -> Option<Vec<std::net::SocketAddr>> {
-    let mut addrs: Vec<std::net::SocketAddr> = Vec::new();
-    let mut has_fake_ip = false;
-    for addr in resolved {
-        if let std::net::IpAddr::V4(ip) = addr.ip() {
-            let octets = ip.octets();
-            if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
-                has_fake_ip = true;
-            }
-        }
-        if !addrs.contains(&addr) {
-            addrs.push(addr);
-        }
-    }
-    has_fake_ip.then_some(addrs)
-}
-
 pub(crate) fn telegram_bot(token: String) -> Result<Bot, reqwest::Error> {
     // Proxy tunnels close idle sockets before reqwest's 90s pool default.
     // Don't use teloxide's default_reqwest_settings because it hardcodes a 17s timeout.
     let telegram = &config().telegram;
-    let builder = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(telegram.connect_timeout_secs))
         .timeout(Duration::from_secs(telegram.request_timeout_secs))
         .pool_idle_timeout(Duration::from_secs(telegram.pool_idle_timeout_secs))
         .tcp_keepalive(Duration::from_secs(telegram.tcp_keepalive_secs))
-        .tcp_nodelay(true);
-    let client = apply_telegram_dns_fallback(builder).build()?;
+        .tcp_nodelay(true)
+        .build()?;
     Ok(Bot::with_client(token, client))
 }
 

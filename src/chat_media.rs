@@ -59,13 +59,12 @@ static IMAGE_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
 /// message threw away the connection pool and its TLS setup.
 static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     let cfg = config();
-    let builder = reqwest::Client::builder()
+    reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(cfg.telegram.connect_timeout_secs))
         .timeout(Duration::from_secs(cfg.chat.image_timeout_secs))
         .pool_idle_timeout(Duration::from_secs(cfg.telegram.pool_idle_timeout_secs))
         .tcp_keepalive(Duration::from_secs(cfg.telegram.tcp_keepalive_secs))
-        .tcp_nodelay(true);
-    crate::apply_telegram_dns_fallback(builder)
+        .tcp_nodelay(true)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });
