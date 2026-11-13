@@ -164,16 +164,29 @@ fn speaker_owner_directives_excludes_other_participants_handleless_rules_and_for
         vadik_directives.contains("сладкий"),
         "Vadik's directive must be injected on Vadik's turn: {vadik_directives}"
     );
-    let denis_self_mem = crate::code_inspect::filter_self_memory_for_prompt(
+    let denis_ordinary_turn = crate::code_inspect::filter_self_memory_for_prompt(
         raw,
         "Денис (@crudoshlepa)",
         Some("crudoshlepa"),
         true,
-        "влудик когда уже ты выпустишь анаконду",
+        "в общем всё правильно сделал",
+    );
+    assert!(
+        !denis_ordinary_turn.contains("- [owner] вадик:")
+            && !denis_ordinary_turn.contains("- [owner] даня:")
+            && denis_ordinary_turn.contains("- [owner] стиль в чате:"),
+        "ordinary owner turn ('в общем всё правильно') must hide other participants' persona directives: {denis_ordinary_turn}"
+    );
+    let denis_inspect_turn = crate::code_inspect::filter_self_memory_for_prompt(
+        raw,
+        "Денис (@crudoshlepa)",
+        Some("crudoshlepa"),
+        true,
+        "покажи все правила в памяти",
     );
     assert_eq!(
-        denis_self_mem, raw,
-        "Owner turns must keep all <self_memory> rows visible for inspection and remember_self updates while speaker_owner_directives isolates active turn directives"
+        denis_inspect_turn, raw,
+        "owner memory/directive inspection turn must expose all <self_memory> rows: {denis_inspect_turn}"
     );
     let vadik_self_mem = crate::code_inspect::filter_self_memory_for_prompt(
         raw,

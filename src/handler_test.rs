@@ -1349,12 +1349,54 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         6,
         "bare uncaptioned photo without bot mention/reply during followup must not call LLM"
     );
+    let unrelated_followup_other_user: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 212,
+        "date": 1700000008,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 64, "is_bot": false, "first_name": "Евгений", "username": "MatveevEvgeniyN"},
+        "text": "что это",
+    }))
+    .unwrap();
+    assert!(
+        crate::chat_media::resolve_chat_input(
+            &unrelated_followup_other_user,
+            "что это",
+            &cfg,
+            false
+        )
+        .await
+        .unwrap()
+        .pending_media
+        .is_none(),
+        "unaddressed followup by another participant must not attach someone else's recent photo"
+    );
+    let prefix_collision_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 213,
+        "date": 1700000008,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 64, "is_bot": false, "first_name": "Евгений", "username": "MatveevEvgeniyN"},
+        "text": "максут, это человек из чата?",
+    }))
+    .unwrap();
+    assert!(
+        crate::chat_media::resolve_chat_input(
+            &prefix_collision_msg,
+            "максут, это человек из чата?",
+            &cfg,
+            false
+        )
+        .await
+        .unwrap()
+        .pending_media
+        .is_none(),
+        "'это человек' must not false-match 'это че' as a recent-photo reference"
+    );
     let ask_recent_photo: Message = serde_json::from_value(serde_json::json!({
         "message_id": 211,
         "date": 1700000008,
         "chat": {"id": group.0, "type": "supergroup"},
         "from": {"id": 64, "is_bot": false, "first_name": "Евгений", "username": "MatveevEvgeniyN"},
-        "text": "максут, дашь комментарий по картинке?",
+        "text": "максут это че",
     }))
     .unwrap();
     handle_message(api.bot.clone(), ask_recent_photo, Arc::clone(&cfg))
@@ -1369,7 +1411,7 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
                 && part["image_url"]["url"]
                     .as_str()
                     .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")))),
-        "addressed question about 'картинке' after an uncaptioned group photo must attach the recent photo: {seventh_content}"
+        "addressed 'максут это че' after an uncaptioned group photo must attach the recent photo: {seventh_content}"
     );
     assert!(
         cfg.chat.as_ref().unwrap().followup_active(group).await,

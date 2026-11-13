@@ -187,23 +187,18 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
     if !input.followup {
         return Decision::Silent;
     }
-    if input.reply_context.is_some() {
-        return Decision::Wait;
-    }
     let text = input.text.trim();
-    if text.is_empty() {
-        return Decision::Silent;
-    }
-    if addresses_other(text) {
+    if input.reply_context.is_some() || addresses_other(text) {
         return Decision::Wait;
+    }
+    if text.is_empty() || is_short_reaction(text) {
+        return Decision::Silent;
     }
     if expects_answer(text) {
-        return Decision::Reply;
+        Decision::Reply
+    } else {
+        Decision::Wait
     }
-    if is_short_reaction(text) {
-        return Decision::Silent;
-    }
-    Decision::Wait
 }
 
 const QUESTION_WORDS: &[&str] = &[
@@ -424,9 +419,13 @@ const REACTIONS: &[&str] = &[
     "понял",
     "понял тебя",
     "поняла",
+    "понятно",
+    "ясненько",
     "принял",
     "услышал",
     "ясно",
+    "ладно",
+    "лан",
     "угу",
     "ага",
     "ну да",
@@ -467,13 +466,10 @@ fn is_short_reaction(text: &str) -> bool {
         || normalized.starts_with("ахах")
         || normalized.starts_with("хаха")
 }
-
 const MAX_STATE_CHARS: usize = 2000;
-
 fn clamp_state(value: &str) -> String {
     value.chars().take(MAX_STATE_CHARS).collect()
 }
-
 fn jev_state(input: &RouterInput<'_>) -> String {
     let chat = if input.private {
         "личный"

@@ -429,16 +429,44 @@ pub(crate) fn filter_self_memory(
         .join("\n")
 }
 
+fn prompt_inspects_directives(prompt: &str) -> bool {
+    const STEMS: &str = "памят директив запомн забуд удал список помниш обща общени обраща обращени называе отвечае разговарива";
+    const WORDS: &str = "правило правила правил правилам правилах правилами кого кому";
+    prompt
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|w| {
+            WORDS.split_ascii_whitespace().any(|k| k == w)
+                || STEMS.split_ascii_whitespace().any(|s| w.starts_with(s))
+        })
+}
+
 pub(crate) fn filter_self_memory_for_prompt(
     self_memory: &str,
     sender_name: &str,
     username: Option<&str>,
     owner: bool,
-    _prompt: &str,
+    prompt: &str,
 ) -> String {
+    if owner && !prompt_inspects_directives(prompt) {
+        let handles = speaker_handles(sender_name, username);
+        let stems = speaker_name_stems(sender_name, owner);
+        return self_memory
+            .lines()
+            .filter(|l| {
+                !l.starts_with("- [owner]")
+                    || line_matches_speaker(l, &handles, &stems)
+                    || directive_topic(l).is_some_and(|t| {
+                        let tl = t.to_lowercase();
+                        !tl.is_empty() && prompt.to_lowercase().contains(&tl)
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
     filter_self_memory(self_memory, sender_name, username, owner)
 }
-
 /// Retains `- [owner]` directives that are general or whose `@handle` or topic
 /// name matches the current speaker.
 pub(crate) fn speaker_owner_directives(

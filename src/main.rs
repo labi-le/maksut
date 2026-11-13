@@ -159,21 +159,10 @@ const TIKTOK_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0";
 
 const TELEGRAM_API_HOST: &str = "api.telegram.org";
-const TELEGRAM_FALLBACK_ADDRS: &[std::net::SocketAddr] = &[
-    std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::new(149, 154, 167, 220),
-        443,
-    )),
-    std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::new(149, 154, 166, 110),
-        443,
-    )),
-];
 
 /// When a split-tunnel resolver returns an RFC 2544 benchmark fake-IP for
-/// `api.telegram.org`, keep the resolved tunnel address first (because direct
-/// Telegram DC IPs are blocked when the ISP filters Telegram) and append
-/// Telegram's public endpoints after it as a fallback if the local tunnel drops.
+/// `api.telegram.org`, pin only the resolved tunnel address (because direct
+/// Telegram DC IPs are blocked and time out when the ISP filters Telegram).
 pub(crate) fn apply_telegram_dns_fallback(
     mut builder: reqwest::ClientBuilder,
 ) -> reqwest::ClientBuilder {
@@ -201,15 +190,7 @@ pub(crate) fn ordered_telegram_addrs(
             addrs.push(addr);
         }
     }
-    if !has_fake_ip {
-        return None;
-    }
-    for &fallback in TELEGRAM_FALLBACK_ADDRS {
-        if !addrs.contains(&fallback) {
-            addrs.push(fallback);
-        }
-    }
-    Some(addrs)
+    has_fake_ip.then_some(addrs)
 }
 
 pub(crate) fn telegram_bot(token: String) -> Result<Bot, reqwest::Error> {

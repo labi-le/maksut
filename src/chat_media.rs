@@ -70,21 +70,22 @@ static IMAGE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 type PendingImage = (FileId, String);
+type RecentImageEntry = (time::Instant, Option<UserId>, PendingImage);
 
 static RECENT_IMAGES: std::sync::LazyLock<
-    tokio::sync::Mutex<std::collections::HashMap<ChatId, (time::Instant, PendingImage)>>,
+    tokio::sync::Mutex<std::collections::HashMap<ChatId, RecentImageEntry>>,
 > = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-async fn note_recent_image(chat_id: ChatId, img: &PendingImage) {
+async fn note_recent_image(chat_id: ChatId, author_id: Option<UserId>, img: &PendingImage) {
     let mut guard = RECENT_IMAGES.lock().await;
     let now = time::Instant::now();
     let ttl = Duration::from_secs(300);
     if guard.len() >= 256 && !guard.contains_key(&chat_id) {
-        guard.retain(|_, (at, _)| now.duration_since(*at) < ttl);
+        guard.retain(|_, (at, _, _)| now.duration_since(*at) < ttl);
         while guard.len() >= 256 {
             let Some(oldest) = guard
                 .iter()
-                .min_by_key(|(_, (at, _))| *at)
+                .min_by_key(|(_, (at, _, _))| *at)
                 .map(|(chat, _)| *chat)
             else {
                 break;
@@ -92,7 +93,7 @@ async fn note_recent_image(chat_id: ChatId, img: &PendingImage) {
             guard.remove(&oldest);
         }
     }
-    guard.insert(chat_id, (now, img.clone()));
+    guard.insert(chat_id, (now, author_id, img.clone()));
 }
 
 pub(crate) async fn take_recent_image(chat_id: ChatId) -> Option<PendingImage> {
@@ -100,23 +101,30 @@ pub(crate) async fn take_recent_image(chat_id: ChatId) -> Option<PendingImage> {
     let now = time::Instant::now();
     if guard
         .get(&chat_id)
-        .is_some_and(|(at, _)| now.duration_since(*at) >= Duration::from_secs(300))
+        .is_some_and(|(at, _, _)| now.duration_since(*at) >= Duration::from_secs(300))
     {
         guard.remove(&chat_id);
         return None;
     }
-    guard.remove(&chat_id).map(|(_, img)| img)
+    guard.remove(&chat_id).map(|(_, _, img)| img)
 }
 
-async fn peek_recent_image(chat_id: ChatId) -> Option<PendingImage> {
+async fn peek_recent_image(
+    chat_id: ChatId,
+    sender_id: Option<UserId>,
+    addressed: bool,
+) -> Option<PendingImage> {
     let mut guard = RECENT_IMAGES.lock().await;
     let now = time::Instant::now();
     match guard.get(&chat_id) {
-        Some((at, img)) if now.duration_since(*at) < Duration::from_secs(300) => Some(img.clone()),
-        Some(_) => {
+        Some((at, _, _)) if now.duration_since(*at) >= Duration::from_secs(300) => {
             guard.remove(&chat_id);
             None
         }
+        Some((_, author_id, _)) if !addressed && author_id.is_some() && *author_id != sender_id => {
+            None
+        }
+        Some((_, _, img)) => Some(img.clone()),
         None => None,
     }
 }
@@ -139,6 +147,8 @@ fn references_recent_image(text: &str) -> bool {
         "че это",
         "чё это",
         "что это",
+        "это че",
+        "это чё",
         "а это",
         "а тут",
         "а здесь",
@@ -149,7 +159,15 @@ fn references_recent_image(text: &str) -> bool {
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .any(|w| WORDS.contains(&w) || STEMS.iter().any(|s| w.starts_with(s)));
-    word_hit || (lower.chars().count() <= 40 && SHORT.iter().any(|k| lower.contains(k)))
+    let short_hit = SHORT.iter().any(|k| {
+        lower.match_indices(k).any(|(start, _)| {
+            lower
+                .get(start + k.len()..)
+                .and_then(|rest| rest.chars().next())
+                .is_none_or(|ch| !ch.is_alphanumeric())
+        })
+    });
+    word_hit || (lower.chars().count() <= 40 && short_hit)
 }
 
 pub(crate) async fn download_pending_image(
@@ -306,7 +324,7 @@ pub(crate) async fn resolve_chat_input(
     let has_current_media = current_media.is_some();
     if !message.chat.is_private() && own_text.trim().is_empty() && message_has_own_photo(message) {
         if let Some(ref img) = current_media {
-            note_recent_image(message.chat.id, img).await;
+            note_recent_image(message.chat.id, message.from.as_ref().map(|u| u.id), img).await;
         }
     }
     let has_reply_photo = !reply_ignored
@@ -370,7 +388,12 @@ pub(crate) async fn resolve_chat_input(
             && (is_addressed || followup)
             && references_recent_image(prompt.split("[файл ").next().unwrap_or(&prompt)) =>
         {
-            peek_recent_image(message.chat.id).await
+            peek_recent_image(
+                message.chat.id,
+                message.from.as_ref().map(|u| u.id),
+                is_addressed,
+            )
+            .await
         }
         None => None,
     };

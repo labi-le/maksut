@@ -915,13 +915,12 @@ async fn telegram_bot_client_drops_idle_pooled_socket_after_idle_timeout() {
     assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
     server.abort();
     let fake = std::net::SocketAddr::from(([198, 18, 1, 6], 443));
-    let ordered = ordered_telegram_addrs([fake]).expect("fake-IP triggers fallback ordering");
+    let ordered = ordered_telegram_addrs([fake]).expect("fake-IP triggers tunnel pinning");
     assert_eq!(
-        ordered.first().copied(),
-        Some(fake),
-        "resolved split-tunnel fake-IP must stay first ahead of direct public Telegram IPs"
+        ordered,
+        vec![fake],
+        "resolved split-tunnel fake-IP must not append unreachable public Telegram DC IPs"
     );
-    assert!(ordered.len() >= 3);
     let public = std::net::SocketAddr::from(([149, 154, 167, 220], 443));
     assert!(
         ordered_telegram_addrs([public]).is_none(),

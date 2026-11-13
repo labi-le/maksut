@@ -159,6 +159,9 @@ fn followup_questions_and_requests_reply() {
     );
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
     assert_eq!(decide_rules(&followup("понял тебя")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("понятно")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("понятно?")), Decision::Silent);
+    assert_eq!(decide_rules(&followup("ладно")), Decision::Silent);
     assert_eq!(decide_rules(&followup("принял")), Decision::Silent);
     assert_eq!(decide_rules(&followup("Всё верно.")), Decision::Silent);
     assert_eq!(decide_rules(&followup("логично")), Decision::Silent);
