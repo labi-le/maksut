@@ -47,21 +47,40 @@ fn youtube_format_selection_uses_exact_combined_sizes_and_compatible_codecs() {
         choose_youtube_mp4(&info, config().media.max_bytes).as_deref(),
         Some("18")
     );
+    info["formats"] = serde_json::json!([
+        {"format_id":"135","ext":"mp4","vcodec":"avc1.4D401F","acodec":"none",
+         "width":854,"height":480,"fps":30,"filesize_approx":19_098_836},
+        {"format_id":"140-drc","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2",
+         "abr":128,"filesize_approx":12_402_534},
+        {"format_id":"140-0","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2",
+         "abr":130,"filesize":12_404_076}
+    ]);
+    assert_eq!(
+        choose_youtube_mp4(&info, config().media.max_bytes).as_deref(),
+        Some("135+140-0"),
+        "suffixed YouTube audio track IDs and filesize_approx must be accepted"
+    );
+    info["formats"][0]["format_id"] = serde_json::json!("-135");
+    assert_eq!(
+        choose_youtube_mp4(&info, config().media.max_bytes),
+        None,
+        "leading hyphen in format_id must be rejected"
+    );
 }
 
 #[test]
 fn youtube_duration_filter_rejects_live_and_long_videos() {
-    assert_eq!(youtube_duration_filter(), "!is_live & duration <= 1800");
+    assert_eq!(youtube_duration_filter(), "!is_live & duration <= 1020");
     assert_eq!(
         youtube_reject_reason(&serde_json::json!({"live_status":"is_live"})),
         Some("Video filtered")
     );
     assert_eq!(
-        youtube_reject_reason(&serde_json::json!({"live_status":"not_live","duration":1801})),
+        youtube_reject_reason(&serde_json::json!({"live_status":"not_live","duration":1021})),
         Some("Video filtered")
     );
     assert_eq!(
-        youtube_reject_reason(&serde_json::json!({"live_status":"not_live","duration":1800})),
+        youtube_reject_reason(&serde_json::json!({"live_status":"not_live","duration":1020})),
         None
     );
     assert_eq!(
@@ -161,7 +180,7 @@ printf '%s\n' "$dir/result.mp4" > "$manifest"
     assert!(
         download_args.contains("--extractor-args\nyoutube:player_client=default,web_embedded\n")
     );
-    assert!(download_args.contains("--match-filter\n!is_live & duration <= 1800\n"));
+    assert!(download_args.contains("--match-filter\n!is_live & duration <= 1020\n"));
     let cookie_arg = |args: &str| {
         args.lines()
             .skip_while(|line| *line != "--cookies")
@@ -208,6 +227,11 @@ printf '%s\n' "$dir/result.mp4" > "$manifest"
             .lines()
             .count(),
         2
+    );
+    let fallback_args = fs::read_to_string(root.path().join("download-args")).unwrap();
+    assert!(
+        fallback_args.contains("-f\nbv[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/b[vcodec^=avc1][acodec^=mp4a][ext=mp4]/bv+ba/b[acodec!=none]/ba\n"),
+        "{fallback_args}"
     );
     let metadata_error = tempfile::tempdir_in(root.path()).unwrap();
     let original_download = download_videos(

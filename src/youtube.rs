@@ -47,12 +47,18 @@ pub(crate) fn youtube_format_id(format: &Value) -> Option<&str> {
         .get("format_id")
         .and_then(Value::as_str)
         .filter(|id| {
-            !id.is_empty() && id.len() <= 16 && id.bytes().all(|byte| byte.is_ascii_digit())
+            !id.is_empty()
+                && id.len() <= 16
+                && id.bytes().next().is_some_and(|b| b.is_ascii_digit())
+                && id.bytes().last().is_some_and(|b| b.is_ascii_alphanumeric())
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
 }
 
 // Format IDs are passed to yt-dlp's -f expression, never a shell. Still restrict
-// them to actual numeric YouTube IDs so metadata cannot inject format syntax.
+// them to safe YouTube IDs (e.g. `136`, `140-0`, `140-drc`) so metadata cannot inject format syntax.
 pub(crate) fn choose_youtube_mp4(info: &Value, max_bytes: u64) -> Option<String> {
     if info.get("entries").is_some()
         || info
@@ -75,6 +81,7 @@ pub(crate) fn choose_youtube_mp4(info: &Value, max_bytes: u64) -> Option<String>
         format
             .get("filesize")
             .and_then(Value::as_u64)
+            .or_else(|| format.get("filesize_approx").and_then(Value::as_u64))
             .filter(|size| *size > 0)
     };
     let fits = |video: u64, audio: u64| {

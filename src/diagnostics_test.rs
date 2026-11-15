@@ -30,8 +30,12 @@ fn stderr_categories_are_specific_and_never_copy_secrets() {
             "Temporary storage limit",
         ),
         (
-            "ERROR: [youtube] abc: does not pass filter (!is_live & duration < 1800), skipping",
+            "ERROR: [youtube] abc: does not pass filter (!is_live & duration <= 1020), skipping",
             "Video filtered",
+        ),
+        (
+            "WARNING: [youtube] abc: Fresh cookies may be needed.\n[download] Got error: Read timed out. (read timeout=15.0)",
+            "Timeout",
         ),
     ] {
         assert_eq!(stderr_detail(line), expected, "{line}");

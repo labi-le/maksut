@@ -555,7 +555,7 @@ defaults!(MediaSettings {
     user_download_limit: 3,
     concurrent_downloads: 2,
     download_timeout_secs: 180,
-    max_video_duration_secs: 30 * 60,
+    max_video_duration_secs: 17 * 60,
     youtube_probe_timeout_secs: 25,
     max_metadata_bytes: 4 * 1024 * 1024,
     mp4_mux_headroom: 64 * 1024,

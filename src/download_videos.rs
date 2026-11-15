@@ -151,7 +151,7 @@ async fn retry_after_cookie_refresh(
                     if let Some(diagnostic) = retry.diagnostic {
                         trace_event(&mut attempt.events, diagnostic);
                     }
-                    if !retry.process_ok {
+                    if !retry.process_ok || retry.selection.files.is_empty() {
                         retry.diagnostic = attempt.diagnostic;
                     }
                     retry.events = attempt.events;
@@ -257,6 +257,11 @@ pub(crate) async fn download_videos_attempt(
             .arg(format)
             .arg("--merge-output-format")
             .arg("mp4");
+    } else if filter_applied {
+        // Prefer native Telegram inline-playable H.264 + AAC MP4 on YouTube;
+        // fall back to generic video+audio (transcoded via ffmpeg) or standalone audio.
+        cmd.arg("-f")
+            .arg("bv[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/b[vcodec^=avc1][acodec^=mp4a][ext=mp4]/bv+ba/b[acodec!=none]/ba");
     } else {
         // Never fall back to a video-only stream; keep standalone audio supported.
         cmd.arg("-f").arg("bv+ba/b[acodec!=none]/ba");

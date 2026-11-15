@@ -26,7 +26,6 @@ pub(crate) fn stderr_detail(text: &str) -> &'static str {
         ("cookies have expired", "Cookies expired"),
         ("cookies are expired", "Cookies expired"),
         ("Cookies expired", "Cookies expired"),
-        ("Fresh cookies", "Cookies expired"),
         ("HTTP Error 401", "Authentication required"),
         ("HTTP Error 403", "HTTP 403"),
         ("HTTP Error 404", "HTTP 404"),
@@ -78,6 +77,9 @@ pub(crate) fn stderr_detail(text: &str) -> &'static str {
         ("Unable to extract", "Extractor failed"),
         ("Unable to download webpage", "Webpage unavailable"),
         ("Unable to download API page", "API unavailable"),
+        // `Fresh cookies` is checked last so yt-dlp's generic YouTube hint
+        // never masks a specific HTTP, timeout, network, or extractor failure.
+        ("Fresh cookies", "Cookies expired"),
     ] {
         if text.contains(needle) {
             return label;
