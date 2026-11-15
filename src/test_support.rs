@@ -1,4 +1,5 @@
 use crate::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 pub(crate) use tokio::io::AsyncWriteExt;
 
 pub(crate) fn av_fixture() -> &'static Path {
@@ -892,6 +893,7 @@ macro_rules! chat_reply {
                 owner: $owner,
                 prompt: $prompt,
                 image: $image,
+                effort: None,
                 followup: false,
                 sticker_mode: false,
                 reply_context: None,
@@ -919,6 +921,7 @@ macro_rules! chat_reply_with_proposal {
                 owner: $owner,
                 prompt: $prompt,
                 image: $image,
+                effort: None,
                 followup: false,
                 sticker_mode: false,
                 reply_context: None,
@@ -931,3 +934,86 @@ macro_rules! chat_reply_with_proposal {
 
 pub(crate) use chat_reply;
 pub(crate) use chat_reply_with_proposal;
+
+/// One-shot TypeSafe System One stub shared by the router and reasoning tests:
+/// records every request body and answers with a fixed status and body.
+pub(crate) struct JevStub {
+    pub(crate) url: Url,
+    pub(crate) requests: Arc<AtomicUsize>,
+    pub(crate) bodies: Arc<std::sync::Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for JevStub {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+pub(crate) async fn jev_stub(status: &'static str, body: String, delay: Duration) -> JevStub {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind stub");
+    let address = listener.local_addr().expect("stub address");
+    let url = Url::parse(&format!("http://{address}/v1/systemone")).expect("stub url");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured_requests = Arc::clone(&requests);
+    let captured_bodies = Arc::clone(&bodies);
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            captured_requests.fetch_add(1, Ordering::SeqCst);
+            let body = body.clone();
+            let bodies = Arc::clone(&captured_bodies);
+            tokio::spawn(async move {
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut chunk).await.unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                    if let Some(head_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head =
+                            String::from_utf8_lossy(&buffer[..head_end]).to_ascii_lowercase();
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")
+                                    .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        if buffer.len() >= head_end + 4 + length {
+                            let start = head_end + 4;
+                            let end = (start + length).min(buffer.len());
+                            bodies
+                                .lock()
+                                .unwrap()
+                                .push(String::from_utf8_lossy(&buffer[start..end]).to_string());
+                            break;
+                        }
+                    }
+                }
+                if !delay.is_zero() {
+                    time::sleep(delay).await;
+                }
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+            });
+        }
+    });
+    JevStub {
+        url,
+        requests,
+        bodies,
+        task,
+    }
+}

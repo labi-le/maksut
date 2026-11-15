@@ -1615,22 +1615,53 @@ async fn empty_reasoning_reply_retries_without_reasoning() {
     assert_eq!(reply.text, "ответ после повтора");
     let requests = llm.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    let expected = crate::config()
-        .llm
-        .reasoning_effort
-        .clone()
-        .filter(|value| !value.trim().is_empty() && !value.eq_ignore_ascii_case("none"));
     assert_eq!(
         body_of(&requests[0])
             .get("reasoning_effort")
             .and_then(Value::as_str),
-        expected.as_deref()
+        Some("low"),
+        "auto without a reachable classifier must send the configured default tier"
     );
     assert_eq!(
         body_of(&requests[1])
             .get("reasoning_effort")
             .and_then(Value::as_str),
         Some("none")
+    );
+    assert!(
+        requests.iter().all(|request| body_of(request)
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            != Some("auto")),
+        "the literal auto must never reach the provider"
+    );
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn auto_mode_sends_the_resolved_tier() {
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":"ок"}}]}"#.into(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let messages = [serde_json::json!({"role": "user", "content": "объясни, почему"})];
+    let request = crate::CompletionRequest::new(&messages, true, 100).effort(Effort::High);
+    let _ = config.complete_with(&request, false, true).await.unwrap();
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(
+        body_of(&requests[0])
+            .get("reasoning_effort")
+            .and_then(Value::as_str),
+        Some("high"),
+        "the tier resolved for the turn must reach the request body"
     );
     llm.task.abort();
 }
@@ -1960,6 +1991,7 @@ async fn research_request_marks_the_message_with_eyes() {
         owner: true,
         prompt: "сделай ресерч по rust",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2032,6 +2064,7 @@ async fn plain_reply_does_not_react_to_the_message() {
         owner: true,
         prompt: "привет",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2098,6 +2131,7 @@ async fn web_search_marks_the_message_on_every_pass() {
         owner: true,
         prompt: "погугли rust",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2180,6 +2214,7 @@ async fn read_url_marks_the_message_on_every_pass() {
         owner: true,
         prompt: &prompt,
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -2551,9 +2586,10 @@ async fn length_clipped_reasoning_reply_retries_without_reasoning_and_telegraph_
     let req_default = crate::CompletionRequest::new(&msgs, true, 100);
     let _ = config.complete_with(&req_default, false, false).await;
     let third = body_of(&llm.requests.lock().unwrap()[2]);
-    assert!(
-        third.get("reasoning_effort").is_none(),
-        "fallback when request.reasoning is true but with_reasoning is false must omit reasoning_effort completely"
+    assert_eq!(
+        third.get("reasoning_effort").and_then(Value::as_str),
+        Some("none"),
+        "with_reasoning = false must explicitly disable reasoning_effort: {third}"
     );
     assert!(crate::telegraph::explicit_article_request(
         "напиши три статьи про тайлинг"
@@ -2992,6 +3028,8 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         owner: false,
         prompt: "ору с этого деплоя",
         image: None,
+        // An escalated tier must still be ignored: sticker turns never deliberate.
+        effort: Some(Effort::High),
         followup: false,
         sticker_mode: true,
         reply_context: None,
@@ -3017,6 +3055,12 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         reply.text
     );
     assert_eq!(llm.requests.lock().unwrap().len(), 1);
+    let sticker_body = body_of(&llm.requests.lock().unwrap()[0]);
+    assert_eq!(
+        sticker_body.get("reasoning_effort").and_then(Value::as_str),
+        Some("low"),
+        "a sticker turn must stay at the low tier: {sticker_body}"
+    );
     llm.task.abort();
 
     let llm_pass = mock_server(vec![reply_response("[стикер]"), reply_response("PASS")]).await;
@@ -3160,6 +3204,7 @@ async fn normal_turn_sticker_placeholder_picks_sticker_and_burst_dedup_detects_a
         owner: true,
         prompt: "давай гачимучи",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -3395,6 +3440,7 @@ async fn final_tool_round_forces_tool_free_synthesis_instead_of_tools_error() {
         owner: true,
         prompt: "изучи",
         image: None,
+        effort: None,
         followup: false,
         sticker_mode: false,
         reply_context: None,
@@ -3418,5 +3464,83 @@ async fn final_tool_round_forces_tool_free_synthesis_instead_of_tools_error() {
         last_body.get("tools").is_none(),
         "final round must omit tools to force synthesis: {last_body}"
     );
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn forced_synthesis_sends_none_and_never_retries_the_same_non_reasoning_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let max_rounds = crate::config::config().chat.tool_rounds;
+    let mut responses = Vec::new();
+    for idx in 0..max_rounds - 1 {
+        responses.push(format!(
+            r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"c{idx}","type":"function","function":{{"name":"inspect_code","arguments":"{{\"query\":\"nonexistent_xyz\"}}"}}}}]}}}}]}}"#
+        ));
+    }
+    responses.push(r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#.into());
+    let llm = mock_server(responses).await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(1),
+        sender_name: "Денис",
+        username: None,
+        message_id: 1,
+        reply_user_id: None,
+        owner: true,
+        prompt: "изучи",
+        image: None,
+        effort: None,
+        followup: false,
+        sticker_mode: false,
+        reply_context: None,
+        bot: None,
+    };
+    let result = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await;
+    match result {
+        Err(reason) => assert_eq!(reason, "empty"),
+        Ok(_) => panic!("forced synthesis with empty output must not produce a reply"),
+    }
+    let requests = llm.requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        max_rounds,
+        "an empty forced-synthesis reply must not repeat the same non-reasoning call"
+    );
+    assert_eq!(
+        body_of(&requests[0])
+            .get("reasoning_effort")
+            .and_then(Value::as_str),
+        Some("low"),
+        "ordinary tool rounds keep the auto tier"
+    );
+    let last_body = body_of(requests.last().unwrap());
+    assert_eq!(
+        last_body.get("reasoning_effort").and_then(Value::as_str),
+        Some("none"),
+        "forced synthesis must explicitly disable reasoning_effort: {last_body}"
+    );
+    assert!(last_body.get("tools").is_none(), "{last_body}");
     llm.task.abort();
 }

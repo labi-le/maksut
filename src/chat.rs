@@ -1,30 +1,6 @@
 use crate::*;
 use serde_json::json;
 
-/// One inbound chat message plus who sent it.
-pub(crate) struct ChatTurn<'a> {
-    pub(crate) chat_id: ChatId,
-    pub(crate) user_id: UserId,
-    pub(crate) sender_name: &'a str,
-    pub(crate) username: Option<&'a str>,
-    pub(crate) message_id: i32,
-    pub(crate) reply_user_id: Option<UserId>,
-    pub(crate) owner: bool,
-    pub(crate) prompt: &'a str,
-    pub(crate) image: Option<&'a ChatImage>,
-    pub(crate) followup: bool,
-    pub(crate) sticker_mode: bool,
-    pub(crate) reply_context: Option<&'a str>,
-    pub(crate) bot: Option<&'a Bot>,
-}
-#[derive(Default)]
-pub(crate) struct ChatReply {
-    pub(crate) text: String,
-    pub(crate) sticker: Option<FileId>,
-    pub(crate) decision: Option<crate::self_improve::PendingDecision>,
-    pub(crate) proposed_feature: bool,
-}
-
 #[tracing::instrument(skip_all, fields(chat_id = message.chat.id.0, user_id = sender.id.0, owner = sender.id == cfg.owner_id))]
 pub(crate) async fn reply_with_chat(
     bot: &Bot,
@@ -61,6 +37,22 @@ pub(crate) async fn reply_with_chat(
     if !matches!(decision, Decision::Reply | Decision::Sticker) {
         return;
     }
+    // The judge runs while the turn waits for its pacing slot and chat locks,
+    // and its result is awaited before the model slot: a slow classifier cannot
+    // starve concurrency. Vision, blank, stop-phrase, sticker and fixed turns
+    // skip it, and a reply carries the context that makes a short prompt hard.
+    let judge = chat.judge();
+    let judge_task = judge
+        .wants(
+            &input.prompt,
+            input.followup,
+            input.pending_media.is_some(),
+            decision == Decision::Sticker,
+        )
+        .then(|| {
+            let state = judge_state(&input.prompt, input.reply_context.as_deref());
+            tokio::spawn(async move { judge.resolve(&state).await })
+        });
     chat.pace(sender.id).await;
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
     let user_lock = cfg.user_turn_lock(message.chat.id, sender.id).await;
@@ -77,12 +69,19 @@ pub(crate) async fn reply_with_chat(
         .await
     {
         tracing::debug!("skip: burst continuation already answered");
+        if let Some(task) = &judge_task {
+            task.abort();
+        }
         return;
     }
     // Hold the image permit across `chat.acquire()` so downloaded bytes stay
     // bounded without occupying a model slot while Telegram serves the file.
     let (downloaded_image, image_permit) =
         download_pending_image(bot, input.pending_media.as_ref()).await;
+    let turn_effort = match judge_task {
+        Some(task) => task.await.ok().flatten(),
+        None => None,
+    };
     let Some(_permit) = chat.acquire().await else {
         return;
     };
@@ -106,6 +105,7 @@ pub(crate) async fn reply_with_chat(
         owner,
         prompt: effective_prompt,
         image: downloaded_image.as_ref(),
+        effort: turn_effort,
         followup: input.followup,
         sticker_mode: decision == Decision::Sticker,
         reply_context: input.reply_context.as_deref(),
@@ -156,9 +156,7 @@ pub(crate) async fn chat_reply_with_proposal(
     turn: &ChatTurn<'_>,
     proposal: Option<&FeatureProposal>,
 ) -> Result<ChatReply, String> {
-    if is_stop_followup(turn.prompt)
-        && (turn.followup || turn.prompt.split_whitespace().count() <= 7)
-    {
+    if is_stop_turn(turn.prompt, turn.followup) {
         chat.clear_followup(turn.chat_id).await;
         return Ok(ChatReply::default());
     }
@@ -317,6 +315,13 @@ pub(crate) async fn chat_reply_with_proposal(
         author_name: turn.sender_name.to_owned(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);
+    // Sticker turns answer in one round and skip the judge, so they must not
+    // inherit a policy default above `low`.
+    let turn_effort = if turn.sticker_mode {
+        Some(Effort::Low)
+    } else {
+        turn.effort
+    };
     let max_rounds = config().chat.tool_rounds;
     for round in 0..max_rounds {
         let c = &config().chat;
@@ -333,7 +338,15 @@ pub(crate) async fn chat_reply_with_proposal(
         if turn.image.is_some() {
             request = request.without_reasoning();
         }
+        if let Some(effort) = turn_effort {
+            request = request.effort(effort);
+        }
         let force_synthesis = max_rounds > 1 && round + 1 == max_rounds;
+        if force_synthesis {
+            // Synthesis is already a non-reasoning call; clearing the flag here
+            // keeps the empty-reply retry from repeating the same request.
+            request = request.without_reasoning();
+        }
         llm_round(round, max_tokens, request.reasoning, state.research.used);
         let Completion {
             message: mut reply,
