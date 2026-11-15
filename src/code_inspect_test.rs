@@ -133,6 +133,31 @@ async fn inspect_supports_directory_paths_and_delete_self_fact_matches_fuzzy_top
     .unwrap();
     let loaded = crate::self_memory::load_self_memory(&pool).await.unwrap();
     assert!(loaded.is_none(), "{loaded:?}");
+    crate::code_inspect::record_self_fact(
+        &crate::test_support::offline_chat(),
+        &pool,
+        dir.path(),
+        "лексика",
+        "использовать питерские жаргонизмы: шаверма, парадная, поребрик",
+        "",
+    )
+    .await
+    .unwrap();
+    crate::code_inspect::record_self_fact(
+        &crate::test_support::offline_chat(),
+        &pool,
+        dir.path(),
+        "питерский жаргон",
+        "",
+        "",
+    )
+    .await
+    .unwrap();
+    let after_fact_delete = crate::self_memory::load_self_memory(&pool).await.unwrap();
+    assert!(
+        after_fact_delete.is_none(),
+        "delete_self_fact must match owner directive fact body when topic key differs: {after_fact_delete:?}"
+    );
 }
 
 #[test]

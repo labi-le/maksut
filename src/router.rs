@@ -79,8 +79,25 @@ impl Router {
     ) -> Decision {
         let stop = crate::chat_style::is_stop_followup(&input.prompt)
             && (input.followup || input.prompt.split_whitespace().count() <= 7);
-        let decision = self
-            .decide(&RouterInput {
+        let sender_id = message.from.as_ref().map(|u| u.id);
+        let active_speaker = if self.mode != RouterMode::Off && input.followup {
+            chat.followup_speaker(message.chat.id).await
+        } else {
+            None
+        };
+        let cross_speaker_followup = self.mode != RouterMode::Off
+            && input.followup
+            && input.address == AddressKind::None
+            && active_speaker.is_some_and(|sp| sp.is_some() && sp != sender_id);
+        let decision = if !stop
+            && cross_speaker_followup
+            && (input.reply_context.is_some()
+                || addresses_other(&input.prompt)
+                || !expects_answer(&input.prompt))
+        {
+            Decision::Wait
+        } else {
+            self.decide(&RouterInput {
                 text: &input.prompt,
                 address: input.address,
                 followup: input.followup,
@@ -89,7 +106,8 @@ impl Router {
                 forwarded: message.forward_origin().is_some(),
                 reply_context: input.reply_context.as_deref(),
             })
-            .await;
+            .await
+        };
         if self.mode != RouterMode::Off {
             tracing::info!(
                 chat_id = message.chat.id.0,
@@ -102,7 +120,9 @@ impl Router {
                 "router decision"
             );
         }
-        if decision == Decision::Silent {
+        let unaddressed_peer_turn = input.address == AddressKind::None
+            && (input.reply_context.is_some() || addresses_other(&input.prompt));
+        if decision == Decision::Silent || (decision == Decision::Wait && unaddressed_peer_turn) {
             chat.clear_followup(message.chat.id).await;
         }
         decision
@@ -201,102 +221,21 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
     }
 }
 
-const QUESTION_WORDS: &[&str] = &[
-    "что",
-    "че",
-    "чё",
-    "чо",
-    "кто",
-    "как",
-    "где",
-    "когда",
-    "почему",
-    "зачем",
-    "хули",
-    "нахуя",
-    "какой",
-    "какая",
-    "какие",
-    "каков",
-    "сколько",
-    "скок",
-    "куда",
-    "откуда",
-    "чей",
-    "чья",
-    "разве",
-    "неужели",
-    "еще",
-    "ещё",
-    "алло",
-    "ало",
-    "але",
-    "алё",
-    "ау",
-    "што",
-];
+const QUESTION_WORDS: &str = "что че чё чо кто как где когда почему зачем хули нахуя \
+    какой какая какие каков сколько скок куда откуда чей чья разве неужели еще ещё \
+    алло ало але алё ау што";
 
-const REQUEST_STEMS: &[&str] = &[
-    "скаж",
-    "расскаж",
-    "найд",
-    "покаж",
-    "объясн",
-    "провер",
-    "сдела",
-    "напиш",
-    "перевед",
-    "посчита",
-    "помог",
-    "пришл",
-    "скин",
-    "поищ",
-    "обнов",
-    "запус",
-    "постав",
-    "удал",
-    "исправ",
-    "добав",
-    "сравн",
-    "cравн",
-    "подскаж",
-    "дай",
-    "напомн",
-    "нарису",
-    "состав",
-    "придум",
-    "предлож",
-    "попробу",
-    "кинь",
-    "глян",
-    "оформ",
-    "созда",
-    "запиш",
-    "сохран",
-    "запомн",
-    "забуд",
-    "извин",
-    "выбер",
-    "прочит",
-    "откро",
-    "разбер",
-    "поясн",
-    "изуч",
-    "посмотри",
-    "чекн",
-    "оцен",
-    "проанализир",
-    "проресерч",
-    "заресерч",
-    "ресерч",
-    "ресерчн",
-    "загугл",
-    "погугл",
-    "нагугл",
-];
+const REQUEST_STEMS: &str = "скаж расскаж найд покаж объясн провер сдела напиш перевед \
+    посчита помог пришл скин поищ обнов запус постав удал исправ добав сравн cравн подскаж \
+    дай напомн нарису состав придум предлож попробу кинь глян оформ созда запиш сохран запомн \
+    забуд извин выбер прочит откро разбер поясн изуч посмотри чекн оцен проанализир \
+    проресерч заресерч ресерч ресерчн загугл погугл нагугл";
 
 fn is_request_verb(w: &str) -> bool {
-    let Some(tail) = REQUEST_STEMS.iter().find_map(|stem| w.strip_prefix(*stem)) else {
+    let Some(tail) = REQUEST_STEMS
+        .split_ascii_whitespace()
+        .find_map(|stem| w.strip_prefix(stem))
+    else {
         return false;
     };
     const PAST: &[&str] = &[
@@ -383,7 +322,9 @@ fn has_question_or_request(lower: &str) -> bool {
         || lower
             .split(|ch: char| !ch.is_alphanumeric())
             .filter(|word| !word.is_empty())
-            .any(|word| QUESTION_WORDS.contains(&word) || is_request_verb(word))
+            .any(|word| {
+                QUESTION_WORDS.split_ascii_whitespace().any(|q| q == word) || is_request_verb(word)
+            })
 }
 
 fn can_wake_ambient(input: &RouterInput<'_>, text: &str) -> bool {

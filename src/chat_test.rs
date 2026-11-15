@@ -3073,12 +3073,16 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         SearchProvider::DuckDuckGo,
         None,
     );
+    let followup_sticker_turn = ChatTurn {
+        followup: true,
+        ..turn
+    };
     let text_only_reply = chat_reply_with_proposal(
         &text_only_config,
         &pool,
         &StickerReplies::for_tests(),
         &catalog,
-        &turn,
+        &followup_sticker_turn,
         None,
     )
     .await
@@ -3092,6 +3096,38 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         "{:?}",
         text_only_reply.text
     );
+    let sys_prompt = body_of(&llm_text_only.requests.lock().unwrap()[0])["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        sys_prompt.contains("§ Follow-up Mode") && sys_prompt.contains("§ Sticker Reaction Mode"),
+        "followup sticker_mode turn must include both FOLLOWUP_PROMPT and STICKER_MODE_PROMPT: {sys_prompt}"
+    );
+    let llm_followup_pass = mock_server(vec![reply_response("PASS")]).await;
+    let followup_pass_config = ChatConfig::new(
+        llm_followup_pass.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm_followup_pass.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let followup_pass_reply = chat_reply_with_proposal(
+        &followup_pass_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &followup_sticker_turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        followup_pass_reply.sticker.is_none() && followup_pass_reply.text.is_empty(),
+        "followup sticker_mode PASS must stay silent without picking a fallback sticker"
+    );
+    llm_followup_pass.task.abort();
     llm_text_only.task.abort();
 }
 

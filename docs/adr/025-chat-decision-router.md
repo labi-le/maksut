@@ -27,8 +27,13 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
   `src/chat.rs` applies the decision before pacing, chat locks, the typing
   keepalive, and any media download, and logs a structured `tracing::info!`
   event (`router decision`) when `mode != "off"`. `Silent` closes the followup
-  window, `Wait` leaves it as is, and `Reply` / `Sticker` continue into
-  `chat_reply_with_proposal` (`Sticker` sets `turn.sticker_mode = true`).
+  window, `Wait` leaves it as is (except when an unaddressed message in `jev`
+  mode replies to or addresses another human participant, which also clears the
+  followup window), and `Reply` / `Sticker` continue into
+  `chat_reply_with_proposal` (`Sticker` sets `turn.sticker_mode = true`). In
+  `jev` mode, `ChatConfig::note_reply` also records the speaker `Option<UserId>`
+  whose turn opened the window (`followup_speaker`), so an unaddressed non-question
+  remark from a different participant returns `Wait` directly without calling `Jev`.
 - Rules table (`decide_rules`): stop phrase -> `Silent`; explicit address ->
   `Reply`; name form with content -> `Reply`; name form without content ->
   `Silent`; followup turn with a question mark, question word, or request stem
@@ -59,8 +64,10 @@ algorithm, and one that asks the TypeSafe System One (`Jev`) decisions API.
   `mode = "off"` keeps the historical behavior, including the post-model
   stop-phrase handling.
 - `Wait` vs `Silent` is the only state change: both skip the heavy model, and
-  the difference is whether the followup window survives. The decision does not
-  extend the window, so repeated `Wait` answers cannot keep a chat alive forever.
+  the difference is whether the followup window survives (an unaddressed reply or
+  vocative to another human participant in `jev` mode also clears the window on
+  `Wait`). The decision does not extend the window, so repeated `Wait` answers
+  cannot keep a chat alive forever.
 
 ## Limits
 

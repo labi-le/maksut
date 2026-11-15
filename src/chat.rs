@@ -205,7 +205,7 @@ pub(crate) async fn chat_reply_with_proposal(
     } else if turn.sticker_mode {
         system_prompt.push_str(&format!("\n\n{STICKER_MODE_PROMPT}"));
     }
-    if turn.followup && !turn.sticker_mode {
+    if turn.followup {
         system_prompt.push_str(&format!("\n\n{FOLLOWUP_PROMPT}"));
     }
     let mut messages = vec![json!({"role": "system", "content": system_prompt})];
@@ -409,7 +409,9 @@ pub(crate) async fn chat_reply_with_proposal(
                 st.unwrap_or_else(|| style_chat_reply(&content))
             };
             let q = sticker_request_query(prompt);
-            let fallback_sticker = state.allow_sticker && (!turn.sticker_mode || text.is_empty());
+            let fallback_sticker = state.allow_sticker
+                && (!turn.sticker_mode
+                    || (text.is_empty() && (!turn.followup || is_sticker_placeholder(raw_c))));
             let sticker = state
                 .sticker
                 .or_else(|| fallback_sticker.then(|| catalog.pick(q)).flatten())

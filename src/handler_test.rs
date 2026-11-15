@@ -1432,7 +1432,11 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         !cfg.chat.as_ref().unwrap().followup_active(group).await,
         "addressed non-owner stop phrase must clear followup window after delivery"
     );
-    cfg.chat.as_ref().unwrap().note_reply(group).await;
+    cfg.chat
+        .as_ref()
+        .unwrap()
+        .note_reply(group, Some(UserId(1)))
+        .await;
     api.clear().await;
     let followup_stop: Message = serde_json::from_value(serde_json::json!({
         "message_id": 210,

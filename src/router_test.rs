@@ -184,6 +184,9 @@ fn followup_questions_and_requests_reply() {
     assert!(crate::chat_style::is_stop_followup("молчи"));
     assert!(crate::chat_style::is_stop_followup("тише"));
     assert!(crate::chat_style::is_stop_followup("оффнись"));
+    assert!(crate::chat_style::is_stop_followup("ебало завали"));
+    assert!(crate::chat_style::is_stop_followup("очко закрой свое да"));
+    assert!(crate::chat_style::is_stop_followup("рот закрой"));
     assert!(crate::chat_style::is_stop_followup(
         "бля он по приколу на рандом сообщения отвечает?"
     ));
@@ -558,9 +561,71 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         None,
     );
     let chat_id = ChatId(7);
-    chat.note_reply(chat_id).await;
+    chat.note_reply(chat_id, Some(UserId(1))).await;
     assert!(chat.followup_active(chat_id).await);
+    let stub = jev_stub("200 OK", choice_body("sticker", 0.99), Duration::ZERO).await;
+    let jrouter = jev_router(&stub, Duration::from_secs(2), 0.6);
     let router = Router::new(RouterMode::Jev, None, None);
+    let other_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 2,
+        "date": 1700000001,
+        "chat": { "id": 7, "type": "supergroup" },
+        "from": { "id": 28, "is_bot": false, "first_name": "Вадик" },
+        "text": "да просто выебываюсь"
+    }))
+    .unwrap();
+    let other_followup = ResolvedChatInput {
+        prompt: "да просто выебываюсь".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    assert_eq!(
+        jrouter.gate(&chat, &other_msg, &other_followup).await,
+        Decision::Wait,
+        "unaddressed non-question remark from another participant during user 1's followup must Wait without calling Jev"
+    );
+    assert_eq!(stub.requests.load(Ordering::SeqCst), 0);
+    assert!(
+        chat.followup_active(chat_id).await,
+        "plain remark from another participant keeps user 1's followup window open"
+    );
+    let peer_reply_followup = ResolvedChatInput {
+        prompt: "крышу срезал нахуй".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: Some("(в ответ Даня: «или ты что-то сделал?»)".into()),
+    };
+    assert_eq!(
+        jrouter.gate(&chat, &other_msg, &peer_reply_followup).await,
+        Decision::Wait
+    );
+    assert!(
+        !chat.followup_active(chat_id).await,
+        "unaddressed reply to another human must close the followup window"
+    );
+    chat.note_reply(chat_id, Some(UserId(1))).await;
+    let other_stop_followup = ResolvedChatInput {
+        prompt: "ебало завали".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    assert_eq!(
+        jrouter.gate(&chat, &other_msg, &other_stop_followup).await,
+        Decision::Silent
+    );
+    assert!(
+        !chat.followup_active(chat_id).await,
+        "cross-speaker stop phrase must return Silent and close the followup window"
+    );
+    chat.note_reply(chat_id, Some(UserId(1))).await;
     let message: Message = serde_json::from_value(serde_json::json!({
         "message_id": 1,
         "date": 1700000000,

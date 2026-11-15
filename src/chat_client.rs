@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
 use crate::chat_urls::RecentUrls;
 
+type ActiveFollowup = (time::Instant, Option<UserId>);
 #[derive(Clone)]
 pub(crate) struct FeatureProposal {
     pub(crate) dir: std::path::PathBuf,
@@ -29,7 +30,7 @@ pub(crate) struct ChatConfig {
     last_reply: Arc<Mutex<HashMap<UserId, time::Instant>>>,
     pub(crate) last_research: Arc<Mutex<HashMap<UserId, time::Instant>>>,
     pub(crate) research_registry: Arc<ResearchRegistry>,
-    last_active: Arc<Mutex<HashMap<ChatId, time::Instant>>>,
+    last_active: Arc<Mutex<HashMap<ChatId, ActiveFollowup>>>,
     pub(crate) recent_urls: Arc<Mutex<HashMap<ChatId, RecentUrls>>>,
     pub(crate) profile_cache: Arc<Mutex<crate::chat_profile::ProfileCache>>,
     pub(crate) research_cooldown: Duration,
@@ -119,24 +120,24 @@ impl ChatConfig {
         }
     }
 
-    pub(crate) async fn note_reply(&self, chat_id: ChatId) {
+    pub(crate) async fn note_reply(&self, chat_id: ChatId, user_id: Option<UserId>) {
         let mut active = self.last_active.lock().await;
         let now = time::Instant::now();
         let window = Duration::from_secs(config().chat.followup_window_secs);
         let limit = config().chat.max_active_chats;
         if active.len() >= limit && !active.contains_key(&chat_id) {
-            active.retain(|_, at| now.duration_since(*at) < window);
+            active.retain(|_, (at, _)| now.duration_since(*at) < window);
             if active.len() >= limit {
                 if let Some(oldest) = active
                     .iter()
-                    .min_by_key(|(_, at)| **at)
+                    .min_by_key(|(_, (at, _))| *at)
                     .map(|(chat, _)| *chat)
                 {
                     active.remove(&oldest);
                 }
             }
         }
-        active.insert(chat_id, now);
+        active.insert(chat_id, (now, user_id));
     }
     pub(crate) async fn clear_followup(&self, chat_id: ChatId) {
         let mut active = self.last_active.lock().await;
@@ -144,20 +145,24 @@ impl ChatConfig {
     }
 
     pub(crate) async fn followup_active(&self, chat_id: ChatId) -> bool {
+        self.followup_speaker(chat_id).await.is_some()
+    }
+
+    pub(crate) async fn followup_speaker(&self, chat_id: ChatId) -> Option<Option<UserId>> {
         let mut active = self.last_active.lock().await;
         let now = time::Instant::now();
         match active.get(&chat_id).copied() {
-            Some(at)
+            Some((at, speaker))
                 if now.duration_since(at)
                     < Duration::from_secs(config().chat.followup_window_secs) =>
             {
-                true
+                Some(speaker)
             }
             Some(_) => {
                 active.remove(&chat_id);
-                false
+                None
             }
-            None => false,
+            None => None,
         }
     }
 

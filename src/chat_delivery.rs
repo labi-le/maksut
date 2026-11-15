@@ -95,7 +95,8 @@ pub(crate) async fn deliver_chat_reply(
     if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 7) {
         chat.clear_followup(message.chat.id).await;
     } else if delivered {
-        chat.note_reply(message.chat.id).await;
+        chat.note_reply(message.chat.id, message.from.as_ref().map(|u| u.id))
+            .await;
     }
     chat_reply_delivered(&reply, delivered, delivered_text_present);
 }

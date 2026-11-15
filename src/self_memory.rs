@@ -135,8 +135,11 @@ pub(crate) async fn record_self_fact(
 }
 
 /// Deletes a topic from `bot_self_memory`. When the exact topic key is absent,
-/// falls back to a case-insensitive or stem match over existing topic keys so
-/// `remember_self(topic="денис", fact="")` removes `"обращение к денису"`.
+/// falls back to a case-insensitive or stem match over existing topic keys (and,
+/// if no topic matches, over owner-directive `fact` text where `source_url` is
+/// empty) so `remember_self(topic="денис", fact="")` removes `"обращение к денису"`
+/// and `remember_self(topic="питерский жаргон", fact="")` removes a directive
+/// stored under another key whose body mentions those words.
 async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<Vec<String>, String> {
     let exact = sqlx::query("DELETE FROM bot_self_memory WHERE topic = ?")
         .bind(topic)
@@ -146,27 +149,37 @@ async fn delete_self_fact(pool: &SqlitePool, topic: &str) -> Result<Vec<String>,
     if exact.rows_affected() > 0 {
         return Ok(vec![topic.to_owned()]);
     }
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT topic FROM bot_self_memory")
-        .fetch_all(pool)
-        .await
-        .map_err(|_| "не удалось обновить память".to_string())?;
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT topic, fact, source_url FROM bot_self_memory")
+            .fetch_all(pool)
+            .await
+            .map_err(|_| "не удалось обновить память".to_string())?;
     let lower_target = topic.to_lowercase();
     let target_stems: Vec<String> = lower_target
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.chars().count() >= 4)
         .map(|w| w.chars().take(4).collect())
         .collect();
-    let mut doomed: Vec<String> = Vec::new();
-    for (existing,) in rows {
-        let lower_existing = existing.to_lowercase();
+    let matches_text = |text: &str| {
+        let lower = text.to_lowercase();
         let stem_hit = !target_stems.is_empty()
-            && lower_existing
+            && lower
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|w| w.chars().count() >= 4)
                 .any(|w| target_stems.iter().any(|stem| w.starts_with(stem)));
-        if lower_existing == lower_target || lower_existing.contains(&lower_target) || stem_hit {
-            doomed.push(existing);
-        }
+        lower == lower_target || lower.contains(&lower_target) || stem_hit
+    };
+    let mut doomed: Vec<String> = rows
+        .iter()
+        .filter(|(existing, _, _)| matches_text(existing))
+        .map(|(existing, _, _)| existing.clone())
+        .collect();
+    if doomed.is_empty() {
+        doomed = rows
+            .into_iter()
+            .filter(|(_, existing_fact, src)| src.trim().is_empty() && matches_text(existing_fact))
+            .map(|(existing, _, _)| existing)
+            .collect();
     }
     for chunk in doomed.chunks(64) {
         let placeholders = std::iter::repeat_n("?", chunk.len())
