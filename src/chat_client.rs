@@ -316,7 +316,7 @@ impl ChatConfig {
         };
         if let Some(effort) = effort {
             body.insert("reasoning_effort".to_owned(), json!(effort));
-        } else if !request.reasoning && self.judge.mode.is_configured() {
+        } else if !with_reasoning && self.judge.mode.is_configured() {
             body.insert("reasoning_effort".to_owned(), json!("none"));
         }
         if with_tools {

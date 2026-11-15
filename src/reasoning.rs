@@ -1,6 +1,6 @@
 use crate::jev::{ChoiceQuestion, JevClient};
 use crate::prelude::*;
-use crate::{is_stop_turn, LlmSettings, ReasoningSettings};
+use crate::{clamp_state, is_stop_turn, LlmSettings, ReasoningSettings};
 
 /// Resolved `reasoning_effort` tier. Ordered from cheapest to most expensive so
 /// `min` implements the configured ceiling and `max` the omp-style floor.
@@ -169,10 +169,17 @@ impl ReasoningJudge {
     /// Whether a classification could actually change this turn's tier. A fixed
     /// or disabled mode, a missing key and a pinned ceiling cannot; neither can
     /// a turn that never reaches the model: a suppressed stop-phrase, a vision
-    /// turn or a blank prompt.
-    pub(crate) fn wants(&self, prompt: &str, followup: bool, has_media: bool) -> bool {
+    /// turn, a blank prompt or a sticker turn, which answers in one round.
+    pub(crate) fn wants(
+        &self,
+        prompt: &str,
+        followup: bool,
+        has_media: bool,
+        sticker: bool,
+    ) -> bool {
         self.can_classify()
             && !has_media
+            && !sticker
             && !is_stop_turn(prompt, followup)
             && !prompt.trim().is_empty()
     }
@@ -188,8 +195,8 @@ impl ReasoningJudge {
                 .is_some_and(|policy| policy.max > Effort::Low)
     }
 
-    /// Resolves the tier for one turn from a prompt the caller already bounded
-    /// with `clamp_state`, so the spawned task owns only the truncated copy.
+    /// Resolves the tier for one turn from the bounded state built by
+    /// `judge_state`, so the spawned task owns only the truncated copy.
     /// `None` means "not in auto mode"; a classifier failure or a busy slot
     /// falls back to the policy default and never fails the turn.
     pub(crate) async fn resolve(&self, prompt: &str) -> Option<Effort> {
@@ -235,6 +242,18 @@ pub(crate) const EFFORT_CRITERIA: &[(&str, &str)] = &[
 
 /// The classifier's question name inside the `answers` object.
 pub(crate) const EFFORT_QUESTION: &str = "effort";
+
+/// The bounded state the judge classifies: the prompt plus the message it
+/// replies to, because a two-word "почему?" only carries its difficulty with
+/// that context. Mirrors the reply-context line of `router::jev_state`.
+pub(crate) fn judge_state(prompt: &str, reply_context: Option<&str>) -> String {
+    let mut state = clamp_state(prompt);
+    if let Some(context) = reply_context {
+        state.push_str("\nконтекст ответа: ");
+        state.push_str(&clamp_state(context));
+    }
+    state
+}
 
 /// One bounded classification request against the configured tiny model.
 /// `prompt` is bounded by `clamp_state` before it reaches this call.

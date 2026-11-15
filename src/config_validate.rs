@@ -285,6 +285,18 @@ impl LlmSettings {
             1024,
             4 * 1024 * 1024,
         )?;
+        // An unknown tier would otherwise become `ReasoningMode::Fixed(<typo>)`
+        // and make the provider reject every first attempt.
+        if let Some(raw) = self.reasoning_effort.as_deref() {
+            let tier = raw.trim().to_ascii_lowercase();
+            if !tier.is_empty()
+                && !matches!(tier.as_str(), "none" | "auto" | "low" | "medium" | "high")
+            {
+                return Err(
+                    "llm.reasoning_effort must be one of none, low, medium, high, auto".into(),
+                );
+            }
+        }
         self.reasoning.validate()
     }
 }

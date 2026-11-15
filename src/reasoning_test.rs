@@ -97,11 +97,41 @@ fn reasoning_mode_maps_settings() {
 
     assert!(matches!(
         ReasoningMode::from_settings(&LlmSettings {
-            reasoning_effort: Some("minimal".into()),
+            reasoning_effort: Some("high".into()),
             ..Default::default()
         }),
-        ReasoningMode::Fixed(value) if value == "minimal"
+        ReasoningMode::Fixed(value) if value == "high"
     ));
+}
+
+#[test]
+fn top_level_effort_is_validated_at_startup() {
+    for good in [
+        None,
+        Some(""),
+        Some(" auto "),
+        Some("NONE"),
+        Some("low"),
+        Some("Medium"),
+        Some("high"),
+    ] {
+        let settings = LlmSettings {
+            reasoning_effort: good.map(str::to_owned),
+            ..Default::default()
+        };
+        assert!(settings.validate().is_ok(), "{good:?}");
+    }
+    for bad in ["meduim", "fast", "xhigh", "true"] {
+        let settings = LlmSettings {
+            reasoning_effort: Some(bad.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.validate().unwrap_err(),
+            "llm.reasoning_effort must be one of none, low, medium, high, auto",
+            "{bad}"
+        );
+    }
 }
 
 #[test]
@@ -292,20 +322,47 @@ fn judge_skips_turns_that_never_reach_the_model() {
     )
     .unwrap();
     let eager = judge(ReasoningMode::Auto(policy()), Some(client), None);
-    assert!(eager.wants("объясни, почему это падает", false, false));
+    assert!(eager.wants("объясни, почему это падает", false, false, false));
     assert!(
-        !eager.wants("завали ебало", false, false),
+        !eager.wants("завали ебало", false, false, false),
         "a stop-phrase never reaches the model"
     );
     assert!(
-        !eager.wants("завали ебало", true, false),
+        !eager.wants("завали ебало", true, false, false),
         "a stop-phrase followup never reaches the model"
     );
-    assert!(!eager.wants("объясни", false, true), "a vision turn");
-    assert!(!eager.wants("  ", false, false), "a blank prompt");
+    assert!(!eager.wants("объясни", false, true, false), "a vision turn");
+    assert!(!eager.wants("  ", false, false, false), "a blank prompt");
     assert!(
-        !judge(ReasoningMode::Auto(policy()), None, None).wants("объясни", false, false),
+        !eager.wants("иронично подколоть", false, false, true),
+        "a sticker turn answers in one round without deliberation"
+    );
+    assert!(
+        !judge(ReasoningMode::Auto(policy()), None, None).wants("объясни", false, false, false),
         "without a key the request would be pure cost"
+    );
+}
+
+#[tokio::test]
+async fn judge_state_carries_the_replied_message() {
+    let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
+    let client = classifier(&stub, Duration::from_secs(2), 0.6);
+    let judge = judge(ReasoningMode::Auto(policy()), Some(client), None);
+    let state = judge_state("почему?", Some("fn main() { panic!() }"));
+    assert_eq!(judge.resolve(&state).await, Some(Effort::High));
+    let bodies = stub.bodies.lock().unwrap();
+    let body = bodies.first().expect("captured classifier body");
+    assert!(
+        body.contains(r#""state":"почему?\nконтекст ответа: fn main() { panic!() }""#),
+        "{body}"
+    );
+    assert_eq!(judge_state("почему?", None), "почему?");
+    let long = "я".repeat(5_000);
+    let bounded = judge_state(&long, Some(&long));
+    assert_eq!(
+        bounded.chars().filter(|ch| *ch == 'я').count(),
+        4_000,
+        "each part is clamped to the shared 2000-char state cap"
     );
 }
 

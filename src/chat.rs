@@ -39,13 +39,19 @@ pub(crate) async fn reply_with_chat(
     }
     // The judge runs while the turn waits for its pacing slot and chat locks,
     // and its result is awaited before the model slot: a slow classifier cannot
-    // starve concurrency. Vision, blank, stop-phrase and fixed turns skip it.
+    // starve concurrency. Vision, blank, stop-phrase, sticker and fixed turns
+    // skip it, and a reply carries the context that makes a short prompt hard.
     let judge = chat.judge();
     let judge_task = judge
-        .wants(&input.prompt, input.followup, input.pending_media.is_some())
+        .wants(
+            &input.prompt,
+            input.followup,
+            input.pending_media.is_some(),
+            decision == Decision::Sticker,
+        )
         .then(|| {
-            let prompt = clamp_state(&input.prompt);
-            tokio::spawn(async move { judge.resolve(&prompt).await })
+            let state = judge_state(&input.prompt, input.reply_context.as_deref());
+            tokio::spawn(async move { judge.resolve(&state).await })
         });
     chat.pace(sender.id).await;
     let chat_lock = cfg.chat_lock(message.chat.id.0).await;
@@ -309,7 +315,13 @@ pub(crate) async fn chat_reply_with_proposal(
         author_name: turn.sender_name.to_owned(),
     };
     let mut state = ToolState::new(allow_sticker, allow_feature);
-    let turn_effort = turn.effort;
+    // Sticker turns answer in one round and skip the judge, so they must not
+    // inherit a policy default above `low`.
+    let turn_effort = if turn.sticker_mode {
+        Some(Effort::Low)
+    } else {
+        turn.effort
+    };
     let max_rounds = config().chat.tool_rounds;
     for round in 0..max_rounds {
         let c = &config().chat;
@@ -330,6 +342,11 @@ pub(crate) async fn chat_reply_with_proposal(
             request = request.effort(effort);
         }
         let force_synthesis = max_rounds > 1 && round + 1 == max_rounds;
+        if force_synthesis {
+            // Synthesis is already a non-reasoning call; clearing the flag here
+            // keeps the empty-reply retry from repeating the same request.
+            request = request.without_reasoning();
+        }
         llm_round(round, max_tokens, request.reasoning, state.research.used);
         let Completion {
             message: mut reply,

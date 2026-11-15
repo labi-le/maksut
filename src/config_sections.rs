@@ -475,7 +475,7 @@ defaults!(VoiceSettings {
 defaults!(ReasoningSettings {
     model: "jev-latest".into(),
     url: "https://api.typesafe.ai/v1/systemone".into(),
-    timeout_ms: 1500,
+    timeout_ms: 800,
     max_response_bytes: 16 * 1024,
     min_confidence: 0.6,
     concurrency: 4,
