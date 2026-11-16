@@ -3132,12 +3132,8 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     .await
     .unwrap();
     assert!(
-        text_only_reply.sticker.is_none(),
-        "sticker_mode text reply without send_sticker or [стикер] must not attach a random fallback sticker"
-    );
-    assert!(
-        text_only_reply.text.contains("предупреждаю"),
-        "{:?}",
+        text_only_reply.sticker.is_none() && text_only_reply.text.is_empty(),
+        "sticker_mode text reply without send_sticker or [стикер] must stay silent instead of leaking a prose reply or attaching a random fallback sticker: {:?}",
         text_only_reply.text
     );
     let sys_prompt = body_of(&llm_text_only.requests.lock().unwrap()[0])["messages"][0]["content"]

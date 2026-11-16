@@ -405,7 +405,7 @@ defaults!(PathSettings {
 });
 
 defaults!(TelegramSettings {
-    connect_timeout_secs: 5,
+    connect_timeout_secs: 15,
     request_timeout_secs: 180,
     pool_idle_timeout_secs: 15,
     tcp_keepalive_secs: 15,

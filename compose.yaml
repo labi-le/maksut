@@ -31,6 +31,8 @@ services:
       EMBEDDING_URL: ${EMBEDDING_URL:-http://embeddings:8080/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
+    extra_hosts:
+      - "api.telegram.org:${TELEGRAM_API_IP:-149.154.167.220}"
     volumes:
       - data:/data
       # Bind the directory so atomic replacement of cookies.txt stays visible.

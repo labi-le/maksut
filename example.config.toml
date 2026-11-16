@@ -38,7 +38,7 @@ sticker_descriptions_file = "sticker_descriptions.json"
 # cookie_refresh_url = "http://cookie-refresh:8080"
 
 [telegram]
-connect_timeout_secs = 5
+connect_timeout_secs = 15
 request_timeout_secs = 180
 pool_idle_timeout_secs = 15
 tcp_keepalive_secs = 15

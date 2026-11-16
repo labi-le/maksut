@@ -429,6 +429,11 @@ pub(crate) async fn chat_reply_with_proposal(
                 .sticker
                 .or_else(|| fallback_sticker.then(|| catalog.pick(q)).flatten())
                 .or_else(|| fallback_sticker.then(|| catalog.pick("")).flatten());
+            let text = if turn.sticker_mode && sticker.is_none() {
+                String::new()
+            } else {
+                text
+            };
             let empty = text.is_empty() && sticker.is_none() && state.decision.is_none();
             if !state.research.used && empty && !turn.followup && !bare_prompt && !turn.sticker_mode
             {

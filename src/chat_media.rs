@@ -141,6 +141,16 @@ fn references_recent_image(text: &str) -> bool {
         "мем",
         "меме",
         "мема",
+        "видео",
+        "видос",
+        "видосе",
+        "видоса",
+        "ролик",
+        "ролике",
+        "ролика",
+        "гифк",
+        "гифке",
+        "гифки",
     ];
     const SHORT: &[&str] = &[
         "че это",
@@ -321,7 +331,13 @@ pub(crate) async fn resolve_chat_input(
     let own_text = message.text().or_else(|| message.caption()).unwrap_or("");
     let current_media = message_image(message);
     let has_current_media = current_media.is_some();
-    if !message.chat.is_private() && own_text.trim().is_empty() && message_has_own_photo(message) {
+    if !message.chat.is_private()
+        && own_text.trim().is_empty()
+        && (message_has_own_photo(message)
+            || message.video().is_some()
+            || message.animation().is_some()
+            || message.video_note().is_some())
+    {
         if let Some(ref img) = current_media {
             note_recent_image(message.chat.id, message.from.as_ref().map(|u| u.id), img).await;
         }

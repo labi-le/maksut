@@ -1391,6 +1391,36 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         .is_none(),
         "'это человек' must not false-match 'это че' as a recent-photo reference"
     );
+    let uncaptioned_video: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 214,
+        "date": 1700000008,
+        "chat": {"id": -100557, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис"},
+        "video": {
+            "file_id": "vid-1", "file_unique_id": "uvid-1",
+            "width": 640, "height": 480, "duration": 5,
+            "thumbnail": {"file_id": "vid-thumb-1", "file_unique_id": "uthumb-1", "width": 320, "height": 240}
+        }
+    }))
+    .unwrap();
+    let _ = crate::chat_media::resolve_chat_input(&uncaptioned_video, "", &cfg, false).await;
+    let ask_recent_video: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 215,
+        "date": 1700000009,
+        "chat": {"id": -100557, "type": "supergroup"},
+        "from": {"id": 64, "is_bot": false, "first_name": "Евгений"},
+        "text": "максут что на видео",
+    }))
+    .unwrap();
+    assert_eq!(
+        crate::chat_media::resolve_chat_input(&ask_recent_video, "максут что на видео", &cfg, false)
+            .await
+            .unwrap()
+            .pending_media
+            .map(|(id, _)| id.0),
+        Some("vid-thumb-1".to_owned()),
+        "addressed question referencing 'видео' must attach the recent uncaptioned video's thumbnail"
+    );
     let ask_recent_photo: Message = serde_json::from_value(serde_json::json!({
         "message_id": 211,
         "date": 1700000008,

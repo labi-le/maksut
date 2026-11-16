@@ -200,7 +200,7 @@ fn followup_questions_and_requests_reply() {
 
 #[test]
 fn followup_reactions_and_plain_remarks_do_not_pay_for_a_model() {
-    for reaction in ["ахаха", "спасибо", "ну да", "👍"] {
+    for reaction in ["ахаха", "спасибо", "ну да", "👍", "пизда", "пиздец", "бля", "ебать"] {
         assert_eq!(
             decide_rules(&followup(reaction)),
             Decision::Silent,
