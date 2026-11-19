@@ -1,6 +1,6 @@
 # Review loop: the evidence
 
-> **When to read this:** Read before your FIRST edit to production code (`src/`, `tools/`, `compose.yaml`, `Dockerfile`), to a contract (an env var, a SQLite table or column, a function-tool schema or visibility, the `omp_worker.py` JSON wire format, a queue file shape), or to a document agents act on (`AGENTS.md`, `README.md`, `docs/guides/*`, `docs/adr/*`). `AGENTS.md` carries the rules; this file carries why each one exists and what it cost to learn in this repository.
+> **When to read this:** Read before your FIRST edit to production code (`src/`, `tools/`, `compose.yaml`, `Dockerfile`), to a contract (an env var, a SQLite table or column, a function-tool schema or visibility, the `omp_worker.py` JSON wire format, a queue file shape), or to a document agents act on (`AGENTS.md`, `README.md`, `CHANGELOG.md`, `docs/guides/*`, `docs/adr/*`). `AGENTS.md` carries the rules; this file carries why each one exists and what it cost to learn in this repository.
 
 ## Workflow: mandatory, not advisory
 
@@ -13,6 +13,8 @@ Every change to production code, to a contract, or to a document agents act on M
 The loop terminates on two conditions, both required: a full round returns **zero** open findings, and **every numbered point is either implemented or struck by explicit agreement**, the strike recorded in the list. Not "the happy path works". Not "tests pass".
 
 **Proportionality.** The gate is risk, not diff size. A low-risk change (docs-only, config-only) takes ONE pass, and that pass is the ARCHITECTURE one: a document or a key that points at the wrong seam sends the next agent there, and neither has a hot path. Never leave which pass survives to the agent's guess. Documents agents act on are IN scope precisely because they fail this way: `README.md` once carried half the architectural rationale alongside operator runbooks while `AGENTS.md` held a single bullet, so agents read neither the right file nor the current contract. The termination conditions NEVER relax: a one-line change with an open finding is not done either.
+
+**The changelog entry ships with the change.** When [`AGENTS.md`](../../AGENTS.md#changelog) requires an entry for a pull request, it lands in that same PR under `## [Unreleased]` in [`CHANGELOG.md`](../../CHANGELOG.md); a missing entry is a finding in the architecture pass, not a release chore left for the owner.
 
 **A finding may be REFUTED, not only fixed, and the loop must allow it.** A round is clean when every finding is either fixed or disproved with evidence, and a wrong finding implemented is a regression the process invited. Verify a finding against the code before implementing it; say so with evidence when it is wrong. Examples already settled in this tree:
 

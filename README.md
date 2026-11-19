@@ -2,6 +2,8 @@
 
 Telegram-бот на Rust (`maksut`) для скачивания медиа по ссылкам YouTube, Pinterest, X/Twitter, Instagram и TikTok, свободного общения в чате и самоулучшения через изолированный пайплайн.
 
+Что изменилось в поведении бота — в [`CHANGELOG.md`](./CHANGELOG.md).
+
 Архитектура, ограничения и детали реализации вынесены в [`AGENTS.md`](./AGENTS.md) и тематические гайды в [`docs/guides/`](./docs/guides/):
 
 - [`docs/guides/layout.md`](./docs/guides/layout.md): карта модулей `src/` и Python-сервисов `tools/`
