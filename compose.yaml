@@ -11,6 +11,11 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Mini App listener. The host reverse proxy terminates TLS and forwards to
+    # this loopback port; nothing else on the host reaches the container. The
+    # port stays idle until `[web] enabled = true` in /data/config.toml.
+    ports:
+      - "127.0.0.1:8090:8090"
     # Read the token and owner from the file, not from the caller's shell:
     # an exported BOT_TOKEN would otherwise shadow .env and crash-loop the bot.
     env_file:

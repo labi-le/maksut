@@ -212,6 +212,9 @@ pub(crate) async fn handle_message(
         if crate::self_improve::handle_improve(&bot, &message, &cfg, typed).await {
             return Ok(());
         }
+        if crate::web::handle_settings_command(&bot, &message, &cfg).await {
+            return Ok(());
+        }
         if let Some(command) = maksut_command(typed, &cfg.bot_username) {
             handle_command(&bot, &message, &cfg, command).await;
         }
