@@ -40,7 +40,7 @@ These hold everywhere. A change that needs to break one of them needs a differen
 
 ## Workflow: mandatory, not advisory
 
-Every change to production code (`src/`, `tools/`, `compose.yaml`, `Dockerfile`), to a contract (an env var, a SQLite table, a tool schema/visibility, the `omp_worker.py` JSON wire format, a queue file shape), or to a document agents act on (`AGENTS.md`, `README.md`, `docs/guides/*`, `docs/adr/*`) goes through:
+Every change to production code (`src/`, `tools/`, `compose.yaml`, `Dockerfile`), to a contract (an env var, a SQLite table, a tool schema/visibility, the `omp_worker.py` JSON wire format, a queue file shape), or to a document agents act on (`AGENTS.md`, `README.md`, `CHANGELOG.md`, `docs/guides/*`, `docs/adr/*`) goes through:
 
 > **implement → review (performance + architecture, as SEPARATE passes) → fix → repeat**
 
@@ -52,6 +52,7 @@ Every change to production code (`src/`, `tools/`, `compose.yaml`, `Dockerfile`)
 - **Proportionality: the gate is risk, not diff size.** A docs-only or config-only change takes ONE pass, and that pass is the ARCHITECTURE one. The termination conditions never relax: a one-line change with an open finding is not done either.
 - **Resource bounds and allocations are binding constraints.** Every network read, subprocess pipe, and DOM parse must have an explicit byte/element/time bound; an avoidable clone or lock held across `.await` is a blocking finding.
 - **Comments and docs are first-class review targets.** A review that approves the code and ignores the comments or guides its change falsified has not finished.
+- **A pull request that changes what a chat participant sees or can now do adds a `CHANGELOG.md` entry under `## [Unreleased]`.** One entry per user-visible change; a config key, env var, or deploy change needs one only when it changes that outcome. Docs-only, test-only, CI-only, and dependabot bump diffs need none. Format and attribution are in [Changelog](#changelog).
 - **Dependabot pull requests are exempt from this loop.** `.github/workflows/automerge-dependabot.yml` squash-merges them when the diff touches only `Cargo.toml`/`Cargo.lock` and `cargo check --all-targets` passes on the pull request head. A semantic major bump that fails to compile stays open for a human.
 
 Why each of these rules exists, and what shipping without it cost, is in [`docs/guides/workflow.md`](./docs/guides/workflow.md). Read it before your first edit.
@@ -72,6 +73,26 @@ Why each of these rules exists, and what shipping without it cost, is in [`docs/
   - Subagents do not run full builds mid-flight while sibling edits are in progress; run the smallest targeted test (`cargo test <filter>`), then run the full gate once when the tree is quiet.
   - Report evidence: command plus observed output.
   - Commits only when asked (`COMPONENT: imperative description`, single `-m`, `<= 70` chars, no body).
+
+## Changelog
+
+`CHANGELOG.md` is the public record of what changed: the file a chat participant opens to see what the bot can now do. It is written in the same format as `packages/*/CHANGELOG.md` in `oh-my-pi`.
+
+**Format** — entries live under `## [Unreleased]`, in this section order:
+
+- `### Breaking Changes`
+- `### Added`
+- `### Changed`
+- `### Fixed`
+- `### Removed`
+
+**Rules:**
+
+- New entries always go under `## [Unreleased]`; a section is created when its first entry lands.
+- One line per entry, user-facing: lead with what a chat participant sees or can now do. Root-cause narration belongs in the issue comment and the commit.
+- Never edit a released section; those are immutable. Nothing is recorded as released yet, so `[Unreleased]` is the only section; when a version is cut, its entries move under `## [<version>] - <YYYY-MM-DD>` (the deployed sha stands in when there is no version) in that same change.
+- Attribution: an internal issue fix cites the issue — `Fixed foo ([#123](https://github.com/labi-le/maksut/issues/123))`; an external contribution cites the pull request and the author — `Added foo ([#456](https://github.com/labi-le/maksut/pull/456) by [@user](https://github.com/user))`.
+- Reviews do not flag section order or heading formatting; normalizing headings is the release change's job.
 
 ## Guides: read on demand
 
