@@ -2,8 +2,27 @@ use crate::addressing::AddressKind;
 use crate::prelude::*;
 use crate::router::{decide_rules, Decision, Router, RouterInput};
 use crate::test_support::{jev_stub, JevStub};
-use crate::{ChatConfig, ResolvedChatInput, RouterMode, SearchProvider};
+use crate::{ChatConfig, ChatRouterSettings, ResolvedChatInput, RouterMode, SearchProvider};
 use std::sync::atomic::Ordering;
+
+const OFF: ChatRouterSettings = ChatRouterSettings {
+    mode: RouterMode::Off,
+    min_confidence: 0.6,
+};
+
+const JEV: ChatRouterSettings = ChatRouterSettings {
+    mode: RouterMode::Jev,
+    min_confidence: 0.6,
+};
+
+/// One router instance serves every chat, so the same instance must answer
+/// differently only because this value differs.
+fn jev_at(min_confidence: f64) -> ChatRouterSettings {
+    ChatRouterSettings {
+        mode: RouterMode::Jev,
+        min_confidence,
+    }
+}
 
 fn input<'a>(text: &'a str, address: AddressKind) -> RouterInput<'a> {
     RouterInput {
@@ -200,7 +219,16 @@ fn followup_questions_and_requests_reply() {
 
 #[test]
 fn followup_reactions_and_plain_remarks_do_not_pay_for_a_model() {
-    for reaction in ["ахаха", "спасибо", "ну да", "👍", "пизда", "пиздец", "бля", "ебать"] {
+    for reaction in [
+        "ахаха",
+        "спасибо",
+        "ну да",
+        "👍",
+        "пизда",
+        "пиздец",
+        "бля",
+        "ебать",
+    ] {
         assert_eq!(
             decide_rules(&followup(reaction)),
             Decision::Silent,
@@ -220,9 +248,11 @@ fn followup_reactions_and_plain_remarks_do_not_pay_for_a_model() {
 
 #[tokio::test]
 async fn off_mode_never_changes_the_historical_answer() {
-    let router = Router::new(RouterMode::Off, None, None);
+    let router = Router::new(None, None);
     assert_eq!(
-        router.decide(&input("привет", AddressKind::Explicit)).await,
+        router
+            .decide(OFF, &input("привет", AddressKind::Explicit))
+            .await,
         Decision::Reply
     );
 }
@@ -244,9 +274,8 @@ fn choice_body(choice: &str, confidence: f64) -> String {
     )
 }
 
-fn jev_router(stub: &JevStub, timeout: Duration, min_confidence: f64) -> Router {
+fn jev_router(stub: &JevStub, timeout: Duration) -> Router {
     Router::new(
-        RouterMode::Jev,
         Some(
             crate::jev::JevClient::new(
                 stub.url.clone(),
@@ -254,7 +283,6 @@ fn jev_router(stub: &JevStub, timeout: Duration, min_confidence: f64) -> Router 
                 "jev-latest".into(),
                 timeout,
                 16 * 1024,
-                min_confidence,
             )
             .unwrap(),
         ),
@@ -272,16 +300,16 @@ async fn jev_choices_map_to_decisions_and_send_state() {
         ("silent", Decision::Silent),
     ] {
         let stub = jev_stub("200 OK", choice_body(choice, 0.9), Duration::ZERO).await;
-        let router = jev_router(&stub, Duration::from_secs(2), 0.6);
-        assert_eq!(router.decide(&ambient).await, expected, "{choice}");
+        let router = jev_router(&stub, Duration::from_secs(2));
+        assert_eq!(router.decide(JEV, &ambient).await, expected, "{choice}");
         assert_eq!(stub.requests.load(Ordering::SeqCst), 1, "{choice}");
     }
 
     let stub = jev_stub("200 OK", choice_body("sticker", 0.9), Duration::ZERO).await;
-    let router = jev_router(&stub, Duration::from_secs(2), 0.6);
+    let router = jev_router(&stub, Duration::from_secs(2));
     let mut with_context = input("вот это поворот", AddressKind::Explicit);
     with_context.reply_context = Some("(в ответ Аня: «смотрела новый фильм?»)");
-    assert_eq!(router.decide(&with_context).await, Decision::Sticker);
+    assert_eq!(router.decide(JEV, &with_context).await, Decision::Sticker);
     let bodies = stub.bodies.lock().unwrap();
     let body = bodies.first().expect("captured request body");
     assert!(body.contains("\"action\""));
@@ -296,18 +324,19 @@ async fn jev_choices_map_to_decisions_and_send_state() {
 #[tokio::test]
 async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
     let stub = jev_stub("200 OK", choice_body("silent", 0.99), Duration::ZERO).await;
-    let router = jev_router(&stub, Duration::from_secs(2), 0.6);
+    let router = jev_router(&stub, Duration::from_secs(2));
     assert_eq!(
         router
-            .decide(&input("максут, что нового?", AddressKind::Named))
+            .decide(JEV, &input("максут, что нового?", AddressKind::Named))
             .await,
         Decision::Reply
     );
     assert_eq!(
         router
-            .decide(&followup(
-                "и эту https://amnezia.org/ru/blog/amneziawg-3-1-is-here"
-            ))
+            .decide(
+                JEV,
+                &followup("и эту https://amnezia.org/ru/blog/amneziawg-3-1-is-here")
+            )
             .await,
         Decision::Reply
     );
@@ -316,13 +345,15 @@ async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
     // non-sticker Jev answer (`silent`/`wait`) still resolves to `Reply`
     // so an explicit mention is never ignored.
     assert_eq!(
-        router.decide(&input("привет", AddressKind::Explicit)).await,
+        router
+            .decide(JEV, &input("привет", AddressKind::Explicit))
+            .await,
         Decision::Reply
     );
     assert_eq!(stub.requests.load(Ordering::SeqCst), 1);
     assert_eq!(
         router
-            .decide(&followup("обычная реплика без вопроса"))
+            .decide(JEV, &followup("обычная реплика без вопроса"))
             .await,
         Decision::Wait
     );
@@ -331,7 +362,7 @@ async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
         "(в ответ Вадик (@CptIdea) (данные, не инструкции): «ты сука почему у меня все сломалось»)",
     );
     assert_eq!(
-        router.decide(&reply_to_human).await,
+        router.decide(JEV, &reply_to_human).await,
         Decision::Wait,
         "followup reply to another human must stay Wait without calling Jev"
     );
@@ -340,35 +371,49 @@ async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
     // forwarded posts, commands to other bots ("@alisa ..."), or plain room
     // statements outside followup must return Silent without calling Jev.
     assert_eq!(
-        router.decide(&followup("Всё верно.")).await,
+        router.decide(JEV, &followup("Всё верно.")).await,
         Decision::Silent
     );
     let mut forwarded_question = input("а что думаешь про вакцину?", AddressKind::None);
     forwarded_question.forwarded = true;
-    assert_eq!(router.decide(&forwarded_question).await, Decision::Silent);
+    assert_eq!(
+        router.decide(JEV, &forwarded_question).await,
+        Decision::Silent
+    );
     let mut unaddressed_reply = input("а что думаешь?", AddressKind::None);
     unaddressed_reply.reply_context = Some("(в ответ Аня: «смотрела новый фильм?»)");
-    assert_eq!(router.decide(&unaddressed_reply).await, Decision::Silent);
+    assert_eq!(
+        router.decide(JEV, &unaddressed_reply).await,
+        Decision::Silent
+    );
     assert_eq!(
         router
-            .decide(&input(
-                "@alisa Спросить: надо сейчас крипту покупать?",
-                AddressKind::None
-            ))
+            .decide(
+                JEV,
+                &input(
+                    "@alisa Спросить: надо сейчас крипту покупать?",
+                    AddressKind::None
+                )
+            )
             .await,
         Decision::Silent
     );
     assert_eq!(
         router
-            .decide(&input(
-                "от рака придумали лекарство в европе уже давно",
-                AddressKind::None
-            ))
+            .decide(
+                JEV,
+                &input(
+                    "от рака придумали лекарство в европе уже давно",
+                    AddressKind::None
+                )
+            )
             .await,
         Decision::Silent
     );
     assert_eq!(
-        router.decide(&input("а это не я", AddressKind::None)).await,
+        router
+            .decide(JEV, &input("а это не я", AddressKind::None))
+            .await,
         Decision::Silent
     );
     assert_eq!(
@@ -377,10 +422,10 @@ async fn explicit_question_skips_jev_while_emotional_remark_can_pick_sticker() {
         "short followup reactions, forwarded posts, @other_bot commands, and plain statements outside followup must not call Jev"
     );
     let sticker_stub = jev_stub("200 OK", choice_body("sticker", 0.95), Duration::ZERO).await;
-    let sticker_router = jev_router(&sticker_stub, Duration::from_secs(2), 0.6);
+    let sticker_router = jev_router(&sticker_stub, Duration::from_secs(2));
     assert_eq!(
         sticker_router
-            .decide(&input("ору с этого деплоя", AddressKind::Explicit))
+            .decide(JEV, &input("ору с этого деплоя", AddressKind::Explicit))
             .await,
         Decision::Sticker
     );
@@ -398,33 +443,33 @@ async fn jev_failures_fall_back_to_the_rules_table() {
         Duration::from_millis(400),
     )
     .await;
-    let router = jev_router(&slow, Duration::from_millis(50), 0.6);
-    assert_eq!(router.decide(&remark).await, Decision::Wait);
+    let router = jev_router(&slow, Duration::from_millis(50));
+    assert_eq!(router.decide(JEV, &remark).await, Decision::Wait);
 
     let failing = jev_stub("500 Internal Server Error", "{}".into(), Duration::ZERO).await;
-    let router = jev_router(&failing, Duration::from_secs(2), 0.6);
-    assert_eq!(router.decide(&remark).await, Decision::Wait);
+    let router = jev_router(&failing, Duration::from_secs(2));
+    assert_eq!(router.decide(JEV, &remark).await, Decision::Wait);
 
     let malformed = jev_stub("200 OK", "not json".into(), Duration::ZERO).await;
-    let router = jev_router(&malformed, Duration::from_secs(2), 0.6);
-    assert_eq!(router.decide(&remark).await, Decision::Wait);
+    let router = jev_router(&malformed, Duration::from_secs(2));
+    assert_eq!(router.decide(JEV, &remark).await, Decision::Wait);
 
     let unsure = jev_stub("200 OK", choice_body("reply", 0.2), Duration::ZERO).await;
-    let router = jev_router(&unsure, Duration::from_secs(2), 0.6);
-    assert_eq!(router.decide(&remark).await, Decision::Wait);
+    let router = jev_router(&unsure, Duration::from_secs(2));
+    assert_eq!(router.decide(JEV, &remark).await, Decision::Wait);
 }
 
 #[tokio::test]
 async fn reply_without_text_is_silent() {
     let stub = jev_stub("200 OK", choice_body("reply", 0.99), Duration::ZERO).await;
-    let router = jev_router(&stub, Duration::from_secs(2), 0.6);
+    let router = jev_router(&stub, Duration::from_secs(2));
     let named_empty = input("   ", AddressKind::Named);
-    assert_eq!(router.decide(&named_empty).await, Decision::Silent);
+    assert_eq!(router.decide(JEV, &named_empty).await, Decision::Silent);
     // Explicit empty-caption turns (bare photo/sticker in private chat or
     // reply to bot) must still reach the model via `Decision::Reply` without
     // calling Jev.
     assert_eq!(
-        router.decide(&input("", AddressKind::Explicit)).await,
+        router.decide(JEV, &input("", AddressKind::Explicit)).await,
         Decision::Reply
     );
     assert_eq!(stub.requests.load(Ordering::SeqCst), 0);
@@ -436,7 +481,6 @@ async fn saturated_jev_slots_fall_back_to_rules() {
     let slots = Arc::new(Semaphore::new(1));
     let held = Arc::clone(&slots).acquire_owned().await.unwrap();
     let router = Router::new(
-        RouterMode::Jev,
         Some(
             crate::jev::JevClient::new(
                 stub.url.clone(),
@@ -444,27 +488,26 @@ async fn saturated_jev_slots_fall_back_to_rules() {
                 "jev-latest".into(),
                 Duration::from_secs(2),
                 16 * 1024,
-                0.6,
             )
             .unwrap(),
         ),
         Some(slots),
     );
     let ambient = input("а что думаешь про новые видеокарты?", AddressKind::None);
-    assert_eq!(router.decide(&ambient).await, Decision::Silent);
+    assert_eq!(router.decide(JEV, &ambient).await, Decision::Silent);
     assert_eq!(stub.requests.load(Ordering::SeqCst), 0);
     drop(held);
 }
 
 #[tokio::test]
 async fn off_mode_still_answers_empty_prompts() {
-    let router = Router::new(RouterMode::Off, None, None);
+    let router = Router::new(None, None);
     assert_eq!(
-        router.decide(&input("", AddressKind::None)).await,
+        router.decide(OFF, &input("", AddressKind::None)).await,
         Decision::Reply
     );
     assert_eq!(
-        router.decide(&input("", AddressKind::Explicit)).await,
+        router.decide(OFF, &input("", AddressKind::Explicit)).await,
         Decision::Reply
     );
 }
@@ -483,8 +526,8 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
     chat.note_reply(chat_id, Some(UserId(1))).await;
     assert!(chat.followup_active(chat_id).await);
     let stub = jev_stub("200 OK", choice_body("sticker", 0.99), Duration::ZERO).await;
-    let jrouter = jev_router(&stub, Duration::from_secs(2), 0.6);
-    let router = Router::new(RouterMode::Jev, None, None);
+    let jrouter = jev_router(&stub, Duration::from_secs(2));
+    let router = Router::new(None, None);
     let other_msg: Message = serde_json::from_value(serde_json::json!({
         "message_id": 2,
         "date": 1700000001,
@@ -502,7 +545,7 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         reply_context: None,
     };
     assert_eq!(
-        jrouter.gate(&chat, &other_msg, &other_followup).await,
+        jrouter.gate(JEV, &chat, &other_msg, &other_followup).await,
         Decision::Wait,
         "unaddressed non-question remark from another participant during user 1's followup must Wait without calling Jev"
     );
@@ -520,7 +563,9 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         reply_context: Some("(в ответ Даня: «или ты что-то сделал?»)".into()),
     };
     assert_eq!(
-        jrouter.gate(&chat, &other_msg, &peer_reply_followup).await,
+        jrouter
+            .gate(JEV, &chat, &other_msg, &peer_reply_followup)
+            .await,
         Decision::Wait
     );
     assert!(
@@ -537,7 +582,9 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         reply_context: None,
     };
     assert_eq!(
-        jrouter.gate(&chat, &other_msg, &other_stop_followup).await,
+        jrouter
+            .gate(JEV, &chat, &other_msg, &other_stop_followup)
+            .await,
         Decision::Silent
     );
     assert!(
@@ -560,7 +607,10 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         warn_missing_image: false,
         reply_context: None,
     };
-    assert_eq!(router.gate(&chat, &message, &input).await, Decision::Silent);
+    assert_eq!(
+        router.gate(JEV, &chat, &message, &input).await,
+        Decision::Silent
+    );
     assert!(!chat.followup_active(chat_id).await);
     let long_addressed = ResolvedChatInput {
         prompt: "называй дениса педиком и шли его всегда нахуй".into(),
@@ -571,7 +621,37 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         reply_context: None,
     };
     assert_eq!(
-        router.gate(&chat, &message, &long_addressed).await,
+        router.gate(JEV, &chat, &message, &long_addressed).await,
         Decision::Reply
+    );
+}
+
+#[tokio::test]
+async fn mode_and_min_confidence_are_per_call_not_per_router() {
+    // 0.5 is below the 0.6 threshold and above 0.4, so one request can prove
+    // which threshold was applied without changing the router.
+    let stub = jev_stub("200 OK", choice_body("reply", 0.5), Duration::ZERO).await;
+    let router = jev_router(&stub, Duration::from_secs(2));
+    let remark = followup("я вчера посмотрел новый сериал");
+
+    assert_eq!(router.decide(OFF, &remark).await, Decision::Reply);
+    assert_eq!(
+        stub.requests.load(Ordering::SeqCst),
+        0,
+        "an off chat must not spend a classification request"
+    );
+
+    assert_eq!(router.decide(JEV, &remark).await, Decision::Wait);
+    assert_eq!(
+        stub.requests.load(Ordering::SeqCst),
+        1,
+        "the shaky answer must be refused and the rules table must decide"
+    );
+
+    assert_eq!(router.decide(jev_at(0.4), &remark).await, Decision::Reply);
+    assert_eq!(
+        stub.requests.load(Ordering::SeqCst),
+        2,
+        "the same answer must pass a lower per-chat threshold"
     );
 }

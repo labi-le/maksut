@@ -34,7 +34,6 @@ pub(crate) struct JevClient {
     api_key: String,
     model: String,
     max_response_bytes: usize,
-    min_confidence: f64,
 }
 
 impl JevClient {
@@ -44,7 +43,6 @@ impl JevClient {
         model: String,
         timeout: Duration,
         max_response_bytes: usize,
-        min_confidence: f64,
     ) -> Result<Self, String> {
         // The endpoint is fixed by configuration; a redirect must never turn
         // it into a request to an unexpected host carrying the API key.
@@ -64,14 +62,19 @@ impl JevClient {
             api_key,
             model,
             max_response_bytes,
-            min_confidence,
         })
     }
 
     /// Asks one question and returns the chosen label once it clears
     /// `min_confidence`. The body shape and the confidence ladder are shared by
-    /// every caller so the router and the reasoning judge cannot drift.
-    pub(crate) async fn ask(&self, state: &str, question: ChoiceQuestion<'_>) -> Option<String> {
+    /// every caller so the router and the reasoning judge cannot drift; the
+    /// threshold is per call because the router applies it per chat.
+    pub(crate) async fn ask(
+        &self,
+        state: &str,
+        question: ChoiceQuestion<'_>,
+        min_confidence: f64,
+    ) -> Option<String> {
         let started = time::Instant::now();
         let criteria: serde_json::Map<String, Value> = question
             .criteria
@@ -157,11 +160,11 @@ impl JevClient {
             .and_then(|probabilities| probabilities.get(choice))
             .and_then(Value::as_f64)
             .or_else(|| answer.get("confidence").and_then(Value::as_f64))?;
-        if !confidence.is_finite() || confidence < self.min_confidence {
+        if !confidence.is_finite() || confidence < min_confidence {
             tracing::debug!(
                 question = question.name,
                 confidence,
-                min = self.min_confidence,
+                min = min_confidence,
                 elapsed_ms = elapsed_ms(started),
                 "jev confidence too low"
             );
@@ -178,8 +181,8 @@ impl JevClient {
     }
 
     /// The router's `reply` / `sticker` / `wait` / `silent` decision.
-    pub(crate) async fn decide(&self, state: &str) -> Option<Decision> {
-        let choice = self.ask(state, ACTION).await?;
+    pub(crate) async fn decide(&self, state: &str, min_confidence: f64) -> Option<Decision> {
+        let choice = self.ask(state, ACTION, min_confidence).await?;
         let decision = match choice.as_str() {
             "reply" => Some(Decision::Reply),
             "sticker" => Some(Decision::Sticker),

@@ -326,6 +326,7 @@ pub(crate) async fn resolve_chat_input(
     text: &str,
     cfg: &crate::Settings,
     reply_ignored: bool,
+    router_mode: RouterMode,
 ) -> Option<ResolvedChatInput> {
     let chat = cfg.chat.as_ref()?;
     let own_text = message.text().or_else(|| message.caption()).unwrap_or("");
@@ -353,7 +354,7 @@ pub(crate) async fn resolve_chat_input(
     });
     // The classifier repeats the name-form scan `resolve_addressed_chat` does
     // next; mode `off` never reads the result, so do not pay for it.
-    let address = if cfg.router.mode() == RouterMode::Off {
+    let address = if router_mode == RouterMode::Off {
         crate::addressing::AddressKind::None
     } else {
         crate::addressing::address_kind(message, text, &cfg.bot_username)
@@ -377,7 +378,7 @@ pub(crate) async fn resolve_chat_input(
                 };
             if active {
                 (trimmed.to_owned(), true)
-            } else if cfg.router.mode() != RouterMode::Off && !trimmed.is_empty() {
+            } else if router_mode != RouterMode::Off && !trimmed.is_empty() {
                 // A router mode may wake the bot on an unaddressed message;
                 // the decision happens before any model or media work.
                 (trimmed.to_owned(), false)

@@ -512,3 +512,79 @@ async fn settings_command_answers_the_owner_and_ignores_everyone_else() {
     assert!(!crate::web::handle_settings_command(&bot, &unrelated, &fixture.cfg).await);
     assert!(fixture.api.snapshot().await.is_empty());
 }
+
+#[tokio::test]
+async fn chats_crud_roundtrip_and_reset() {
+    let (_dir, state) = fixture().await;
+    let auth = auth_value(1);
+    let chat_id = -910007;
+
+    let empty = call(
+        state.clone(),
+        request("GET", "/api/chats", Some(&auth), None),
+    )
+    .await;
+    assert_eq!(empty.status(), StatusCode::OK);
+    let body = json(empty).await;
+    assert_eq!(body["chats"], serde_json::json!([]));
+    assert_eq!(body["defaults"]["router_mode"], "off");
+
+    let put = call(
+        state.clone(),
+        request(
+            "PUT",
+            &format!("/api/chats/{chat_id}"),
+            Some(&auth),
+            Some(r#"{"router_mode":"off","router_min_confidence":0.35}"#),
+        ),
+    )
+    .await;
+    assert_eq!(put.status(), StatusCode::OK);
+    let item = json(put).await;
+    assert_eq!(item["chat_id"], serde_json::json!(chat_id));
+    assert_eq!(item["router_mode"], "off");
+    assert_eq!(item["router_min_confidence"], serde_json::json!(0.35));
+
+    let list = call(
+        state.clone(),
+        request("GET", "/api/chats", Some(&auth), None),
+    )
+    .await;
+    let body = json(list).await;
+    assert_eq!(
+        body["chats"],
+        serde_json::json!([{
+            "chat_id": chat_id,
+            "router_mode": "off",
+            "router_min_confidence": 0.35
+        }])
+    );
+
+    let bad = call(
+        state.clone(),
+        request(
+            "PUT",
+            &format!("/api/chats/{chat_id}"),
+            Some(&auth),
+            Some(r#"{"router_mode":"wat"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+    let unauthorized = call(state.clone(), request("GET", "/api/chats", None, None)).await;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let deleted = call(
+        state.clone(),
+        request(
+            "DELETE",
+            &format!("/api/chats/{chat_id}"),
+            Some(&auth),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::OK);
+    assert_eq!(json(deleted).await["deleted"], serde_json::json!(true));
+}

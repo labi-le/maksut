@@ -544,6 +544,13 @@ pub(crate) async fn run_tool_call(
                 crate::chat_embeddings::reindex(ctx.chat, ctx.pool, passes).await
             }
         }
+        Some(ToolKind::ChatSettings) => {
+            if !ctx.owner {
+                "chat_settings доступен только владельцу бота".to_string()
+            } else {
+                crate::chat_settings::run_tool(&args, ctx).await
+            }
+        }
         Some(ToolKind::ResearchStatus) => {
             if state.research_status_calls >= config().chat.research_status_calls_per_reply {
                 "лимит статусов ресерча на ответ".to_string()

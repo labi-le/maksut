@@ -153,7 +153,6 @@ impl ReasoningJudge {
             policy.model.clone(),
             Duration::from_millis(policy.timeout_ms),
             policy.max_response_bytes,
-            policy.min_confidence,
         ) {
             Ok(client) => (
                 Some(client),
@@ -209,12 +208,13 @@ impl ReasoningJudge {
         if policy.max <= Effort::Low {
             return Some(policy.resolve(None));
         }
+        let min_confidence = config().llm.reasoning.min_confidence;
         let classified = match &self.slots {
             Some(slots) => match slots.clone().try_acquire_owned() {
-                Ok(_permit) => classify(classifier, prompt).await,
+                Ok(_permit) => classify(classifier, prompt, min_confidence).await,
                 Err(_) => None,
             },
-            None => classify(classifier, prompt).await,
+            None => classify(classifier, prompt, min_confidence).await,
         };
         Some(policy.resolve(classified))
     }
@@ -257,7 +257,11 @@ pub(crate) fn judge_state(prompt: &str, reply_context: Option<&str>) -> String {
 
 /// One bounded classification request against the configured tiny model.
 /// `prompt` is bounded by `clamp_state` before it reaches this call.
-pub(crate) async fn classify(classifier: &JevClient, prompt: &str) -> Option<Effort> {
+pub(crate) async fn classify(
+    classifier: &JevClient,
+    prompt: &str,
+    min_confidence: f64,
+) -> Option<Effort> {
     classifier
         .ask(
             prompt,
@@ -266,6 +270,7 @@ pub(crate) async fn classify(classifier: &JevClient, prompt: &str) -> Option<Eff
                 instructions: EFFORT_INSTRUCTIONS,
                 criteria: EFFORT_CRITERIA,
             },
+            min_confidence,
         )
         .await
         .and_then(|choice| match Effort::parse(&choice) {

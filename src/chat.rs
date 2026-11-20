@@ -11,10 +11,12 @@ pub(crate) async fn reply_with_chat(
     text: &str,
     reply_ignored: bool,
 ) {
-    let (Some(chat), Some(input)) = (
-        cfg.chat.as_ref(),
-        resolve_chat_input(message, text, cfg, reply_ignored).await,
-    ) else {
+    let Some(chat) = cfg.chat.as_ref() else {
+        return;
+    };
+    let router = crate::chat_settings::router_settings(&cfg.database, message.chat.id).await;
+    let Some(input) = resolve_chat_input(message, text, cfg, reply_ignored, router.mode).await
+    else {
         return;
     };
     let owner = sender.id == cfg.owner_id;
@@ -33,7 +35,7 @@ pub(crate) async fn reply_with_chat(
         tracing::debug!(reason = "group disabled", "chat skipped");
         return;
     }
-    let decision = cfg.router.gate(chat, message, &input).await;
+    let decision = cfg.router.gate(router, chat, message, &input).await;
     if !matches!(decision, Decision::Reply | Decision::Sticker) {
         return;
     }
@@ -108,6 +110,7 @@ pub(crate) async fn reply_with_chat(
         effort: turn_effort,
         followup: input.followup,
         sticker_mode: decision == Decision::Sticker,
+        router_mode: router.mode,
         reply_context: input.reply_context.as_deref(),
         bot: Some(bot),
     };
@@ -176,10 +179,7 @@ pub(crate) async fn chat_reply_with_proposal(
         .await
         .ok()
         .flatten();
-    let router_mode = match config().router.mode {
-        RouterMode::Off => "off",
-        RouterMode::Jev => "jev",
-    };
+    let router_mode = turn.router_mode.as_str();
     let mut system_prompt = format!(
         "{}\n\n{}\nАктивный режим роутера (router.mode в рантайме): {router_mode}.",
         chat.system_prompt,

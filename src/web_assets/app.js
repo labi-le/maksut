@@ -14,8 +14,17 @@ const memoryEmpty = document.getElementById("memory-empty");
 const settingsEl = document.getElementById("settings");
 const panelMemory = document.getElementById("panel-memory");
 const panelConfig = document.getElementById("panel-config");
+const panelChats = document.getElementById("panel-chats");
 const tabMemory = document.getElementById("tab-memory");
 const tabConfig = document.getElementById("tab-config");
+const tabChats = document.getElementById("tab-chats");
+const chatsEl = document.getElementById("chats");
+const chatsEmpty = document.getElementById("chats-empty");
+const chatsDefaults = document.getElementById("chats-defaults");
+const chatIdInput = document.getElementById("chat-id");
+const chatNewMode = document.getElementById("chat-new-mode");
+const chatNewConfidence = document.getElementById("chat-new-confidence");
+const chatNewSave = document.getElementById("chat-new-save");
 
 const user = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 if (user && user.first_name) {
@@ -232,25 +241,139 @@ async function loadConfig() {
   }
 }
 
-function selectTab(memory) {
-  tabMemory.setAttribute("aria-selected", memory ? "true" : "false");
-  tabConfig.setAttribute("aria-selected", memory ? "false" : "true");
-  panelMemory.hidden = !memory;
-  panelConfig.hidden = memory;
-  if (memory) {
-    loadMemory();
-  } else {
-    loadConfig();
+function chatFields(mode, confidence) {
+  const select = document.createElement("select");
+  for (const value of ["off", "jev"]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = "роутер " + value;
+    select.append(option);
+  }
+  select.value = mode === "jev" ? "jev" : "off";
+
+  const input = document.createElement("input");
+  input.type = "number";
+  input.step = "0.05";
+  input.min = "0";
+  input.max = "1";
+  input.value = String(confidence);
+  return { select, input };
+}
+
+function saveChat(chatId, mode, confidence) {
+  return api("/api/chats/" + encodeURIComponent(chatId), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ router_mode: mode, router_min_confidence: Number(confidence) })
+  });
+}
+
+function chatRow(row) {
+  const item = document.createElement("li");
+  const title = document.createElement("h2");
+  title.textContent = "чат " + row.chat_id;
+  item.append(title);
+  const fields = chatFields(row.router_mode, row.router_min_confidence);
+  item.append(fields.select, fields.input);
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const save = button("Сохранить", "", async () => {
+    save.disabled = true;
+    try {
+      await saveChat(row.chat_id, fields.select.value, fields.input.value);
+      await loadChats();
+      setStatus("Сохранено: чат " + row.chat_id, false);
+    } catch (error) {
+      setStatus(error.message, true);
+    } finally {
+      save.disabled = false;
+    }
+  });
+  const reset = button("Сбросить", "secondary", async () => {
+    if (!window.confirm("Вернуть чат " + row.chat_id + " к глобальному [router]?")) {
+      return;
+    }
+    reset.disabled = true;
+    try {
+      await api("/api/chats/" + encodeURIComponent(row.chat_id), { method: "DELETE" });
+      item.remove();
+      chatsEmpty.hidden = chatsEl.children.length > 0;
+      setStatus("Сброшено: чат " + row.chat_id, false);
+    } catch (error) {
+      reset.disabled = false;
+      setStatus(error.message, true);
+    }
+  });
+  actions.append(save, reset);
+  item.append(actions);
+  return item;
+}
+
+async function loadChats() {
+  setStatus("Загружаю чаты…", false);
+  try {
+    const data = await api("/api/chats", { method: "GET" });
+    chatsEl.replaceChildren();
+    for (const row of data.chats) {
+      chatsEl.append(chatRow(row));
+    }
+    chatsEmpty.hidden = data.chats.length > 0;
+    chatsDefaults.textContent =
+      "Глобальный [router]: " +
+      data.defaults.router_mode +
+      ", порог " +
+      data.defaults.router_min_confidence;
+    setStatus("", false);
+  } catch (error) {
+    setStatus(error.message, true);
   }
 }
 
-tabMemory.addEventListener("click", () => selectTab(true));
-tabConfig.addEventListener("click", () => selectTab(false));
+chatNewSave.addEventListener("click", async () => {
+  const chatId = Number(chatIdInput.value.trim());
+  if (!Number.isInteger(chatId) || chatId === 0) {
+    setStatus("Нужен числовой ID чата", true);
+    return;
+  }
+  chatNewSave.disabled = true;
+  try {
+    await saveChat(chatId, chatNewMode.value, chatNewConfidence.value);
+    chatIdInput.value = "";
+    await loadChats();
+    setStatus("Сохранено: чат " + chatId, false);
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    chatNewSave.disabled = false;
+  }
+});
+
+function selectTab(name) {
+  const tabs = [
+    ["memory", tabMemory, panelMemory, loadMemory],
+    ["config", tabConfig, panelConfig, loadConfig],
+    ["chats", tabChats, panelChats, loadChats]
+  ];
+  for (const [key, tab, panel, load] of tabs) {
+    tab.setAttribute("aria-selected", key === name ? "true" : "false");
+    panel.hidden = key !== name;
+    if (key === name) {
+      load();
+    }
+  }
+}
+
+tabMemory.addEventListener("click", () => selectTab("memory"));
+tabConfig.addEventListener("click", () => selectTab("config"));
+tabChats.addEventListener("click", () => selectTab("chats"));
 
 if (!initData) {
   setStatus("Откройте эту страницу через Telegram: без initData доступа нет.", true);
   tabMemory.disabled = true;
   tabConfig.disabled = true;
+  tabChats.disabled = true;
+  chatNewSave.disabled = true;
 } else {
-  selectTab(true);
+  selectTab("memory");
 }

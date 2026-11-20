@@ -161,6 +161,14 @@ impl RouterMode {
     pub(crate) fn names() -> &'static [&'static str] {
         &["off", "jev"]
     }
+
+    /// Wire and storage name. Round-trips through [`RouterMode::from_name`].
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Jev => "jev",
+        }
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for RouterMode {

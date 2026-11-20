@@ -1994,6 +1994,7 @@ async fn research_request_marks_the_message_with_eyes() {
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2067,6 +2068,7 @@ async fn plain_reply_does_not_react_to_the_message() {
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2134,6 +2136,7 @@ async fn web_search_marks_the_message_once_per_turn() {
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2224,6 +2227,7 @@ async fn read_url_marks_the_message_once_per_turn() {
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -2315,6 +2319,7 @@ async fn mixed_lookup_tools_mark_the_message_once_per_turn() {
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: Some(&bot),
     };
@@ -3133,6 +3138,7 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         effort: Some(Effort::High),
         followup: false,
         sticker_mode: true,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: None,
     };
@@ -3304,6 +3310,7 @@ async fn normal_turn_sticker_placeholder_picks_sticker_and_burst_dedup_detects_a
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: None,
     };
@@ -3540,6 +3547,7 @@ async fn final_tool_round_forces_tool_free_synthesis_instead_of_tools_error() {
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: None,
     };
@@ -3603,6 +3611,7 @@ async fn forced_synthesis_sends_none_and_never_retries_the_same_non_reasoning_ca
         effort: None,
         followup: false,
         sticker_mode: false,
+        router_mode: RouterMode::Off,
         reply_context: None,
         bot: None,
     };

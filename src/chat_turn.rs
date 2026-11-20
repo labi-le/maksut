@@ -17,6 +17,9 @@ pub(crate) struct ChatTurn<'a> {
     pub(crate) effort: Option<Effort>,
     pub(crate) followup: bool,
     pub(crate) sticker_mode: bool,
+    /// Effective router mode resolved for this message before the gate; the
+    /// prompt and the decision read one value, not two resolutions.
+    pub(crate) router_mode: RouterMode,
     pub(crate) reply_context: Option<&'a str>,
     pub(crate) bot: Option<&'a Bot>,
 }

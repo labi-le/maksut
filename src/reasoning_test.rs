@@ -16,14 +16,13 @@ fn effort_body(choice: &str, confidence: f64) -> String {
     )
 }
 
-fn classifier(stub: &JevStub, timeout: Duration, min_confidence: f64) -> JevClient {
+fn classifier(stub: &JevStub, timeout: Duration) -> JevClient {
     JevClient::new(
         stub.url.clone(),
         "test-key".into(),
         "jev-latest".into(),
         timeout,
         16 * 1024,
-        min_confidence,
     )
     .unwrap()
 }
@@ -189,9 +188,9 @@ fn default_above_max_is_rejected() {
 #[tokio::test]
 async fn classifier_reads_the_effort_answer_and_sends_the_ladder() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
-    let client = classifier(&stub, Duration::from_secs(2), 0.6);
+    let client = classifier(&stub, Duration::from_secs(2));
     assert_eq!(
-        classify(&client, "объясни, почему это падает").await,
+        classify(&client, "объясни, почему это падает", 0.6).await,
         Some(Effort::High)
     );
 
@@ -212,18 +211,18 @@ async fn classifier_reads_the_effort_answer_and_sends_the_ladder() {
 #[tokio::test]
 async fn classifier_rejects_unsure_and_unknown_answers() {
     let unsure = jev_stub("200 OK", effort_body("high", 0.2), Duration::ZERO).await;
-    let client = classifier(&unsure, Duration::from_secs(2), 0.6);
-    assert_eq!(classify(&client, "привет").await, None);
+    let client = classifier(&unsure, Duration::from_secs(2));
+    assert_eq!(classify(&client, "привет", 0.6).await, None);
 
     let unknown = jev_stub("200 OK", effort_body("max", 0.99), Duration::ZERO).await;
-    let client = classifier(&unknown, Duration::from_secs(2), 0.6);
-    assert_eq!(classify(&client, "привет").await, None);
+    let client = classifier(&unknown, Duration::from_secs(2));
+    assert_eq!(classify(&client, "привет", 0.6).await, None);
 }
 
 #[tokio::test]
 async fn classifier_failures_and_timeouts_fall_back_to_the_default() {
     let failing = jev_stub("500 Internal Server Error", "{}".into(), Duration::ZERO).await;
-    let client = classifier(&failing, Duration::from_secs(2), 0.6);
+    let client = classifier(&failing, Duration::from_secs(2));
     assert_eq!(
         judge(ReasoningMode::Auto(policy()), Some(client), None)
             .resolve("объясни")
@@ -237,7 +236,7 @@ async fn classifier_failures_and_timeouts_fall_back_to_the_default() {
         Duration::from_millis(300),
     )
     .await;
-    let client = classifier(&slow, Duration::from_millis(50), 0.6);
+    let client = classifier(&slow, Duration::from_millis(50));
     assert_eq!(
         judge(ReasoningMode::Auto(policy()), Some(client), None)
             .resolve("объясни")
@@ -249,7 +248,7 @@ async fn classifier_failures_and_timeouts_fall_back_to_the_default() {
 #[tokio::test]
 async fn busy_classifier_slots_skip_the_request() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
-    let client = classifier(&stub, Duration::from_secs(2), 0.6);
+    let client = classifier(&stub, Duration::from_secs(2));
     let slots = Arc::new(Semaphore::new(1));
     let held = slots.clone().try_acquire_owned().unwrap();
     assert_eq!(
@@ -275,7 +274,7 @@ async fn busy_classifier_slots_skip_the_request() {
 #[tokio::test]
 async fn a_pinned_ceiling_skips_the_classifier_request() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
-    let client = classifier(&stub, Duration::from_secs(2), 0.6);
+    let client = classifier(&stub, Duration::from_secs(2));
     let pinned = ReasoningPolicy {
         default: Effort::Low,
         max: Effort::Low,
@@ -318,7 +317,6 @@ fn judge_skips_turns_that_never_reach_the_model() {
         "jev-latest".into(),
         Duration::from_secs(1),
         16 * 1024,
-        0.6,
     )
     .unwrap();
     let eager = judge(ReasoningMode::Auto(policy()), Some(client), None);
@@ -346,7 +344,7 @@ fn judge_skips_turns_that_never_reach_the_model() {
 #[tokio::test]
 async fn judge_state_carries_the_replied_message() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
-    let client = classifier(&stub, Duration::from_secs(2), 0.6);
+    let client = classifier(&stub, Duration::from_secs(2));
     let judge = judge(ReasoningMode::Auto(policy()), Some(client), None);
     let state = judge_state("почему?", Some("fn main() { panic!() }"));
     assert_eq!(judge.resolve(&state).await, Some(Effort::High));
@@ -369,7 +367,7 @@ async fn judge_state_carries_the_replied_message() {
 #[tokio::test]
 async fn an_attached_classifier_reaches_the_chat_config() {
     let stub = jev_stub("200 OK", effort_body("high", 0.9), Duration::ZERO).await;
-    let client = classifier(&stub, Duration::from_secs(2), 0.6);
+    let client = classifier(&stub, Duration::from_secs(2));
     let base = Url::parse("http://127.0.0.1:1/v1").unwrap();
     let chat = ChatConfig::new(
         base.clone(),
