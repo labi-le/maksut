@@ -57,7 +57,7 @@ async fn issue(args: &Value, ctx: &ToolContext<'_>, state: &mut ToolState) -> St
         return "лимит обращений к GitHub на ответ".to_owned();
     }
     state.github_calls += 1;
-    crate::chat_tools::ack_lookup(ctx);
+    crate::chat_tools::ack_lookup(ctx, state);
     let include_comments = args
         .get("include_comments")
         .and_then(Value::as_bool)
@@ -76,7 +76,7 @@ async fn search(args: &Value, ctx: &ToolContext<'_>, state: &mut ToolState) -> S
         return "лимит обращений к GitHub на ответ".to_owned();
     }
     state.github_calls += 1;
-    crate::chat_tools::ack_lookup(ctx);
+    crate::chat_tools::ack_lookup(ctx, state);
     let filters = crate::github_tools::SearchFilters {
         state: args.get("state").and_then(Value::as_str).unwrap_or("all"),
         label,

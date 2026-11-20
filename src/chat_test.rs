@@ -2095,7 +2095,7 @@ async fn plain_reply_does_not_react_to_the_message() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn web_search_marks_the_message_on_every_pass() {
+async fn web_search_marks_the_message_once_per_turn() {
     let dir = tempfile::tempdir().unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
@@ -2148,25 +2148,32 @@ async fn web_search_marks_the_message_on_every_pass() {
     .await
     .unwrap();
     assert_eq!(reply.text, "ок");
+    // Two lookup rounds ran, yet the turn costs exactly one reaction.
+    assert_eq!(
+        llm.requests.lock().unwrap().len(),
+        5,
+        "two model tool rounds, two search fetches, and the final reply"
+    );
     for _ in 0..50 {
         if calls
             .lock()
             .await
             .iter()
-            .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
-            .count()
-            >= 2
+            .any(|(path, _)| api_method_is(path, "setMessageReaction"))
         {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    // Any ack a turn spawns is already in flight when it returns, so a short
+    // settle window is enough for a duplicate to land in the recording.
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let calls = calls.lock().await;
     let reactions: Vec<_> = calls
         .iter()
         .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
         .collect();
-    assert_eq!(reactions.len(), 2, "{calls:?}");
+    assert_eq!(reactions.len(), 1, "{calls:?}");
     for (_, raw) in &reactions {
         let body: Value = serde_json::from_str(raw).unwrap();
         assert_eq!(body["chat_id"], 1);
@@ -2179,7 +2186,7 @@ async fn web_search_marks_the_message_on_every_pass() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn read_url_marks_the_message_on_every_pass() {
+async fn read_url_marks_the_message_once_per_turn() {
     let dir = tempfile::tempdir().unwrap();
     let pool = open_database(&format!(
         "sqlite://{}",
@@ -2231,31 +2238,125 @@ async fn read_url_marks_the_message_on_every_pass() {
     .await
     .unwrap();
     assert_eq!(reply.text, "ок");
+    // Two lookup rounds ran, yet the turn costs exactly one reaction.
+    assert_eq!(
+        llm.requests.lock().unwrap().len(),
+        3,
+        "two model tool rounds and the final reply"
+    );
     for _ in 0..50 {
         if calls
             .lock()
             .await
             .iter()
-            .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
-            .count()
-            >= 2
+            .any(|(path, _)| api_method_is(path, "setMessageReaction"))
         {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    // Any ack a turn spawns is already in flight when it returns, so a short
+    // settle window is enough for a duplicate to land in the recording.
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let calls = calls.lock().await;
     let reactions: Vec<_> = calls
         .iter()
         .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
         .collect();
-    assert_eq!(reactions.len(), 2, "{calls:?}");
+    assert_eq!(reactions.len(), 1, "{calls:?}");
     for (_, raw) in &reactions {
         let body: Value = serde_json::from_str(raw).unwrap();
         assert_eq!(body["chat_id"], 1);
         assert_eq!(body["message_id"], 7);
         assert_eq!(body["reaction"][0]["emoji"], "👀");
     }
+    server.abort();
+    llm.task.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mixed_lookup_tools_mark_the_message_once_per_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let (bot, calls, server) = recording_bot(true, true).await;
+    let page_url = "https://mixed-ack.test/page";
+    let llm = mock_server(vec![
+        tool_response("web_search", serde_json::json!({"query": "rust"})),
+        r#"{"error":"nope"}"#.into(),
+        tool_response("read_url", serde_json::json!({"url": page_url})),
+        reply_response("ок"),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let prompt = format!("погугли rust и открой {page_url}");
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(2),
+        sender_name: "tester",
+        username: None,
+        message_id: 7,
+        reply_user_id: None,
+        owner: true,
+        prompt: &prompt,
+        image: None,
+        effort: None,
+        followup: false,
+        sticker_mode: false,
+        reply_context: None,
+        bot: Some(&bot),
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.text, "ок");
+    // A web_search round followed by a read_url round, then the final reply.
+    assert_eq!(
+        llm.requests.lock().unwrap().len(),
+        4,
+        "two model tool rounds, one search fetch, and the final reply"
+    );
+    for _ in 0..50 {
+        if calls
+            .lock()
+            .await
+            .iter()
+            .any(|(path, _)| api_method_is(path, "setMessageReaction"))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let calls = calls.lock().await;
+    let reactions: Vec<_> = calls
+        .iter()
+        .filter(|(path, _)| api_method_is(path, "setMessageReaction"))
+        .collect();
+    assert_eq!(reactions.len(), 1, "{calls:?}");
+    let body: Value = serde_json::from_str(&reactions[0].1).unwrap();
+    assert_eq!(body["chat_id"], 1);
+    assert_eq!(body["message_id"], 7);
+    assert_eq!(body["reaction"][0]["emoji"], "👀");
     server.abort();
     llm.task.abort();
 }

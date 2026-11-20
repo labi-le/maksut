@@ -26,6 +26,7 @@ pub(crate) struct ToolState {
     pub(crate) status_view: String,
     pub(crate) research: ResearchState,
     pub(crate) research_calls: usize,
+    pub(crate) lookup_acked: bool,
     pub(crate) research_status_calls: usize,
     pub(crate) research_cancel_calls: usize,
     pub(crate) search_calls: usize,
@@ -55,6 +56,7 @@ impl ToolState {
             status_view: "details".to_owned(),
             research: ResearchState::default(),
             research_calls: 0,
+            lookup_acked: false,
             research_status_calls: 0,
             research_cancel_calls: 0,
             search_calls: 0,
@@ -76,10 +78,17 @@ impl ToolState {
     }
 }
 
-pub(crate) fn ack_lookup(ctx: &ToolContext<'_>) {
-    if let Some(bot) = ctx.bot {
-        mark_lookup(bot, ctx.chat_id, MessageId(ctx.message_id));
+/// Latches the per-turn ack: the first lookup pass reacts, later passes in the
+/// same turn spend one bool check and neither a Bot API call nor a spawned task.
+pub(crate) fn ack_lookup(ctx: &ToolContext<'_>, state: &mut ToolState) {
+    if state.lookup_acked {
+        return;
     }
+    let Some(bot) = ctx.bot else {
+        return;
+    };
+    state.lookup_acked = true;
+    mark_lookup(bot, ctx.chat_id, MessageId(ctx.message_id));
 }
 
 #[tracing::instrument(skip_all, fields(tool = tracing::field::Empty, chat_id = ctx.chat_id.0))]
@@ -251,7 +260,7 @@ pub(crate) async fn run_tool_call(
                 "лимит проверок кода на ответ".to_string()
             } else {
                 state.inspect_calls += 1;
-                ack_lookup(ctx);
+                ack_lookup(ctx, state);
                 let query = args.get("query").and_then(Value::as_str).unwrap_or("");
                 let path = args.get("path").and_then(Value::as_str);
                 let base = ctx.chat.code_dir.clone();
@@ -289,7 +298,7 @@ pub(crate) async fn run_tool_call(
                     "level должен быть trace, debug, info, warn или error".to_string()
                 } else {
                     state.read_logs_calls += 1;
-                    ack_lookup(ctx);
+                    ack_lookup(ctx, state);
                     let limit = args
                         .get("limit")
                         .and_then(Value::as_u64)
@@ -368,7 +377,7 @@ pub(crate) async fn run_tool_call(
                 "лимит чтения ссылок на ответ".to_string()
             } else {
                 state.read_url_calls += 1;
-                ack_lookup(ctx);
+                ack_lookup(ctx, state);
                 match crate::read_url::read(target).await {
                     Ok(page) => {
                         for url in page.links {
@@ -391,7 +400,7 @@ pub(crate) async fn run_tool_call(
                 "лимит поиска на ответ".to_string()
             } else {
                 state.search_calls += 1;
-                ack_lookup(ctx);
+                ack_lookup(ctx, state);
                 let recency = args
                     .get("recency")
                     .and_then(Value::as_str)
@@ -432,7 +441,7 @@ pub(crate) async fn run_tool_call(
                     .chat
                     .search_calls_per_reply
                     .saturating_sub(state.search_calls);
-                ack_lookup(ctx);
+                ack_lookup(ctx, state);
                 match ctx
                     .chat
                     .research(
@@ -472,7 +481,7 @@ pub(crate) async fn run_tool_call(
                     Err(reason) => reason,
                     Ok(request) => {
                         state.chat_search_calls += 1;
-                        ack_lookup(ctx);
+                        ack_lookup(ctx, state);
                         match crate::chat_search::search(
                             ctx.chat,
                             ctx.pool,
@@ -530,7 +539,7 @@ pub(crate) async fn run_tool_call(
                     .map(|value| value as usize)
                     .unwrap_or(3)
                     .clamp(1, 20);
-                ack_lookup(ctx);
+                ack_lookup(ctx, state);
                 crate::chat_embeddings::reindex(ctx.chat, ctx.pool, passes).await
             }
         }
