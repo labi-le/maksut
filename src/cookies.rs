@@ -1,10 +1,33 @@
 use crate::prelude::*;
 
+/// Which jar rows may be sent for one request. `subdomain_hosts` receives
+/// `Domain=TRUE` rows; `exact_hosts` receives `Domain=FALSE` rows.
+#[derive(Clone, Copy)]
+pub(crate) struct CookieScope<'a> {
+    pub(crate) subdomain_hosts: &'a [&'a str],
+    pub(crate) exact_hosts: &'a [&'a str],
+    pub(crate) auth_names: &'a [&'a str],
+}
+
+const TIKTOK_SCOPE: CookieScope<'static> = CookieScope {
+    subdomain_hosts: &["tiktok.com", "www.tiktok.com"],
+    exact_hosts: &["www.tiktok.com"],
+    auth_names: &["sessionid", "sessionid_ss"],
+};
+
 // Read the original bind-mounted jar, never the mutable yt-dlp request copy.
 // Invalid or oversized jars fail closed without exposing their contents.
 pub(crate) fn tiktok_page_cookies(
     source: Option<&Path>,
     page: &Url,
+) -> Result<Option<String>, String> {
+    page_cookies(source, page, &TIKTOK_SCOPE)
+}
+
+pub(crate) fn page_cookies(
+    source: Option<&Path>,
+    page: &Url,
+    scope: &CookieScope<'_>,
 ) -> Result<Option<String>, String> {
     let Some(source) = source else {
         return Ok(None);
@@ -60,10 +83,15 @@ pub(crate) fn tiktok_page_cookies(
         let domain = domain.strip_prefix("#HttpOnly_").unwrap_or(domain);
         let host_matches = if subdomains == "TRUE" {
             let domain = domain.strip_prefix('.').unwrap_or(domain);
-            domain.eq_ignore_ascii_case("tiktok.com")
-                || domain.eq_ignore_ascii_case("www.tiktok.com")
+            scope
+                .subdomain_hosts
+                .iter()
+                .any(|host| domain.eq_ignore_ascii_case(host))
         } else {
-            domain.eq_ignore_ascii_case("www.tiktok.com")
+            scope
+                .exact_hosts
+                .iter()
+                .any(|host| domain.eq_ignore_ascii_case(host))
         };
         if !host_matches {
             continue;
@@ -109,7 +137,7 @@ pub(crate) fn tiktok_page_cookies(
         if secure == "TRUE" && page.scheme() != "https" || (expires != 0 && expires <= now) {
             continue;
         }
-        if matches!(name, "sessionid" | "sessionid_ss") {
+        if scope.auth_names.contains(&name) {
             auth_found = true;
         }
         let extra = name.len() + value.len() + if header.is_empty() { 1 } else { 3 };
@@ -127,7 +155,11 @@ pub(crate) fn tiktok_page_cookies(
     if !found || !auth_found {
         return Err(error());
     }
-    tracing::debug!(cookies = cookie_count, "tiktok cookies prepared");
+    tracing::debug!(
+        cookies = cookie_count,
+        host = page.host_str(),
+        "page cookies prepared"
+    );
     Ok((!header.is_empty()).then_some(header))
 }
 
@@ -235,6 +267,20 @@ pub(crate) async fn tiktok_page_cookies_async(
     let source = source.map(Path::to_path_buf);
     let page = page.clone();
     let result = blocking_cookies(move || tiktok_page_cookies(source.as_deref(), &page)).await;
+    if let Err(reason) = &result {
+        tracing::warn!(reason = %reason, "cookies preparation failed");
+    }
+    result
+}
+
+pub(crate) async fn page_cookies_async(
+    source: Option<&Path>,
+    page: &Url,
+    scope: CookieScope<'static>,
+) -> Result<Option<String>, String> {
+    let source = source.map(Path::to_path_buf);
+    let page = page.clone();
+    let result = blocking_cookies(move || page_cookies(source.as_deref(), &page, &scope)).await;
     if let Err(reason) = &result {
         tracing::warn!(reason = %reason, "cookies preparation failed");
     }

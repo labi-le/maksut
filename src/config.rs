@@ -107,6 +107,9 @@ impl Config {
         if let Some(value) = env_value("COOKIES_FILE") {
             self.paths.cookies_file = Some(value);
         }
+        if let Some(value) = env_value("RUTRACKER_COOKIES_FILE") {
+            self.paths.rutracker_cookies_file = Some(value);
+        }
         if let Some(value) = env_value("COOKIE_REFRESH_URL") {
             self.paths.cookie_refresh_url = Some(value);
         }

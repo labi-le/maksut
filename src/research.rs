@@ -7,6 +7,8 @@ use crate::research_dossier::{fit_dossier, Interrupted};
 use crate::research_registry::{ResearchJob, ResearchStatus};
 use crate::search::{clean_text, SearchClient, SearchFailure, SearchHit};
 
+const TRACKER_NOTE: &str = "\n[трекеры: часть источников недоступна]\n";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NormalizedUrl {
     /// URL as shown to the user: original query order, no tracking parameters.
@@ -33,19 +35,23 @@ pub(crate) struct ResearchOutcome {
     pub(crate) result: String,
     pub(crate) sources: Vec<ResearchSource>,
     pub(crate) queries_used: usize,
+    /// Files the reply attaches after the dossier: tracker releases and direct
+    /// file links, already bounded by `research.max_attachments`.
+    pub(crate) attachments: Vec<crate::research_attachments::ResearchAttachment>,
 }
 
 #[derive(Default)]
 pub(crate) struct ResearchState {
     pub(crate) sources: Vec<ResearchSource>,
+    pub(crate) attachments: Vec<crate::research_attachments::ResearchAttachment>,
     pub(crate) used: bool,
     pub(crate) announced: bool,
 }
 
 impl ChatConfig {
     /// Validates input, applies the cooldown, and runs up to `budget` search
-    /// calls. Returns a tool-facing string and the sources that survived
-    /// ranking and dossier truncation.
+    /// calls. Returns a tool-facing dossier, the sources that survived ranking
+    /// and truncation, and the files the reply may attach.
     pub(crate) async fn research(
         &self,
         owner: bool,
@@ -81,7 +87,7 @@ impl ChatConfig {
             "research started"
         );
         let research_started = time::Instant::now();
-        let (result, sources) = collect_research(
+        let (result, sources, attachments) = collect_research(
             Arc::clone(&self.search),
             &question,
             queries.get(..execute).unwrap_or_default(),
@@ -92,6 +98,7 @@ impl ChatConfig {
         .await;
         tracing::info!(
             sources = sources.len(),
+            attachments = attachments.len(),
             elapsed_ms = elapsed_ms(research_started),
             "research done"
         );
@@ -99,6 +106,7 @@ impl ChatConfig {
             result,
             sources,
             queries_used: execute,
+            attachments,
         })
     }
 
@@ -126,7 +134,12 @@ pub(crate) async fn collect_research(
     truncated_queries: usize,
     timeout: Duration,
     job: Option<ResearchJob<'_>>,
-) -> (String, Vec<ResearchSource>) {
+) -> (
+    String,
+    Vec<ResearchSource>,
+    Vec<crate::research_attachments::ResearchAttachment>,
+) {
+    let started = time::Instant::now();
     let mut tasks = tokio::task::JoinSet::new();
     let mut task_indices = HashMap::new();
     let results_per_query = config().research.results_per_query;
@@ -222,8 +235,35 @@ pub(crate) async fn collect_research(
             }
         }
     }
-    if by_key.is_empty() {
-        let result = match interrupted.as_ref() {
+    // Tracker pass: only for media questions, never after a cancel or timeout,
+    // and only with the time left in the pass budget, so one research call
+    // stays inside `research.timeout_secs`. A failed pass leaves the web
+    // sources intact and notes the gap instead of pretending nothing exists.
+    let mut torrent_hits = Vec::new();
+    let mut tracker_failed = false;
+    if interrupted.is_none() && crate::torrent::wants_torrents(question, queries) {
+        let tracker_query = queries.first().map_or(question, String::as_str);
+        let tracker_query = crate::chat_text::truncate_text(
+            tracker_query.trim(),
+            config().research.query_max_chars,
+        );
+        let remaining = timeout.saturating_sub(started.elapsed());
+        match time::timeout(
+            remaining,
+            crate::torrent::search(&tracker_query, config().research.torrent_hits),
+        )
+        .await
+        {
+            Ok(found) => {
+                tracker_failed = found.failed;
+                torrent_hits = found.hits;
+            }
+            Err(_) => tracker_failed = true,
+        }
+    }
+
+    if by_key.is_empty() && torrent_hits.is_empty() {
+        let mut result = match interrupted.as_ref() {
             // An interrupted pass never established that the provider is down:
             // the header already says how much was collected, and claiming
             // "поиск недоступен" for a user-initiated cancel would be wrong.
@@ -233,8 +273,11 @@ pub(crate) async fn collect_research(
             }
             None => "ничего не найдено".to_string(),
         };
+        if tracker_failed {
+            result.push_str(TRACKER_NOTE);
+        }
         finish_job(job, status, completed_queries, 0).await;
-        return (result, Vec::new());
+        return (result, Vec::new(), Vec::new());
     }
     let mut sources: Vec<ResearchSource> = by_key.into_values().collect();
     sources.sort_by(|left, right| {
@@ -248,12 +291,13 @@ pub(crate) async fn collect_research(
     let max_sources = config().research.max_sources;
     let hidden_sources = sources.len().saturating_sub(max_sources);
     sources.truncate(max_sources);
+    sources.extend(torrent_sources(&torrent_hits));
     for (index, source) in sources.iter_mut().enumerate() {
         source.id = index + 1;
         source.queries.sort_unstable();
         source.queries.dedup();
     }
-    let dossier = fit_dossier(
+    let (mut dossier, displayed) = fit_dossier(
         question,
         queries,
         &sources,
@@ -262,8 +306,49 @@ pub(crate) async fn collect_research(
         hidden_sources,
         interrupted.as_ref(),
     );
-    finish_job(job, status, completed_queries, sources_collected).await;
-    dossier
+    if tracker_failed {
+        dossier.push_str(TRACKER_NOTE);
+    }
+    // Attach only what the dossier shows, so a trimmed source cannot arrive as
+    // an unexplained file.
+    let shown_hits: Vec<crate::torrent::TorrentHit> = torrent_hits
+        .iter()
+        .filter(|hit| displayed.iter().any(|source| source.url == hit.page_url))
+        .cloned()
+        .collect();
+    let attachments = crate::research_attachments::select(
+        &displayed,
+        &shown_hits,
+        config().research.max_attachments,
+    );
+    let sources_total = sources.len();
+    finish_job(job, status, completed_queries, sources_total).await;
+    (dossier, sources, attachments)
+}
+
+/// Tracker rows are dossier sources without a query number: `queries` stays
+/// empty and the renderer labels them as tracker finds instead of `qN`.
+fn torrent_sources(hits: &[crate::torrent::TorrentHit]) -> Vec<ResearchSource> {
+    hits.iter()
+        .enumerate()
+        .map(|(position, hit)| {
+            let domain = normalize_url(&hit.page_url)
+                .map(|normalized| normalized.domain)
+                .unwrap_or_else(|| hit.provider.to_string());
+            ResearchSource {
+                id: 0,
+                title: sanitize_research_text(&hit.title, config().research.title_chars),
+                url: hit.page_url.clone(),
+                domain,
+                snippet: sanitize_research_text(
+                    &crate::torrent_parse::hit_snippet(hit),
+                    config().research.snippet_chars,
+                ),
+                queries: Vec::new(),
+                best_position: position,
+            }
+        })
+        .collect()
 }
 
 /// Terminal state is recorded even when the pass was canceled or timed out:

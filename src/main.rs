@@ -78,6 +78,7 @@ mod telegraph;
 pub(crate) use reaction::*;
 mod research;
 pub(crate) use research::*;
+mod research_attachments;
 mod research_dossier;
 mod research_registry;
 pub(crate) use research_registry::*;
@@ -85,6 +86,9 @@ mod research_tools;
 mod search;
 mod search_parse;
 mod search_providers;
+mod torrent;
+mod torrent_parse;
+mod torrent_providers;
 pub(crate) use search::*;
 mod tool_registry;
 pub(crate) use tool_registry::*;
@@ -148,6 +152,8 @@ mod caption;
 pub(crate) use caption::*;
 mod video_convert;
 pub(crate) use video_convert::*;
+mod attachment_send;
+mod bounded_fetch;
 mod delivery;
 pub(crate) use delivery::*;
 mod source_message;
@@ -343,6 +349,8 @@ mod read_url_test;
 #[cfg(test)]
 mod reasoning_test;
 #[cfg(test)]
+mod research_attachments_test;
+#[cfg(test)]
 mod research_registry_test;
 #[cfg(test)]
 mod research_test;
@@ -356,6 +364,8 @@ mod stickers_test;
 mod test_support;
 #[cfg(test)]
 mod tool_registry_test;
+#[cfg(test)]
+mod torrent_test;
 #[cfg(test)]
 mod usage_test;
 #[cfg(test)]

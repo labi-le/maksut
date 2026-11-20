@@ -22,6 +22,9 @@ pub(crate) struct PathSettings {
     pub(crate) code_dir: String,
     pub(crate) self_improve_dir: String,
     pub(crate) cookies_file: Option<String>,
+    /// Separate jar for rutracker: the TikTok jar is rewritten by the refresh
+    /// service and must not carry unrelated tracker sessions.
+    pub(crate) rutracker_cookies_file: Option<String>,
     pub(crate) cookie_refresh_url: Option<String>,
     pub(crate) sticker_sets_file: String,
     pub(crate) sticker_descriptions_file: String,
@@ -217,6 +220,14 @@ pub(crate) struct ResearchSettings {
     pub(crate) url_max_chars: usize,
     pub(crate) max_tracked: usize,
     pub(crate) tracked_ttl_secs: u64,
+    /// Release hits merged into the dossier when the question asks for media.
+    pub(crate) torrent_hits: usize,
+    /// Byte cap for one tracker response, HTML or JSON.
+    pub(crate) torrent_max_bytes: usize,
+    /// Files the research reply may attach after the dossier text.
+    pub(crate) max_attachments: usize,
+    /// Byte cap for one attachment download; Telegram rejects 50 MB uploads.
+    pub(crate) attachment_max_bytes: u64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -415,6 +426,7 @@ defaults!(PathSettings {
     code_dir: "/var/lib/maksut/code".into(),
     self_improve_dir: "/var/lib/maksut/self-improve".into(),
     cookies_file: None,
+    rutracker_cookies_file: None,
     cookie_refresh_url: None,
     sticker_sets_file: "sticker_sets.txt".into(),
     sticker_descriptions_file: "sticker_descriptions.json".into(),
@@ -545,6 +557,10 @@ defaults!(ResearchSettings {
     url_max_chars: 2048,
     max_tracked: 256,
     tracked_ttl_secs: 3600,
+    torrent_hits: 5,
+    torrent_max_bytes: 512 * 1024,
+    max_attachments: 3,
+    attachment_max_bytes: 20 * 1024 * 1024,
 });
 
 defaults!(ReadUrlSettings {

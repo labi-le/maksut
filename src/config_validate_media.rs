@@ -35,6 +35,20 @@ impl ResearchSettings {
             self.tracked_ttl_secs,
             1,
             86_400,
+        )?;
+        usize_count("research.torrent_hits", self.torrent_hits, 1, 20)?;
+        usize_count(
+            "research.torrent_max_bytes",
+            self.torrent_max_bytes,
+            1024,
+            4 * 1024 * 1024,
+        )?;
+        usize_count("research.max_attachments", self.max_attachments, 0, 10)?;
+        count(
+            "research.attachment_max_bytes",
+            self.attachment_max_bytes,
+            1024,
+            50_000_000,
         )
     }
 }

@@ -115,19 +115,19 @@ fn render_dossier(
     }
     text.push_str("\nисточники:\n");
     for source in sources {
-        text.push_str(&format!(
-            "[{}] {}\nurl: {}\nдомен: {}\nнайден: {}\nфрагмент: {}\n\n",
-            source.id,
-            source.title,
-            source.url,
-            source.domain,
+        let found = if source.queries.is_empty() {
+            "трекер".to_string()
+        } else {
             source
                 .queries
                 .iter()
                 .map(|query| format!("q{query}"))
                 .collect::<Vec<_>>()
-                .join(", "),
-            source.snippet,
+                .join(", ")
+        };
+        text.push_str(&format!(
+            "[{}] {}\nurl: {}\nдомен: {}\nнайден: {}\nфрагмент: {}\n\n",
+            source.id, source.title, source.url, source.domain, found, source.snippet,
         ));
     }
     if hidden_sources > 0 {

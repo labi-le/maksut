@@ -444,6 +444,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 sticker,
                 decision: state.decision,
                 proposed_feature: state.proposed_feature,
+                attachments: state.research.attachments,
             });
         }
         if let Some(m) = messages
@@ -482,6 +483,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 sticker: state.sticker,
                 decision: state.decision,
                 proposed_feature: state.proposed_feature,
+                attachments: Vec::new(),
             });
         }
         if state.inspect_calls > 0 && !state.inspect_announced {

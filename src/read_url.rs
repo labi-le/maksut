@@ -342,7 +342,7 @@ pub(crate) fn validate_url(url: &Url) -> Result<(), ReadUrlError> {
     Ok(())
 }
 
-async fn pinned_public_client(url: &Url) -> Result<reqwest::Client, ReadUrlError> {
+pub(crate) async fn pinned_public_client(url: &Url) -> Result<reqwest::Client, ReadUrlError> {
     let host = url.host_str().ok_or(ReadUrlError::InvalidUrl)?;
     let port = if url.scheme() == "http" { 80 } else { 443 };
     let addresses: Vec<SocketAddr> = lookup_host((host, port))
