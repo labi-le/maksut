@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- Failed video uploads are retried once on a non-timeout network failure while the media deadline can still fit another attempt, and are then delivered as a document instead of being lost, so TikTok links that reach the download step no longer end with only a network error
+- TikTok short links no longer hang for minutes when the redirect host resolves to an unreachable Akamai address: DNS and the redirect request are bounded, and a failed hop is retried once
+- Updated yt-dlp to 2026.10.26, restoring YouTube audio and small video downloads that the previous build rejected with HTTP 403
 - Long voice notes now finish local transcription instead of hitting the old timeout: `voice.timeout_secs` defaults to 90 s (CPU faster-whisper runs about 3x faster than real time) and the STT client refuses HTTP redirects
 - Preserved substantive text replies on directly addressed turns when `jev` classifies the turn as `sticker_mode` without a sticker tool call
 - Kept the speaker's group follow-up window active on second-person sentences that mention another participant without a vocative comma

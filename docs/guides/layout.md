@@ -26,9 +26,9 @@ Every module is declared in `src/main.rs` and shares imports through `src/prelud
 - `src/youtube.rs`: single-video YouTube metadata probe (`yt-dlp -J`) and format selector that picks the highest-resolution H.264 + AAC stream pair fitting `media.max_bytes` with `media.mp4_mux_headroom`
 - `src/video_convert.rs`: `ffprobe` stream inspection (moving video vs cover art, audio track presence, dimension/pixel limits) and `ffmpeg` transcoding to MP4 (H.264/yuv420p + AAC, capped at 1920px per side with even-dimension padding)
 - `src/images.rs`: photo metadata extraction for Pinterest, Instagram, X/Twitter (`tools/twitter_images.py`), and TikTok photo posts (`/@user/photo/<id>` from `webapp.video-detail`), CDN URL allowlisting (`image_cdn_url`), and `permitted_ipv4`
-- `src/image_fetch.rs`: DNS-pinned HTTPS client cache (`PINNED_CLIENTS`) and streaming image downloader (`save_image_response`) with MIME verification, size caps, and `.part` atomic persistence
+- `src/image_fetch.rs`: DNS-pinned HTTPS client cache (`PINNED_CLIENTS`, 5 s connect timeout) and streaming image downloader (`save_image_response`) with MIME verification, size caps, and `.part` atomic persistence
 - `src/media.rs`: media file classification by extension (`MediaKind`: `Photo`, `Video`, `Audio`, `Document`) and directory scanning
-- `src/delivery.rs`: Telegram sending: adjacent compatible media grouping into albums of 2 to 10 items (`sendMediaGroup`), caption deduplication across album items, silent delivery (`disable_notification = true`), single-item document fallback on explicit Telegram rejection, and `file_id` collection for `media_cache`
+- `src/delivery.rs`: Telegram sending: adjacent compatible media grouping into albums of 2 to 10 items (`sendMediaGroup`), caption deduplication across album items, silent delivery (`disable_notification = true`), a singleton video upload retried once on a non-timeout network error, single-item document fallback on explicit Telegram rejection or on a persistent video upload failure, and `file_id` collection for `media_cache`
 - `src/caption.rs`: HTML caption builder (`<title>\n\n<description>`, `<code>От first_name</code>`, clickable `Ссылка`) truncated cleanly within Telegram's 1024 UTF-16 code-unit limit
 - `src/source_message.rs`: deleting the sender's original link message after full delivery (logging at `trace` if the bot lacks `can_delete_messages`)
 - `src/media_cache.rs`: 24-hour SQLite `media_cache` (keyed by SHA-256 of bot token + chat id + normalized URL with query, capped at 200 newest entries globally)
@@ -102,7 +102,7 @@ Every module is declared in `src/main.rs` and shares imports through `src/prelud
 ## Other top-level paths
 
 - `compose.yaml`: production Docker Compose definition (`maksut` + `cookie-refresh`)
-- `Dockerfile`: multi-stage build (`rust:1.98.1-bookworm` builder -> `node:22-bookworm-slim` runtime with `ffmpeg`, `python3`, `yt-dlp[default,curl-cffi]==2026.7.4`)
+- `Dockerfile`: multi-stage build (`rust:1.98.1-bookworm` builder -> `node:22-bookworm-slim` runtime with `ffmpeg`, `python3`, `yt-dlp[default,curl-cffi]==2026.10.26`)
 - `shell.nix`: local development shell (`cargo`, `rustc`, `rustfmt`, `clippy`, `sqlite`, `python3`, `ffmpeg`, `yt-dlp`)
 - `docs/communication-guide.md`: **READ-ONLY** operating specification compiled into the binary via `include_str!`
 - `docs/guides/`: task-triggered engineering guides

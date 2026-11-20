@@ -84,19 +84,90 @@ pub(crate) async fn prepare_media(
     })
 }
 
+pub(crate) struct SendPolicy {
+    pub(crate) max_bytes: u64,
+    pub(crate) allow_document_fallback: bool,
+    /// Cached `file_id` deliveries keep the documented cache rule: a network
+    /// failure is ambiguous and is not retried.
+    pub(crate) allow_retry: bool,
+    /// Latest moment a retry or network-failure fallback may start. Callers
+    /// without a media deadline pass `now + telegram.request_timeout_secs`, so
+    /// a flaky video cannot hold one of the two download permits beyond one
+    /// media deadline.
+    pub(crate) deadline: time::Instant,
+}
+
+const RETRY_PAUSE: Duration = Duration::from_millis(500);
+
 pub(crate) async fn send_single_media(
     bot: &Bot,
     chat_id: ChatId,
     input: InputFile,
     kind: MediaKind,
     caption: &str,
-    max_bytes: u64,
-    allow_document_fallback: bool,
+    policy: SendPolicy,
 ) -> Result<DeliveryReceipt, DeliveryError> {
-    let fallback_input = (allow_document_fallback
-        && matches!(kind, MediaKind::Photo | MediaKind::Audio))
+    let fallback_input = (policy.allow_document_fallback
+        && matches!(kind, MediaKind::Photo | MediaKind::Audio | MediaKind::Video))
     .then(|| input.clone());
-    let sent = match kind {
+    // A video is the most expensive upload and Telegram has been seen dropping
+    // the connection after accepting the bytes. The retry is bounded by the
+    // policy deadline and by the time the first attempt took; the document
+    // fallback below is a separate delivery that only runs after both video
+    // attempts failed.
+    let retry_input = (kind == MediaKind::Video && policy.allow_retry).then(|| input.clone());
+    let attempt = time::Instant::now();
+    let mut sent = send_kind(bot, chat_id, input, kind, caption).await;
+    let mut last_elapsed = attempt.elapsed();
+    if let Err(error) = &sent {
+        let retry = retry_input.filter(|_| {
+            user_errors::upload_retry(error)
+                && time::Instant::now() + last_elapsed + RETRY_PAUSE < policy.deadline
+        });
+        if let Some(input) = retry {
+            time::sleep(RETRY_PAUSE).await;
+            let attempt = time::Instant::now();
+            sent = send_kind(bot, chat_id, input, kind, caption).await;
+            last_elapsed = attempt.elapsed();
+        }
+    }
+    match sent {
+        Ok(message) => Ok(DeliveryReceipt { kind, message }),
+        Err(error) => {
+            let fallback = fallback_input.filter(|_| {
+                user_errors::rejected_media_upload(&error)
+                    || (kind == MediaKind::Video
+                        && user_errors::upload_retry(&error)
+                        && time::Instant::now() + last_elapsed < policy.deadline)
+            });
+            if let Some(input) = fallback {
+                tracing::warn!(kind = ?kind, "media upload failed, sending as document");
+                return bot
+                    .send_document(chat_id, input)
+                    .caption(caption)
+                    .parse_mode(ParseMode::Html)
+                    .disable_notification(true)
+                    .await
+                    .map(|message| DeliveryReceipt {
+                        kind: MediaKind::Document,
+                        message,
+                    })
+                    .map_err(|error| DeliveryError::request(error, policy.max_bytes));
+            }
+            tracing::error!(kind = ?kind, "media send failed");
+            Err(DeliveryError::request(error, policy.max_bytes))
+        }
+    }
+}
+
+async fn send_kind(
+    bot: &Bot,
+    chat_id: ChatId,
+    input: InputFile,
+    kind: MediaKind,
+    caption: &str,
+) -> Result<Message, teloxide::RequestError> {
+    match kind {
         MediaKind::Photo => {
             bot.send_photo(chat_id, input)
                 .caption(caption)
@@ -126,29 +197,6 @@ pub(crate) async fn send_single_media(
                 .disable_notification(true)
                 .await
         }
-    };
-    match sent {
-        Ok(message) => Ok(DeliveryReceipt { kind, message }),
-        Err(error) => {
-            if user_errors::rejected_media_upload(&error) {
-                tracing::warn!(kind = ?kind, fallback = fallback_input.is_some(), "rejected");
-                if let Some(input) = fallback_input {
-                    return bot
-                        .send_document(chat_id, input)
-                        .caption(caption)
-                        .parse_mode(ParseMode::Html)
-                        .disable_notification(true)
-                        .await
-                        .map(|message| DeliveryReceipt {
-                            kind: MediaKind::Document,
-                            message,
-                        })
-                        .map_err(|error| DeliveryError::request(error, max_bytes));
-                }
-            }
-            tracing::error!(kind = ?kind, "media send failed");
-            Err(DeliveryError::request(error, max_bytes))
-        }
     }
 }
 
@@ -168,8 +216,12 @@ pub(crate) async fn send_media(
         prepared.input,
         prepared.kind,
         caption,
-        max_bytes,
-        true,
+        SendPolicy {
+            max_bytes,
+            allow_document_fallback: true,
+            allow_retry: true,
+            deadline,
+        },
     )
     .await?;
     Ok(receipt)
@@ -288,6 +340,7 @@ pub(crate) async fn deliver_items(
     mut items: Vec<DeliveryItem<'_>>,
     max_bytes: u64,
     allow_document_fallback: bool,
+    deadline: time::Instant,
 ) -> DeliveryReport {
     let mut report = DeliveryReport::new();
     if !allow_document_fallback {
@@ -325,8 +378,13 @@ pub(crate) async fn deliver_items(
                     input,
                     item.kind,
                     &item.caption,
-                    max_bytes,
-                    allow_document_fallback,
+                    SendPolicy {
+                        max_bytes,
+                        allow_document_fallback,
+                        // Cached `file_id` deliveries are never retried.
+                        allow_retry: allow_document_fallback,
+                        deadline,
+                    },
                 )
                 .await
                 {
@@ -503,7 +561,7 @@ pub(crate) async fn deliver_fresh(
         }
     }
     // All conversion guards remain live while contiguous compatibility batches are uploaded.
-    let mut report = deliver_items(bot, chat_id, items, max_bytes, true).await;
+    let mut report = deliver_items(bot, chat_id, items, max_bytes, true, deadline).await;
     if report.error.is_none() {
         report.error = preparation_error;
     }

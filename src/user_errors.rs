@@ -206,6 +206,13 @@ pub(crate) fn invalid_cached_file(error: &RequestError) -> bool {
     )
 }
 
+/// A network failure worth repeating once: a refused or dropped connection,
+/// never a timeout. A timeout may mean the server already accepted the bytes,
+/// so a repeat risks a duplicate message.
+pub(crate) fn upload_retry(error: &RequestError) -> bool {
+    matches!(error, RequestError::Network(network) if !network.is_timeout())
+}
+
 pub(crate) fn rejected_media_upload(error: &RequestError) -> bool {
     match error {
         RequestError::Api(ApiError::ImageProcessFailed) => true,

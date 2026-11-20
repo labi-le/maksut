@@ -23,7 +23,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/yt-dlp \
-    && /opt/yt-dlp/bin/pip install --no-cache-dir 'yt-dlp[default,curl-cffi]==2026.7.4' \
+    && /opt/yt-dlp/bin/pip install --no-cache-dir 'yt-dlp[default,curl-cffi]==2026.10.26' \
     && mkdir -p /data /tmp/maksut \
     && chown 1000:1000 /data /tmp/maksut
 # yt-dlp does not enable Node by default; generic extraction is unsafe for embedded URLs.

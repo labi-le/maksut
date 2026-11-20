@@ -333,7 +333,17 @@ pub(crate) async fn handle_message(
                 description: item.description.as_deref(),
             });
         }
-        let report = deliver_items(&bot, message.chat.id, items, cfg.max_media_bytes, false).await;
+        let delivery_deadline =
+            time::Instant::now() + Duration::from_secs(config().telegram.request_timeout_secs);
+        let report = deliver_items(
+            &bot,
+            message.chat.id,
+            items,
+            cfg.max_media_bytes,
+            false,
+            delivery_deadline,
+        )
+        .await;
         match report.error {
             None => {
                 record_media_delivery(&cfg.database, message.chat.id, &url, &report).await;

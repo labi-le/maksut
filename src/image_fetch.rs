@@ -36,6 +36,10 @@ pub(crate) async fn pinned_client(url: &Url) -> Result<reqwest::Client, String> 
         .no_proxy()
         .redirect(Policy::none())
         .https_only(true)
+        // TikTok's short-link host answers with one blackholed and one working
+        // Akamai address pair; without a bound the dead address holds a connect
+        // until the OS timeout and the whole media deadline is gone.
+        .connect_timeout(Duration::from_secs(5))
         .resolve_to_addrs(host, &addresses)
         .build()
         .map_err(|_| "Не удалось настроить безопасное HTTPS-подключение".to_string())?;

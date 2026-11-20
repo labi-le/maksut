@@ -155,7 +155,9 @@ pub(crate) fn canonical_short_target(url: &Url, family: &str) -> Option<Url> {
 
 pub(crate) async fn resolve_short_link(url: &Url, deadline: time::Instant) -> Option<Url> {
     let family = short_link_family(url)?;
-    // yt-dlp has no extractor for short-link hosts, and generic is disabled by policy.
+    // `pin.it` has no yt-dlp extractor, and the generic extractor is disabled
+    // by policy; TikTok short links are resolved here first so a photo post
+    // takes the photo path instead of a video-only download.
     time::timeout_at(deadline, async {
         let mut current = url.clone();
         for redirects in 0..=5 {
@@ -177,16 +179,10 @@ pub(crate) async fn resolve_short_link(url: &Url, deadline: time::Instant) -> Op
             if !short_link_contact_allowed(current.host_str()?, family) {
                 return None;
             }
-            let client = pinned_client(&current).await.ok()?;
-            let response = client.get(current.clone()).send().await.ok()?;
-            if !response.status().is_redirection() {
-                return None;
-            }
-            let location = response.headers().get(reqwest::header::LOCATION)?;
+            let next = next_hop(&current).await?;
             if redirects == 5 {
                 return None;
             }
-            let next = current.join(location.to_str().ok()?).ok()?;
             if next.scheme() != "https" || !short_link_host_allowed(next.host_str()?, family) {
                 return None;
             }
@@ -197,6 +193,53 @@ pub(crate) async fn resolve_short_link(url: &Url, deadline: time::Instant) -> Op
     .await
     .ok()
     .flatten()
+}
+
+enum Hop {
+    Redirect(Url),
+    NotRedirect,
+    Failed,
+    TimedOut,
+}
+
+/// One manual redirect hop with a single retry. `pinned_client` resolves the
+/// host on every call, so a retried `Failed` hop asks DNS again inside a fresh
+/// budget; a timed-out hop may already have connected and is not repeated.
+async fn next_hop(current: &Url) -> Option<Url> {
+    match send_hop(current).await {
+        Hop::Redirect(next) => Some(next),
+        Hop::NotRedirect | Hop::TimedOut => None,
+        Hop::Failed => match send_hop(current).await {
+            Hop::Redirect(next) => Some(next),
+            Hop::NotRedirect | Hop::Failed | Hop::TimedOut => None,
+        },
+    }
+}
+
+async fn send_hop(current: &Url) -> Hop {
+    let request = async {
+        let client = pinned_client(current).await.map_err(|_| ())?;
+        client.get(current.clone()).send().await.map_err(|_| ())
+    };
+    let response = match time::timeout(Duration::from_secs(10), request).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(())) => return Hop::Failed,
+        Err(_) => return Hop::TimedOut,
+    };
+    if !response.status().is_redirection() {
+        return Hop::NotRedirect;
+    }
+    let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+        return Hop::NotRedirect;
+    };
+    match location
+        .to_str()
+        .ok()
+        .and_then(|location| current.join(location).ok())
+    {
+        Some(next) => Hop::Redirect(next),
+        None => Hop::NotRedirect,
+    }
 }
 
 pub(crate) fn first_link(text: &str) -> Option<Url> {

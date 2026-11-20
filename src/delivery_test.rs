@@ -4,7 +4,7 @@ use crate::*;
 
 #[cfg(unix)]
 #[tokio::test]
-async fn video_delivery_deletes_only_after_success_and_never_falls_back_to_document() {
+async fn video_delivery_deletes_only_after_success_and_keeps_the_video_type() {
     let root = tempfile::tempdir().unwrap();
     let fixture = root.path().join("real.webm");
     if std::process::Command::new("ffmpeg")
@@ -846,6 +846,103 @@ async fn features_single_photo_and_audio_document_fallback_cache_the_actual_deli
             .contains("<code>От Current</code>"));
         feature_silent(&requests);
     }
+}
+
+#[tokio::test]
+async fn features_single_video_retries_once_after_a_network_error() {
+    let fixture = FeatureFixture::new(&["mp4"], "exit 0").await;
+    fixture.api.reject_next(FeatureReply::Disconnect).await;
+    fixture.send(1, 1, "Original", LINK).await;
+    let requests = fixture.api.snapshot().await;
+    let media: Vec<_> = requests
+        .iter()
+        .filter(|request| request.is_media())
+        .collect();
+    assert_eq!(media.len(), 2, "the failed video upload is retried once");
+    assert!(
+        media.iter().all(|request| request.method == "sendvideo"),
+        "a successful retry must stay a video, not a document"
+    );
+    assert_eq!(
+        requests.last().unwrap().method,
+        "deletemessage",
+        "the source is deleted only after the retry delivered the video"
+    );
+    feature_silent(&requests);
+}
+
+#[tokio::test]
+async fn features_single_video_network_failure_falls_back_to_document() {
+    let fixture = FeatureFixture::new(&["mp4"], "exit 0").await;
+    fixture.api.reject_next(FeatureReply::Disconnect).await;
+    fixture.api.reject_next(FeatureReply::Disconnect).await;
+    fixture.send(1, 1, "Original", LINK).await;
+    let requests = fixture.api.snapshot().await;
+    let media: Vec<_> = requests
+        .iter()
+        .filter(|request| request.is_media())
+        .collect();
+    assert_eq!(
+        media
+            .iter()
+            .map(|request| request.method.as_str())
+            .collect::<Vec<_>>(),
+        ["sendvideo", "sendvideo", "senddocument"],
+        "a persistent upload failure must not lose the downloaded video"
+    );
+    assert_eq!(requests.last().unwrap().method, "deletemessage");
+    feature_silent(&requests);
+    let (_, recent) = crate::memory::load_memory(&fixture.cfg.database, ChatId(1), 999)
+        .await
+        .unwrap();
+    assert!(
+        recent.iter().any(|message| message.role == "assistant"
+            && message
+                .text
+                .contains("[отправил файл по ссылке https://www.youtube.com/playlist]")),
+        "the document fallback must be recorded as a delivered file"
+    );
+    let calls = fixture.calls();
+    fixture.api.clear().await;
+    fixture.send(1, 1, "Current", LINK).await;
+    assert_eq!(
+        fixture.calls(),
+        calls,
+        "the fallback document file_id must be reusable"
+    );
+    let requests = fixture.api.snapshot().await;
+    let media: Vec<_> = requests
+        .iter()
+        .filter(|request| request.is_media())
+        .collect();
+    assert_eq!(media.len(), 1);
+    assert_eq!(
+        media[0].method, "senddocument",
+        "a cached fallback must never be recast as a video"
+    );
+    assert!(media[0].uploads.is_empty());
+}
+
+#[tokio::test]
+async fn features_cached_video_network_error_is_not_retried() {
+    let fixture = FeatureFixture::new(&["mp4"], "exit 0").await;
+    fixture.send(1, 1, "First", LINK).await;
+    fixture.api.clear().await;
+    fixture.api.reject_next(FeatureReply::Disconnect).await;
+    fixture.send(1, 1, "Second", LINK).await;
+    let requests = fixture.api.snapshot().await;
+    let media: Vec<_> = requests
+        .iter()
+        .filter(|request| request.is_media())
+        .collect();
+    assert_eq!(
+        media.len(),
+        1,
+        "a cached file_id network error must not be retried"
+    );
+    assert_eq!(media[0].method, "sendvideo");
+    assert!(media[0].uploads.is_empty(), "a cache hit uploads no bytes");
+    feature_retained(&requests);
 }
 
 #[tokio::test]

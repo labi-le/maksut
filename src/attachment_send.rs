@@ -72,8 +72,13 @@ async fn send_one(
         InputFile::file(path.clone()),
         attachment.kind(),
         "",
-        max_bytes,
-        true,
+        crate::delivery::SendPolicy {
+            max_bytes,
+            allow_document_fallback: true,
+            allow_retry: true,
+            deadline: time::Instant::now()
+                + Duration::from_secs(config().telegram.request_timeout_secs),
+        },
     )
     .await;
     let _ = tokio::fs::remove_file(&path).await;
