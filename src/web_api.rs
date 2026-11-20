@@ -22,6 +22,8 @@ pub(crate) fn router(state: WebState) -> Router<WebState> {
         .route("/memory", get(list_memory))
         .route("/memory/{topic}", put(update_memory).delete(delete_memory))
         .route("/config", get(get_config).put(put_config))
+        .route("/chats", get(list_chats))
+        .route("/chats/{chat_id}", put(update_chat).delete(delete_chat))
         .route_layer(middleware::from_fn_with_state(state, require_owner))
 }
 
@@ -295,6 +297,110 @@ pub(crate) async fn put_config(
             };
             error(status, failure.message().to_owned())
         }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ChatSettingsItem {
+    chat_id: i64,
+    router_mode: &'static str,
+    router_min_confidence: f64,
+}
+
+#[derive(serde::Serialize)]
+struct ChatDefaults {
+    router_mode: &'static str,
+    router_min_confidence: f64,
+}
+
+#[derive(serde::Serialize)]
+struct ChatSettingsList {
+    defaults: ChatDefaults,
+    chats: Vec<ChatSettingsItem>,
+}
+
+fn chat_item(chat_id: i64, settings: crate::chat_settings::ChatRouterSettings) -> ChatSettingsItem {
+    ChatSettingsItem {
+        chat_id,
+        router_mode: settings.mode.as_str(),
+        router_min_confidence: settings.min_confidence,
+    }
+}
+
+pub(crate) async fn list_chats(State(state): State<WebState>) -> Response {
+    match crate::chat_settings::list(&state.settings.database).await {
+        Ok(rows) => {
+            let global = crate::chat_settings::ChatRouterSettings::global();
+            Json(ChatSettingsList {
+                defaults: ChatDefaults {
+                    router_mode: global.mode.as_str(),
+                    router_min_confidence: global.min_confidence,
+                },
+                chats: rows
+                    .into_iter()
+                    .map(|row| chat_item(row.chat_id, row.effective))
+                    .collect(),
+            })
+            .into_response()
+        }
+        Err(failure) => {
+            tracing::warn!(stage = "web-chats-list", "chat settings read failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, failure.message())
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ChatEdit {
+    #[serde(default)]
+    pub(crate) router_mode: Option<String>,
+    #[serde(default)]
+    pub(crate) router_min_confidence: Option<f64>,
+}
+
+fn chat_update(edit: ChatEdit) -> Result<crate::chat_settings::RouterSettingsUpdate, String> {
+    let mode = match edit.router_mode.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(name) => Some(RouterMode::from_name(name).ok_or_else(|| {
+            format!(
+                "router_mode должен быть одним из: {}",
+                RouterMode::names().join(", ")
+            )
+        })?),
+    };
+    Ok(crate::chat_settings::RouterSettingsUpdate {
+        mode,
+        min_confidence: edit.router_min_confidence,
+    })
+}
+
+pub(crate) async fn update_chat(
+    State(state): State<WebState>,
+    Path(chat_id): Path<i64>,
+    Json(edit): Json<ChatEdit>,
+) -> Response {
+    let update = match chat_update(edit) {
+        Ok(update) => update,
+        Err(reason) => return error(StatusCode::BAD_REQUEST, reason),
+    };
+    match crate::chat_settings::set(&state.settings.database, ChatId(chat_id), update).await {
+        Ok(settings) => Json(chat_item(chat_id, settings)).into_response(),
+        Err(crate::chat_settings::SettingsError::Refused(reason)) => {
+            error(StatusCode::BAD_REQUEST, reason)
+        }
+        Err(failure) => error(StatusCode::INTERNAL_SERVER_ERROR, failure.message()),
+    }
+}
+
+pub(crate) async fn delete_chat(
+    State(state): State<WebState>,
+    Path(chat_id): Path<i64>,
+) -> Response {
+    match crate::chat_settings::reset(&state.settings.database, ChatId(chat_id)).await {
+        Ok(deleted) => {
+            Json(serde_json::json!({ "chat_id": chat_id, "deleted": deleted })).into_response()
+        }
+        Err(failure) => error(StatusCode::INTERNAL_SERVER_ERROR, failure.message()),
     }
 }
 

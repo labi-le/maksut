@@ -64,6 +64,8 @@ mod chat_text;
 pub(crate) use chat_text::*;
 mod chat_tools;
 pub(crate) use chat_tools::*;
+mod chat_settings;
+pub(crate) use chat_settings::*;
 mod chat_urls;
 mod jev;
 mod reaction;
@@ -236,7 +238,7 @@ async fn main() {
         username = %cfg.bot_username,
         owner_id = cfg.owner_id.0,
         chat_enabled = cfg.chat.is_some(),
-        router = ?cfg.router.mode(),
+        router = ?config().router.mode,
         "bot identified"
     );
     let cfg = Arc::new(cfg);
@@ -290,6 +292,8 @@ mod caption_test;
 mod chat_embeddings_test;
 #[cfg(test)]
 mod chat_profile_test;
+#[cfg(test)]
+mod chat_settings_test;
 #[cfg(test)]
 mod chat_status_test;
 #[cfg(test)]

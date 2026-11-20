@@ -57,6 +57,7 @@ fn builtin_visibility_matches_current_roles() {
         "github_comment",
         "remember_self",
         "chat_index",
+        "chat_settings",
     ] {
         assert!(
             registry.find(name, false).is_none(),
@@ -113,6 +114,7 @@ fn builtin_visibility_matches_current_roles() {
             "send_sticker".to_string(),
             "chat_search".to_string(),
             "chat_index".to_string(),
+            "chat_settings".to_string(),
         ],
     );
     assert_eq!(
@@ -155,6 +157,7 @@ fn builtin_visibility_matches_current_roles() {
             "send_sticker".to_string(),
             "chat_search".to_string(),
             "chat_index".to_string(),
+            "chat_settings".to_string(),
         ],
     );
 }
@@ -281,6 +284,11 @@ fn builtin_names_match_their_kinds_and_visibility() {
         (ToolKind::SendSticker, "send_sticker", ToolVisibility::All),
         (ToolKind::ChatSearch, "chat_search", ToolVisibility::All),
         (ToolKind::ChatIndex, "chat_index", ToolVisibility::Owner),
+        (
+            ToolKind::ChatSettings,
+            "chat_settings",
+            ToolVisibility::Owner,
+        ),
     ];
     let specs: Vec<_> = registry.visible(true).collect();
     assert_eq!(specs.len(), expected.len());

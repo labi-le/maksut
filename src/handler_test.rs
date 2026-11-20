@@ -1362,7 +1362,8 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
             &unrelated_followup_other_user,
             "что это",
             &cfg,
-            false
+            false,
+            RouterMode::Off
         )
         .await
         .unwrap()
@@ -1383,7 +1384,8 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
             &prefix_collision_msg,
             "максут, это человек из чата?",
             &cfg,
-            false
+            false,
+            RouterMode::Off
         )
         .await
         .unwrap()
@@ -1403,7 +1405,9 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         }
     }))
     .unwrap();
-    let _ = crate::chat_media::resolve_chat_input(&uncaptioned_video, "", &cfg, false).await;
+    let _ =
+        crate::chat_media::resolve_chat_input(&uncaptioned_video, "", &cfg, false, RouterMode::Off)
+            .await;
     let ask_recent_video: Message = serde_json::from_value(serde_json::json!({
         "message_id": 215,
         "date": 1700000009,
@@ -1413,7 +1417,13 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
     }))
     .unwrap();
     assert_eq!(
-        crate::chat_media::resolve_chat_input(&ask_recent_video, "максут что на видео", &cfg, false)
+        crate::chat_media::resolve_chat_input(
+            &ask_recent_video,
+            "максут что на видео",
+            &cfg,
+            false,
+            RouterMode::Off
+        )
             .await
             .unwrap()
             .pending_media
@@ -1488,4 +1498,54 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "stop phrase in active followup must clear the followup window"
     );
     llm.task.abort();
+}
+
+/// A per-chat router mode is what lets an unaddressed group message reach the
+/// gate; `off` must keep returning `None` for the same message.
+#[cfg(unix)]
+#[tokio::test]
+async fn router_mode_turns_an_unaddressed_group_message_into_a_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = fake_settings(root.path(), "#!/bin/sh\n").await;
+    let url = Url::parse("http://127.0.0.1:1/v1").unwrap();
+    cfg.chat = Some(ChatConfig::new(
+        url.clone(),
+        "key".into(),
+        "model".into(),
+        url,
+        SearchProvider::DuckDuckGo,
+        None,
+    ));
+    let message: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 1,
+        "date": 1700000000,
+        "chat": {"id": -100701, "type": "supergroup"},
+        "from": {"id": 2, "is_bot": false, "first_name": "Вадик"},
+        "text": "просто реплика"
+    }))
+    .unwrap();
+
+    assert!(
+        crate::chat_media::resolve_chat_input(
+            &message,
+            "просто реплика",
+            &cfg,
+            false,
+            RouterMode::Off
+        )
+        .await
+        .is_none(),
+        "off must keep the historical silence for an unaddressed group message"
+    );
+    let resolved = crate::chat_media::resolve_chat_input(
+        &message,
+        "просто реплика",
+        &cfg,
+        false,
+        RouterMode::Jev,
+    )
+    .await
+    .expect("a router mode must let the gate decide");
+    assert!(!resolved.followup);
+    assert_eq!(resolved.address, crate::addressing::AddressKind::None);
 }

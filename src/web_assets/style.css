@@ -97,7 +97,8 @@ a {
 }
 
 textarea,
-input {
+input,
+select {
   width: 100%;
   margin-top: 8px;
   padding: 8px;

@@ -24,6 +24,11 @@ pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> 
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS chat_settings (chat_id INTEGER PRIMARY KEY, router_mode TEXT NOT NULL, router_min_confidence REAL NOT NULL)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS download_failures (created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), url_host TEXT NOT NULL, url_path TEXT NOT NULL, stage TEXT NOT NULL, detail TEXT NOT NULL, exit_code INTEGER)",
     )
     .execute(&pool)
@@ -127,6 +132,61 @@ pub(crate) async fn set_group_enabled(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// Stored per-chat router override; `None` means the chat follows the global
+/// `[router]` section. The row keeps raw text so a value this build cannot
+/// parse is handled by the caller, not by SQL.
+pub(crate) async fn chat_router_row(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+) -> Result<Option<(String, f64)>, sqlx::Error> {
+    sqlx::query_as("SELECT router_mode, router_min_confidence FROM chat_settings WHERE chat_id = ?")
+        .bind(chat_id.0)
+        .fetch_optional(pool)
+        .await
+}
+
+pub(crate) async fn set_chat_router_row(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+    mode: &str,
+    min_confidence: f64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO chat_settings (chat_id, router_mode, router_min_confidence) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET router_mode = excluded.router_mode, router_min_confidence = excluded.router_min_confidence",
+    )
+    .bind(chat_id.0)
+    .bind(mode)
+    .bind(min_confidence)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn delete_chat_router_row(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+) -> Result<bool, sqlx::Error> {
+    let rows = sqlx::query("DELETE FROM chat_settings WHERE chat_id = ?")
+        .bind(chat_id.0)
+        .execute(pool)
+        .await?;
+    Ok(rows.rows_affected() > 0)
+}
+
+/// Bounded listing for the owner surfaces; the caller supplies the limit so a
+/// future export cannot turn this into an unbounded scan.
+pub(crate) async fn list_chat_router_rows(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<(i64, String, f64)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT chat_id, router_mode, router_min_confidence FROM chat_settings ORDER BY chat_id LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
 }
 
 async fn migrate_chat_turns(pool: &SqlitePool) -> Result<(), sqlx::Error> {

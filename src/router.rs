@@ -1,6 +1,6 @@
 use crate::addressing::AddressKind;
 use crate::prelude::*;
-use crate::{parse_http_endpoint, RouterMode, RouterSettings};
+use crate::{parse_http_endpoint, ChatRouterSettings, RouterMode, RouterSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Decision {
@@ -21,58 +21,56 @@ pub(crate) struct RouterInput<'a> {
     pub(crate) forwarded: bool,
     pub(crate) reply_context: Option<&'a str>,
 }
+/// The jev client is built whenever its credentials exist, not only when the
+/// global mode is `jev`: a single chat can turn the router on while every other
+/// chat keeps the historical path.
 #[derive(Clone, Default)]
 pub(crate) struct Router {
-    mode: RouterMode,
     jev: Option<crate::jev::JevClient>,
     jev_slots: Option<Arc<Semaphore>>,
 }
 
 impl Router {
     pub(crate) fn new(
-        mode: RouterMode,
         jev: Option<crate::jev::JevClient>,
         jev_slots: Option<Arc<Semaphore>>,
     ) -> Self {
-        Self {
-            mode,
-            jev,
-            jev_slots,
-        }
+        Self { jev, jev_slots }
     }
 
     pub(crate) fn from_config(settings: &RouterSettings) -> Result<Self, String> {
-        let (jev, jev_slots) = match settings.mode {
-            RouterMode::Jev => {
-                let key = env::var("JEV_API_KEY")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| "JEV_API_KEY is required when router.mode = jev".to_string())?;
-                let url = parse_http_endpoint(&settings.jev_url, "router.jev_url")?;
-                let client = crate::jev::JevClient::new(
-                    url,
-                    key,
-                    settings.jev_model.clone(),
-                    Duration::from_millis(settings.jev_timeout_ms),
-                    settings.jev_max_response_bytes,
-                    settings.jev_min_confidence,
-                )?;
-                (
-                    Some(client),
-                    Some(Arc::new(Semaphore::new(settings.jev_concurrency))),
-                )
+        match Self::client(settings) {
+            Ok(router) => Ok(router),
+            // A globally enabled router that cannot run is an operator error.
+            Err(reason) if settings.mode == RouterMode::Jev => Err(reason),
+            Err(reason) => {
+                tracing::warn!(
+                    reason = %reason,
+                    "per-chat jev router unavailable; JEV_API_KEY and router.jev_url enable it"
+                );
+                Ok(Self::default())
             }
-            RouterMode::Off => (None, None),
-        };
-        Ok(Self::new(settings.mode, jev, jev_slots))
+        }
     }
 
-    pub(crate) fn mode(&self) -> RouterMode {
-        self.mode
+    fn client(settings: &RouterSettings) -> Result<Self, String> {
+        let (key, url) = jev_endpoint(settings)?;
+        let client = crate::jev::JevClient::new(
+            url,
+            key,
+            settings.jev_model.clone(),
+            Duration::from_millis(settings.jev_timeout_ms),
+            settings.jev_max_response_bytes,
+        )?;
+        Ok(Self::new(
+            Some(client),
+            Some(Arc::new(Semaphore::new(settings.jev_concurrency))),
+        ))
     }
 
     pub(crate) async fn gate(
         &self,
+        settings: ChatRouterSettings,
         chat: &crate::ChatConfig,
         message: &Message,
         input: &crate::ResolvedChatInput,
@@ -80,12 +78,12 @@ impl Router {
         let stop = crate::chat_style::is_stop_followup(&input.prompt)
             && (input.followup || input.prompt.split_whitespace().count() <= 7);
         let sender_id = message.from.as_ref().map(|u| u.id);
-        let active_speaker = if self.mode != RouterMode::Off && input.followup {
+        let active_speaker = if settings.mode != RouterMode::Off && input.followup {
             chat.followup_speaker(message.chat.id).await
         } else {
             None
         };
-        let cross_speaker_followup = self.mode != RouterMode::Off
+        let cross_speaker_followup = settings.mode != RouterMode::Off
             && input.followup
             && input.address == AddressKind::None
             && active_speaker.is_some_and(|sp| sp.is_some() && sp != sender_id);
@@ -97,22 +95,25 @@ impl Router {
         {
             Decision::Wait
         } else {
-            self.decide(&RouterInput {
-                text: &input.prompt,
-                address: input.address,
-                followup: input.followup,
-                stop,
-                private: message.chat.is_private(),
-                forwarded: message.forward_origin().is_some(),
-                reply_context: input.reply_context.as_deref(),
-            })
+            self.decide(
+                settings,
+                &RouterInput {
+                    text: &input.prompt,
+                    address: input.address,
+                    followup: input.followup,
+                    stop,
+                    private: message.chat.is_private(),
+                    forwarded: message.forward_origin().is_some(),
+                    reply_context: input.reply_context.as_deref(),
+                },
+            )
             .await
         };
-        if self.mode != RouterMode::Off {
+        if settings.mode != RouterMode::Off {
             tracing::info!(
                 chat_id = message.chat.id.0,
                 msg_id = message.id.0,
-                mode = ?self.mode,
+                mode = ?settings.mode,
                 address = ?input.address,
                 followup = input.followup,
                 stop,
@@ -128,18 +129,22 @@ impl Router {
         decision
     }
 
-    pub(crate) async fn decide(&self, input: &RouterInput<'_>) -> Decision {
+    pub(crate) async fn decide(
+        &self,
+        settings: ChatRouterSettings,
+        input: &RouterInput<'_>,
+    ) -> Decision {
         if input.stop {
             // `off` keeps the historical path, where stop phrases are handled
             // after the model turn; `jev` closes the window at once.
-            return match self.mode {
+            return match settings.mode {
                 RouterMode::Off => Decision::Reply,
                 RouterMode::Jev => Decision::Silent,
             };
         }
         let addressed = input.address == AddressKind::Explicit
             || (input.address == AddressKind::Named && !input.text.trim().is_empty());
-        if self.mode == RouterMode::Off {
+        if settings.mode == RouterMode::Off {
             return Decision::Reply;
         }
         let text = input.text.trim();
@@ -165,7 +170,10 @@ impl Router {
             rules
         } else {
             match &self.jev {
-                Some(client) => match client.decide(&jev_state(input)).await {
+                Some(client) => match client
+                    .decide(&jev_state(input), settings.min_confidence)
+                    .await
+                {
                     Some(Decision::Sticker) if !input.followup || !lower_has_action_verb(text) => {
                         Decision::Sticker
                     }
@@ -181,7 +189,7 @@ impl Router {
             }
         };
         tracing::debug!(
-            mode = ?self.mode,
+            mode = ?settings.mode,
             decision = ?decision,
             followup = input.followup,
             address = ?input.address,
@@ -190,6 +198,24 @@ impl Router {
         );
         decision
     }
+}
+
+/// Credentials the jev client needs, or the reason per-chat `jev` cannot be
+/// enabled on this deployment.
+fn jev_endpoint(settings: &RouterSettings) -> Result<(String, Url), String> {
+    let key = env::var("JEV_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "JEV_API_KEY is required for the jev router".to_string())?;
+    let url = parse_http_endpoint(&settings.jev_url, "router.jev_url")?;
+    Ok((key, url))
+}
+
+/// Whether a per-chat `router_mode = "jev"` can work right now. The owner tool
+/// and the Mini App refuse to store a mode that would only fall back to the
+/// rules table.
+pub(crate) fn jev_available() -> bool {
+    jev_endpoint(&config().router).is_ok()
 }
 
 /// The deterministic table. It never answers a message nobody addressed to the

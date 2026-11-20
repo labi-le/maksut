@@ -29,7 +29,8 @@ pub(crate) async fn run(
         | ToolKind::FindStickers
         | ToolKind::SendSticker
         | ToolKind::ChatSearch
-        | ToolKind::ChatIndex => "Инструмент недоступен.".to_owned(),
+        | ToolKind::ChatIndex
+        | ToolKind::ChatSettings => "Инструмент недоступен.".to_owned(),
     }
 }
 
