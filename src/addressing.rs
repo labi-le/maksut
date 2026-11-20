@@ -250,6 +250,31 @@ pub(crate) const OTHER_PARTICIPANT_VOCATIVES: &[&str] = &[
 
 const THIRD_PERSON_LEAD_PRONOUNS: &[&str] = &["он", "она", "оно", "они", "ему", "ей", "им"];
 
+const SECOND_PERSON_WORDS: &[&str] = &[
+    "ты",
+    "тебя",
+    "тебе",
+    "тобой",
+    "тобою",
+    "твой",
+    "твоя",
+    "твое",
+    "твоё",
+    "твои",
+    "твоего",
+    "твоей",
+    "твоему",
+    "твоим",
+    "твоих",
+    "твоими",
+];
+
+fn has_comma_before_last_word(text: &str) -> bool {
+    let trimmed = text.trim_end_matches(|ch: char| !ch.is_alphanumeric());
+    let without_last = trimmed.trim_end_matches(char::is_alphanumeric);
+    without_last.trim_end().ends_with(',')
+}
+
 pub(crate) fn addresses_other_participant(text: &str, has_question: bool) -> bool {
     if text
         .split_whitespace()
@@ -257,20 +282,19 @@ pub(crate) fn addresses_other_participant(text: &str, has_question: bool) -> boo
     {
         return true;
     }
-    let words: Vec<String> = text
-        .to_lowercase()
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(str::to_owned)
         .collect();
     let Some(first) = words.first() else {
         return false;
     };
-    if OTHER_PARTICIPANT_VOCATIVES.contains(&first.as_str()) {
+    if OTHER_PARTICIPANT_VOCATIVES.contains(first) {
         return true;
     }
-    if THIRD_PERSON_LEAD_PRONOUNS.contains(&first.as_str())
-        && !words.iter().any(|w| BOT_NAME_FORMS.contains(&w.as_str()))
+    if THIRD_PERSON_LEAD_PRONOUNS.contains(first)
+        && !words.iter().any(|w| BOT_NAME_FORMS.contains(w))
         && !has_question
     {
         return true;
@@ -278,7 +302,9 @@ pub(crate) fn addresses_other_participant(text: &str, has_question: bool) -> boo
     words.len() >= 2
         && words
             .last()
-            .is_some_and(|last| OTHER_PARTICIPANT_VOCATIVES.contains(&last.as_str()))
+            .is_some_and(|last| OTHER_PARTICIPANT_VOCATIVES.contains(last))
+        && (!words.iter().any(|w| SECOND_PERSON_WORDS.contains(w))
+            || has_comma_before_last_word(text))
 }
 
 pub(crate) fn explicit_sticker_request(text: &str) -> bool {
@@ -300,8 +326,31 @@ pub(crate) fn explicit_sticker_request(text: &str) -> bool {
 }
 
 pub(crate) fn explicit_feature_request(text: &str) -> bool {
-    const VERBS: &[&str] = &["добавь", "измени", "убери", "запили", "почини"];
-    const NOUNS: &[&str] = &["бот", "фич", "функци", "поведени", "возможност"];
+    const VERBS: &[&str] = &[
+        "добавь",
+        "измени",
+        "убери",
+        "запили",
+        "почини",
+        "оформ",
+        "созда",
+        "завед",
+        "запис",
+        "сдела",
+    ];
+    const NOUNS: &[&str] = &[
+        "бот",
+        "фич",
+        "функци",
+        "поведени",
+        "возможност",
+        "хотелк",
+        "ишью",
+        "issue",
+        "тикет",
+        "задач",
+        "заявк",
+    ];
     let t = text.to_lowercase();
     VERBS.iter().any(|v| t.contains(v)) && NOUNS.iter().any(|k| t.contains(k))
 }

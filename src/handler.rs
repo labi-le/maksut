@@ -10,28 +10,38 @@ async fn reply_with_sticker(bot: &Bot, message: &Message, cfg: &Settings, text: 
     {
         return false;
     }
-    // A standalone «да»/«нет» must not hide a pending plan/deploy gate from
-    // the model. The read-only probe writes nothing.
-    let improve_dir = cfg.self_improve_dir.clone();
-    let owner_id = cfg.owner_id;
-    let has_pending = tokio::task::spawn_blocking(move || {
-        crate::self_improve::has_pending_decision(&improve_dir, owner_id)
-    })
-    .await
-    .unwrap_or(false);
-    if has_pending {
-        return false;
-    }
     let Some(unique_id) = sticker_rule(text) else {
         return false;
     };
     let Some(file_id) = cfg.sticker_replies.file_id(unique_id) else {
         return false;
     };
-    if !message.chat.is_private()
-        && !group_enabled(&cfg.database, message.chat.id)
+    if !message.chat.is_private() {
+        if message.reply_to_message().is_some()
+            || crate::addressing::address_kind(message, text, &cfg.bot_username)
+                != crate::addressing::AddressKind::None
+        {
+            return false;
+        }
+        if let Some(chat) = cfg.chat.as_ref() {
+            if chat.followup_active(message.chat.id).await {
+                return false;
+            }
+        }
+        if !group_enabled(&cfg.database, message.chat.id)
             .await
             .is_ok_and(|enabled| enabled)
+        {
+            return false;
+        }
+    }
+    // Pending approval gates belong to the chat model; this check only reads the queue.
+    let (improve_dir, owner_id) = (cfg.self_improve_dir.clone(), cfg.owner_id);
+    if tokio::task::spawn_blocking(move || {
+        crate::self_improve::has_pending_decision(&improve_dir, owner_id)
+    })
+    .await
+    .unwrap_or(false)
     {
         return false;
     }
@@ -265,23 +275,22 @@ pub(crate) async fn handle_message(
         .await;
         return Ok(());
     };
-    if !message.chat.is_private() {
-        match group_enabled(&cfg.database, message.chat.id).await {
-            Ok(true) => {}
+    async fn check_group(pool: &SqlitePool, chat_id: ChatId, url: &Url) -> bool {
+        match group_enabled(pool, chat_id).await {
+            Ok(true) => true,
             Ok(false) => {
                 tracing::debug!(reason = "group disabled", "download skipped");
-                return Ok(());
+                false
             }
             Err(_) => {
-                record_failure(
-                    &cfg.database,
-                    &url,
-                    FailureDiagnostic::new("settings", "Database unavailable"),
-                )
-                .await;
-                return Ok(());
+                let diag = FailureDiagnostic::new("settings", "Database unavailable");
+                record_failure(pool, url, diag).await;
+                false
             }
         }
+    }
+    if !message.chat.is_private() && !check_group(&cfg.database, message.chat.id, &url).await {
+        return Ok(());
     }
     let Ok(_permit) = cfg.downloads.acquire().await else {
         tracing::warn!(reason = "download slot closed", "download rejected");
@@ -294,23 +303,8 @@ pub(crate) async fn handle_message(
         return Ok(());
     };
     // Recheck after queueing: an administrator may have disabled the group while we waited.
-    if !message.chat.is_private() {
-        match group_enabled(&cfg.database, message.chat.id).await {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::debug!(reason = "group disabled", "download skipped");
-                return Ok(());
-            }
-            Err(_) => {
-                record_failure(
-                    &cfg.database,
-                    &url,
-                    FailureDiagnostic::new("settings", "Database unavailable"),
-                )
-                .await;
-                return Ok(());
-            }
-        }
+    if !message.chat.is_private() && !check_group(&cfg.database, message.chat.id, &url).await {
+        return Ok(());
     }
     let key = cache_key(bot.token(), &url);
     if let Ok(Some(cached)) = lookup_cache(&cfg.database, message.chat.id.0, &key).await {

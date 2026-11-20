@@ -94,6 +94,12 @@ impl Router {
                 || !expects_answer(&input.prompt))
         {
             Decision::Wait
+        } else if settings.mode != RouterMode::Off
+            && !stop
+            && input.address == AddressKind::None
+            && is_short_reaction(&input.prompt)
+        {
+            Decision::Silent
         } else {
             self.decide(
                 settings,
@@ -155,12 +161,12 @@ impl Router {
             return Decision::Silent;
         }
         let rules = decide_rules(input);
+        if !addressed && input.followup && matches!(rules, Decision::Reply | Decision::Silent) {
+            return rules;
+        }
         if !addressed && input.followup && (input.reply_context.is_some() || addresses_other(text))
         {
             return Decision::Wait;
-        }
-        if !addressed && input.followup && (rules == Decision::Reply || is_short_reaction(text)) {
-            return rules;
         }
         if !addressed && !input.followup && !can_wake_ambient(input, text) {
             return Decision::Silent;
@@ -234,11 +240,11 @@ pub(crate) fn decide_rules(input: &RouterInput<'_>) -> Decision {
         return Decision::Silent;
     }
     let text = input.text.trim();
-    if input.reply_context.is_some() || addresses_other(text) {
-        return Decision::Wait;
-    }
     if text.is_empty() || is_short_reaction(text) {
         return Decision::Silent;
+    }
+    if input.reply_context.is_some() || addresses_other(text) {
+        return Decision::Wait;
     }
     if expects_answer(text) {
         Decision::Reply
@@ -264,11 +270,12 @@ fn is_request_verb(w: &str) -> bool {
     else {
         return false;
     };
-    const PAST: &[&str] = &[
-        "ал", "ала", "ало", "али", "ял", "яла", "яло", "яли", "ил", "ила", "ило", "или", "ул",
-        "ула", "уло", "ули", "ел", "ела", "ело", "ели",
-    ];
-    !(tail.starts_with('л') || PAST.iter().any(|s| tail.ends_with(s)))
+    const NON_REQUEST_SUFFIXES: &str = "ал ала ало али ял яла яло яли ил ила ило или ул ула уло \
+        ули ел ела ело ели аюсь яюсь уюсь юсь тся ться лся лась лось лись";
+    !(tail.starts_with('л')
+        || NON_REQUEST_SUFFIXES
+            .split_ascii_whitespace()
+            .any(|s| tail.ends_with(s)))
 }
 
 fn lower_has_action_verb(text: &str) -> bool {
@@ -368,6 +375,10 @@ fn can_wake_ambient(input: &RouterInput<'_>, text: &str) -> bool {
 const REACTIONS: &[&str] = &[
     "спасибо",
     "спс",
+    "сяп",
+    "благодарю",
+    "от души",
+    "не в бровь а в глаз",
     "ахах",
     "ахаха",
     "хаха",
@@ -437,18 +448,30 @@ const REACTIONS: &[&str] = &[
     "кринж",
 ];
 fn is_short_reaction(text: &str) -> bool {
-    if text.chars().count() > 32 {
+    if text.chars().count() > 48 {
         return false;
     }
-    let normalized = text
-        .trim_matches(|ch: char| !ch.is_alphanumeric() && ch != ' ')
-        .to_lowercase();
-    if normalized.trim().is_empty() {
+    let lower = text.to_lowercase();
+    let (mut normalized, mut first, mut count) = (String::with_capacity(lower.len()), "", 0usize);
+    for word in lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        if count > 0 {
+            normalized.push(' ');
+        } else {
+            first = word;
+        }
+        normalized.push_str(word);
+        count += 1;
+    }
+    if count == 0 {
         return text.chars().all(|ch| !ch.is_alphanumeric());
     }
     REACTIONS.contains(&normalized.as_str())
         || normalized.starts_with("ахах")
         || normalized.starts_with("хаха")
+        || (count <= 5 && matches!(first, "спасибо" | "благодарю" | "спс") && !expects_answer(text))
 }
 const MAX_STATE_CHARS: usize = 2000;
 
@@ -469,9 +492,9 @@ fn jev_state(input: &RouterInput<'_>) -> String {
         AddressKind::None => "нет",
     };
     let followup = if input.followup { "да" } else { "нет" };
+    let msg = clamp_state(input.text.trim());
     let mut state = format!(
-        "чат: {chat}\nобращение: {address}\nокно продолжения: {followup}\nсообщение: {}",
-        clamp_state(input.text.trim())
+        "чат: {chat}\nобращение: {address}\nокно продолжения: {followup}\nсообщение: {msg}"
     );
     if let Some(context) = input.reply_context {
         state.push_str(&format!("\nконтекст ответа: {}", clamp_state(context)));

@@ -335,16 +335,13 @@ pub(crate) async fn chat_reply_with_proposal(
             .research_mode(state.research.used)
             .allow_sticker(state.allow_sticker)
             .allow_feature(state.allow_feature);
-        if turn.image.is_some() {
-            request = request.without_reasoning();
-        }
         if let Some(effort) = turn_effort {
             request = request.effort(effort);
         }
         let force_synthesis = max_rounds > 1 && round + 1 == max_rounds;
-        if force_synthesis {
-            // Synthesis is already a non-reasoning call; clearing the flag here
-            // keeps the empty-reply retry from repeating the same request.
+        // Vision and final-round synthesis are non-reasoning calls; clearing the
+        // flag here keeps the empty-reply retry from repeating the same request.
+        if turn.image.is_some() || force_synthesis {
             request = request.without_reasoning();
         }
         llm_round(round, max_tokens, request.reasoning, state.research.used);
@@ -394,7 +391,7 @@ pub(crate) async fn chat_reply_with_proposal(
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;
             let bare_prompt = turn.prompt.trim().is_empty();
-            if (turn.followup || bare_prompt || state.sticker.is_some())
+            if (turn.followup || bare_prompt || state.sticker.is_some() || is_pass_reply(raw_c))
                 && content.is_empty()
                 && !state.allow_sticker
                 && state.status_fallback.is_none()
@@ -403,6 +400,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 return Ok(ChatReply {
                     sticker: state.sticker,
                     decision: state.decision,
+                    pass: true,
                     ..Default::default()
                 });
             }
@@ -429,7 +427,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 .sticker
                 .or_else(|| fallback_sticker.then(|| catalog.pick(q)).flatten())
                 .or_else(|| fallback_sticker.then(|| catalog.pick("")).flatten());
-            let text = if turn.sticker_mode && sticker.is_none() {
+            let text = if turn.sticker_mode && sticker.is_none() && turn.followup {
                 String::new()
             } else {
                 text
@@ -445,6 +443,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 decision: state.decision,
                 proposed_feature: state.proposed_feature,
                 attachments: state.research.attachments,
+                pass: false,
             });
         }
         if let Some(m) = messages
@@ -483,7 +482,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 sticker: state.sticker,
                 decision: state.decision,
                 proposed_feature: state.proposed_feature,
-                attachments: Vec::new(),
+                ..Default::default()
             });
         }
         if state.inspect_calls > 0 && !state.inspect_announced {

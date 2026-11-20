@@ -3212,9 +3212,10 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
     assert!(empty_catalog_reply.text.is_empty());
     llm_pass.task.abort();
 
-    let llm_text_only = mock_server(vec![reply_response(
-        "выебываться? я просто предупреждаю, чтобы ты потом не ныл",
-    )])
+    let llm_text_only = mock_server(vec![
+        reply_response("выебываться? я просто предупреждаю, чтобы ты потом не ныл"),
+        reply_response("выебываться? я просто предупреждаю, чтобы ты потом не ныл"),
+    ])
     .await;
     let text_only_config = ChatConfig::new(
         llm_text_only.url.clone(),
@@ -3243,6 +3244,52 @@ async fn sticker_mode_turn_finishes_in_one_round_without_verbose_second_round() 
         "sticker_mode text reply without send_sticker or [стикер] must stay silent instead of leaking a prose reply or attaching a random fallback sticker: {:?}",
         text_only_reply.text
     );
+    let direct_text_in_sticker_mode = chat_reply_with_proposal(
+        &text_only_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        direct_text_in_sticker_mode.text,
+        "выебываться? я просто предупреждаю, чтобы ты потом не ныл",
+        "direct non-followup turn in sticker_mode must preserve substantive text reply when no sticker tool was called"
+    );
+    let llm_direct_pass = mock_server(vec![reply_response("PASS")]).await;
+    let direct_pass_config = ChatConfig::new(
+        llm_direct_pass.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm_direct_pass.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let non_sticker_direct_turn = ChatTurn {
+        sticker_mode: false,
+        prompt: "короче похуй",
+        ..turn
+    };
+    let direct_pass_reply = chat_reply_with_proposal(
+        &direct_pass_config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &catalog,
+        &non_sticker_direct_turn,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        direct_pass_reply.pass
+            && direct_pass_reply.text.is_empty()
+            && direct_pass_reply.sticker.is_none(),
+        "explicit PASS on a closing reply_to_bot turn must return pass=true and an empty Ok reply instead of Err(\"empty\")"
+    );
+    llm_direct_pass.task.abort();
     let sys_prompt = body_of(&llm_text_only.requests.lock().unwrap()[0])["messages"][0]["content"]
         .as_str()
         .unwrap()

@@ -52,6 +52,32 @@ async fn sticker_replies_match_standalone_yes_no_only_where_messages_are_accepte
     assert_eq!(requests[0].fields["disable_notification"], true);
     assert_eq!(requests[0].fields["reply_parameters"]["message_id"], 73);
     fixture.api.clear().await;
+    let replied_group_no: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 74,
+        "date": 1700000001,
+        "chat": { "id": group, "type": "supergroup" },
+        "from": { "id": 1, "is_bot": false, "first_name": "Owner" },
+        "text": "НЕТ",
+        "reply_to_message": {
+            "message_id": 70,
+            "date": 1700000000,
+            "chat": { "id": group, "type": "supergroup" },
+            "from": { "id": 42, "is_bot": false, "first_name": "Member" },
+            "text": "пойдешь?"
+        }
+    }))
+    .unwrap();
+    handle_message(
+        fixture.api.bot.clone(),
+        replied_group_no,
+        Arc::clone(&fixture.cfg),
+    )
+    .await
+    .unwrap();
+    assert!(
+        sticker(&fixture.api.snapshot().await).is_empty(),
+        "owner group reply to another message must not be hijacked by keyword sticker trigger"
+    );
     fixture
         .send_text(1, 1, "Owner", &format!("да {LINK}"))
         .await;
@@ -1400,8 +1426,8 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
         "from": {"id": 1, "is_bot": false, "first_name": "Денис"},
         "video": {
             "file_id": "vid-1", "file_unique_id": "uvid-1",
-            "width": 640, "height": 480, "duration": 5,
-            "thumbnail": {"file_id": "vid-thumb-1", "file_unique_id": "uthumb-1", "width": 320, "height": 240}
+            "width": 640, "height": 480, "duration": 5, "mime_type": "video/mp4",
+            "thumbnail": {"file_id": "vid-thumb-1", "file_unique_id": "uthumb-1", "width": 320, "height": 240, "file_size": 5}
         }
     }))
     .unwrap();
@@ -1452,6 +1478,99 @@ async fn group_chat_formats_display_names_forwards_and_followup_reply_media() {
                     .as_str()
                     .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")))),
         "addressed 'максут это че' after an uncaptioned group photo must attach the recent photo: {seventh_content}"
+    );
+    let priv_photo: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 301,
+        "date": 1700000010,
+        "chat": {"id": 1, "type": "private"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис"},
+        "photo": [{
+            "file_id": "priv-photo-1",
+            "file_unique_id": "upriv-1",
+            "width": 100,
+            "height": 100,
+            "file_size": 5
+        }]
+    }))
+    .unwrap();
+    let _ =
+        crate::chat_media::resolve_chat_input(&priv_photo, "", &cfg, false, RouterMode::Off).await;
+    let priv_translate: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 302,
+        "date": 1700000011,
+        "chat": {"id": 1, "type": "private"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис"},
+        "text": "переведи плиз"
+    }))
+    .unwrap();
+    assert_eq!(
+        crate::chat_media::resolve_chat_input(
+            &priv_translate,
+            "переведи плиз",
+            &cfg,
+            false,
+            RouterMode::Off
+        )
+        .await
+        .unwrap()
+        .pending_media
+        .map(|(id, _)| id.0),
+        Some("priv-photo-1".to_owned()),
+        "private chat follow-up 'переведи плиз' must attach the recent uncaptioned photo"
+    );
+    let group_translate: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 303,
+        "date": 1700000012,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 64, "is_bot": false, "first_name": "Евгений"},
+        "text": "максут переведи плиз"
+    }))
+    .unwrap();
+    assert!(
+        crate::chat_media::resolve_chat_input(
+            &group_translate,
+            "максут переведи плиз",
+            &cfg,
+            false,
+            RouterMode::Off
+        )
+        .await
+        .unwrap()
+        .pending_media
+        .is_none(),
+        "group 'переведи плиз' must not attach an unreferenced recent group photo"
+    );
+    cfg.chat.as_ref().unwrap().clear_followup(group).await;
+    let reply_pass_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 304,
+        "date": 1700000013,
+        "chat": {"id": group.0, "type": "supergroup"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Денис"},
+        "text": "короче похуй",
+        "reply_to_message": {
+            "message_id": 2,
+            "date": 1700000003,
+            "chat": {"id": group.0, "type": "supergroup"},
+            "from": {"id": 999, "is_bot": true, "first_name": "Maksut", "username": "MyBot"},
+            "text": "ответ бота"
+        }
+    }))
+    .unwrap();
+    crate::chat_delivery::deliver_chat_reply(
+        &api.bot,
+        &reply_pass_msg,
+        &cfg,
+        cfg.chat.as_ref().unwrap(),
+        false,
+        ChatReply {
+            pass: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(
+        cfg.chat.as_ref().unwrap().followup_active(group).await,
+        "PASS on a reply_to_bot turn must keep the speaker's followup window active via deliver_chat_reply"
     );
     assert!(
         cfg.chat.as_ref().unwrap().followup_active(group).await,

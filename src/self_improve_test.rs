@@ -1469,6 +1469,20 @@ fn planned_notification_names_the_proposer_and_links_the_issue() {
     assert!(text.contains("issue создана"));
     assert!(text.contains("https://github.com/labi-le/maksut/issues/1"));
     assert!(crate::self_improve::notification_markup(&value).is_none());
+    let multiline = json!({
+        "id": "propose-crudoshlepa-29",
+        "status": "issue_created",
+        "goal": "первая строка заголовка\nвторая строка с длинным ТЗ\nтретья строка",
+        "issue_url": "https://github.com/labi-le/maksut/issues/123",
+        "requested_by": 1,
+        "proposed_by": 1,
+    });
+    let compact = crate::self_improve::notification_text(&multiline).unwrap();
+    assert!(
+        compact.contains("цель: первая строка заголовка…")
+            && !compact.contains("вторая строка с длинным ТЗ"),
+        "issue_created notification must summarize multi-line goal to first line: {compact}"
+    );
 }
 
 #[test]

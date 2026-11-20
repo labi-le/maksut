@@ -33,4 +33,5 @@ pub(crate) struct ChatReply {
     /// Files the research turn attaches after the text, already bounded by
     /// `research.max_attachments`.
     pub(crate) attachments: Vec<crate::research_attachments::ResearchAttachment>,
+    pub(crate) pass: bool,
 }

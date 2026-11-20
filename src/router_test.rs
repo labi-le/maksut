@@ -200,6 +200,49 @@ fn followup_questions_and_requests_reply() {
         "third-person statement starting with 'он' without question or bot name must stay Wait"
     );
     assert_eq!(decide_rules(&followup("ему не понравился")), Decision::Wait);
+    assert_eq!(
+        decide_rules(&followup("твоя мама андрей")),
+        Decision::Wait,
+        "second-person statement about another participant must not be treated as addressing that participant"
+    );
+    assert!(
+        !crate::addressing::addresses_other_participant("твоя мама андрей", false),
+        "second-person statement without vocative comma before trailing name addresses the current interlocutor"
+    );
+    assert!(
+        crate::addressing::addresses_other_participant("ты где, андрей?", true),
+        "vocative comma before trailing name still addresses that participant"
+    );
+    assert_eq!(
+        decide_rules(&followup("благодарю, удаляюсь работать")),
+        Decision::Silent
+    );
+    assert_eq!(
+        decide_rules(&followup("спасибо, ты - лучший")),
+        Decision::Silent
+    );
+    assert_eq!(
+        decide_rules(&followup("Не в бровь, а в глаз")),
+        Decision::Silent
+    );
+    assert_eq!(
+        decide_rules(&followup("тут создаются тикеты")),
+        Decision::Wait,
+        "third-person plural reflexive verb must not be treated as a request verb"
+    );
+    let mut dot_reply = followup(".");
+    dot_reply.reply_context = Some("(в ответ Александр: «[вложение]»)");
+    assert_eq!(
+        decide_rules(&dot_reply),
+        Decision::Silent,
+        "punctuation-only reply in followup must return Silent before reply_context check"
+    );
+    assert!(crate::addressing::explicit_feature_request(
+        "оформляй хотелку в ишью"
+    ));
+    assert!(crate::addressing::explicit_feature_request(
+        "создай тикет на эту задачу"
+    ));
     assert!(crate::chat_style::is_stop_followup("молчи"));
     assert!(crate::chat_style::is_stop_followup("тише"));
     assert!(crate::chat_style::is_stop_followup("оффнись"));
@@ -590,6 +633,47 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
     assert!(
         !chat.followup_active(chat_id).await,
         "cross-speaker stop phrase must return Silent and close the followup window"
+    );
+    chat.note_reply(chat_id, Some(UserId(1))).await;
+    let second_person_about_peer = ResolvedChatInput {
+        prompt: "твоя мама андрей".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    let owner_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 3,
+        "date": 1700000002,
+        "chat": { "id": 7, "type": "supergroup" },
+        "from": { "id": 1, "is_bot": false, "first_name": "Денис" },
+        "text": "твоя мама андрей"
+    }))
+    .unwrap();
+    let _ = jrouter
+        .gate(JEV, &chat, &owner_msg, &second_person_about_peer)
+        .await;
+    assert!(
+        chat.followup_active(chat_id).await,
+        "second-person remark mentioning another participant must keep the speaker's followup window active"
+    );
+    let cross_reaction = ResolvedChatInput {
+        prompt: "спасибо".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    assert_eq!(
+        jrouter.gate(JEV, &chat, &other_msg, &cross_reaction).await,
+        Decision::Wait,
+        "cross-speaker short reaction must Wait without clearing the active speaker's followup window"
+    );
+    assert!(
+        chat.followup_active(chat_id).await,
+        "active speaker's followup window must survive a cross-speaker short reaction"
     );
     chat.note_reply(chat_id, Some(UserId(1))).await;
     let message: Message = serde_json::from_value(serde_json::json!({

@@ -25,10 +25,22 @@ pub(crate) async fn deliver_chat_reply(
     followup: bool,
     mut reply: ChatReply,
 ) {
-    if followup && is_pass_reply(&reply.text) && reply.sticker.is_none() && reply.decision.is_none()
+    if (reply.pass || is_pass_reply(&reply.text))
+        && reply.sticker.is_none()
+        && reply.decision.is_none()
     {
-        tracing::debug!("followup PASS, nothing delivered");
-        return;
+        if !message.chat.is_private()
+            && (followup || crate::addressing::reply_to_bot(message, &cfg.bot_username))
+        {
+            chat.note_reply(message.chat.id, message.from.as_ref().map(|u| u.id))
+                .await;
+            tracing::debug!("PASS reply kept followup active, nothing delivered");
+            return;
+        }
+        if followup {
+            tracing::debug!("followup PASS, nothing delivered");
+            return;
+        }
     }
     let mut delivered = false;
     if let Some(id) = &reply.sticker {

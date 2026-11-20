@@ -128,9 +128,10 @@ async fn peek_recent_image(
     }
 }
 
-fn references_recent_image(text: &str) -> bool {
+fn references_recent_image(text: &str, private: bool) -> bool {
     let lower = text.to_lowercase();
     const STEMS: &[&str] = &["картинк", "фотк", "изображени", "пикч", "скриншот"];
+    const PRIVATE_STEMS: &[&str] = &["перевед", "перевод"];
     const WORDS: &[&str] = &[
         "скрин",
         "скрине",
@@ -167,7 +168,11 @@ fn references_recent_image(text: &str) -> bool {
     let word_hit = lower
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .any(|w| WORDS.contains(&w) || STEMS.iter().any(|s| w.starts_with(s)));
+        .any(|w| {
+            WORDS.contains(&w)
+                || STEMS.iter().any(|s| w.starts_with(s))
+                || (private && PRIVATE_STEMS.iter().any(|s| w.starts_with(s)))
+        });
     let short_hit = SHORT.iter().any(|k| {
         lower.match_indices(k).any(|(start, _)| {
             lower
@@ -332,14 +337,13 @@ pub(crate) async fn resolve_chat_input(
     let own_text = message.text().or_else(|| message.caption()).unwrap_or("");
     let current_media = message_image(message);
     let has_current_media = current_media.is_some();
-    if !message.chat.is_private()
-        && own_text.trim().is_empty()
+    if own_text.trim().is_empty()
         && (message_has_own_photo(message)
             || message.video().is_some()
             || message.animation().is_some()
             || message.video_note().is_some())
     {
-        if let Some(ref img) = current_media {
+        if let Some(img) = &current_media {
             note_recent_image(message.chat.id, message.from.as_ref().map(|u| u.id), img).await;
         }
     }
@@ -394,15 +398,17 @@ pub(crate) async fn resolve_chat_input(
     let direct_media = media.filter(|_| !followup || has_current_media || has_reply_photo);
     let pending_media = match direct_media {
         Some(img) => {
-            if has_current_media && !message.chat.is_private() && !own_text.trim().is_empty() {
+            if has_current_media && !own_text.trim().is_empty() {
                 let _ = take_recent_image(message.chat.id).await;
             }
             Some(img)
         }
-        None if !message.chat.is_private()
-            && !reply_ignored
+        None if !reply_ignored
             && (is_addressed || followup)
-            && references_recent_image(prompt.split("[файл ").next().unwrap_or(&prompt)) =>
+            && references_recent_image(
+                prompt.split("[файл ").next().unwrap_or(&prompt),
+                message.chat.is_private(),
+            ) =>
         {
             peek_recent_image(
                 message.chat.id,

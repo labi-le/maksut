@@ -226,14 +226,25 @@ pub(crate) async fn handle_owner_text(
 }
 
 fn format_snapshot(value: &Value) -> String {
-    let Some(task) = value
+    value
         .get("tasks")
         .and_then(Value::as_array)
         .and_then(|tasks| tasks.first())
-    else {
-        return "Задача не найдена.".to_owned();
-    };
-    format_status(task)
+        .map_or_else(|| "Задача не найдена.".to_owned(), format_status)
+}
+
+fn compact_goal_line(goal: &str) -> String {
+    let first = goal
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let clipped = truncate_chars(first, 140);
+    if clipped.len() < first.len() || goal.lines().filter(|l| !l.trim().is_empty()).count() > 1 {
+        format!("{}…", clipped.trim_end())
+    } else {
+        clipped
+    }
 }
 
 pub(crate) fn notification_text(value: &Value) -> Option<String> {
@@ -257,26 +268,20 @@ pub(crate) fn notification_text(value: &Value) -> Option<String> {
     } else {
         String::new()
     };
+    let issue = value.get("issue_url").and_then(Value::as_str).unwrap_or("");
     let mut text = match status {
         "proposed" => {
             format!("хотелка #{id}\n{attribution}цель: {goal}\n\nсоздаём issue или в помойку?")
         }
+        "issue_created" | "planned" if !issue.is_empty() => {
+            let short = compact_goal_line(goal);
+            format!("хотелка #{id}: issue создана\n{attribution}цель: {short}\n{issue}")
+        }
         "issue_created" => {
-            let issue = value.get("issue_url").and_then(Value::as_str).unwrap_or("");
-            if issue.is_empty() {
-                format!("хотелка #{id}: issue создана\n{attribution}цель: {goal}")
-            } else {
-                format!("хотелка #{id}: issue создана\n{attribution}цель: {goal}\n{issue}")
-            }
+            let short = compact_goal_line(goal);
+            format!("хотелка #{id}: issue создана\n{attribution}цель: {short}")
         }
-        "planned" => {
-            let issue = value.get("issue_url").and_then(Value::as_str).unwrap_or("");
-            if issue.is_empty() {
-                format!("план #{id} готов\n{attribution}цель: {goal}")
-            } else {
-                format!("хотелка #{id}: issue создана\n{attribution}цель: {goal}\n{issue}")
-            }
-        }
+        "planned" => format!("план #{id} готов\n{attribution}цель: {goal}"),
         "deployed" => format!("задача #{id} задеплоена"),
         "failed" => format!(
             "задача #{id} провалилась: {}",
@@ -307,7 +312,6 @@ pub(crate) fn notification_markup(value: &Value) -> Option<teloxide::types::Inli
         gate,
     })
 }
-
 struct QueuedUpdate {
     marker: PathBuf,
     chat_id: i64,
