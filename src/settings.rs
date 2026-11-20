@@ -12,6 +12,7 @@ pub(crate) struct Settings {
     pub(crate) cookies_file: Option<PathBuf>,
     pub(crate) cookie_refresh_url: Option<Url>,
     pub(crate) chat: Option<ChatConfig>,
+    pub(crate) garage: Option<Arc<crate::garage::GarageClient>>,
     pub(crate) router: Router,
     pub(crate) chat_locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::RwLock<()>>>>>,
     pub(crate) self_improve_dir: PathBuf,
@@ -101,6 +102,7 @@ impl Settings {
             cookies_file,
             cookie_refresh_url,
             chat,
+            garage: crate::garage::GarageClient::from_config().map(Arc::new),
             router,
             chat_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             self_improve_dir: PathBuf::from(&cfg.paths.self_improve_dir),
@@ -114,6 +116,7 @@ impl Settings {
             database_file = ?database_file,
             download_dir = %settings.download_dir.display(),
             chat_enabled = settings.chat.is_some(),
+            garage = settings.garage.is_some(),
             cookies = settings.cookies_file.is_some(),
             cookie_refresh = settings.cookie_refresh_url.is_some(),
             "settings loaded"

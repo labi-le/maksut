@@ -36,6 +36,12 @@ services:
       EMBEDDING_URL: ${EMBEDDING_URL:-http://embeddings:8080/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
+      # Empty endpoint keeps chat-media ingest disabled; see ADR 029.
+      GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-maksut}
+      GARAGE_REGION: ${GARAGE_REGION:-garage}
+      GARAGE_ACCESS_KEY_ID: ${GARAGE_ACCESS_KEY_ID:-}
+      GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:-}
     extra_hosts:
       - "api.telegram.org:${TELEGRAM_API_IP:-149.154.167.220}"
     volumes:
@@ -115,6 +121,26 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  # S3-compatible store for chat media, keyed by the sha256 of the bytes.
+  # Provisioning (layout, bucket, access key) is manual, see ADR 029; with
+  # GARAGE_ENDPOINT unset the bot never contacts this service.
+  garage:
+    image: dxflrs/garage:v2.5.0
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - data:/data
+    mem_limit: 512m
 
   cookie-refresh:
     build:

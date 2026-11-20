@@ -37,6 +37,7 @@ toml_edit = { version = "0.25", default-features = false, features = ["display",
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 sha2 = "0.11"
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 dom_smoothie = "0.19"
 dom_query = "0.29"
 encoding_rs = "0.8"

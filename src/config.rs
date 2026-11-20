@@ -24,6 +24,7 @@ pub(crate) struct Config {
     pub(crate) media: MediaSettings,
     pub(crate) memory: MemorySettings,
     pub(crate) media_cache: MediaCacheSettings,
+    pub(crate) garage: GarageSettings,
     pub(crate) code: CodeSettings,
     pub(crate) improve: ImproveSettings,
     pub(crate) cookies: CookieSettings,
@@ -157,6 +158,15 @@ impl Config {
             self.media.max_bytes = value
                 .parse()
                 .map_err(|_| "MAX_MEDIA_BYTES must be an integer in bytes".to_string())?;
+        }
+        if let Some(value) = env_value("GARAGE_ENDPOINT") {
+            self.garage.endpoint = value;
+        }
+        if let Some(value) = env_value("GARAGE_BUCKET") {
+            self.garage.bucket = value;
+        }
+        if let Some(value) = env_value("GARAGE_REGION") {
+            self.garage.region = value;
         }
         Ok(())
     }

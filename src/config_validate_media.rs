@@ -170,6 +170,34 @@ impl MediaSettings {
     }
 }
 
+impl GarageSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.endpoint.trim().is_empty() {
+            parse_http_endpoint(&self.endpoint, "garage.endpoint")?;
+        }
+        // The bucket becomes the first path segment of every signed request.
+        if self.bucket.is_empty()
+            || self.bucket.len() > 63
+            || !self.bucket.chars().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | '_')
+            })
+        {
+            return Err("garage.bucket must be 1-63 characters of [a-z0-9._-]".into());
+        }
+        if self.region.is_empty()
+            || self.region.len() > 64
+            || !self.region.chars().all(|c| c.is_ascii_graphic())
+            || self.region.contains('/')
+        {
+            return Err("garage.region must be 1-64 printable ASCII characters without '/'".into());
+        }
+        count("garage.max_bytes", self.max_bytes, 1024, 20 * 1024 * 1024)?;
+        count("garage.max_video_secs", self.max_video_secs, 1, 3600)?;
+        usize_count("garage.concurrency", self.concurrency, 1, 16)?;
+        count("garage.timeout_secs", self.timeout_secs, 1, 300)
+    }
+}
+
 impl MemorySettings {
     pub(crate) fn validate(&self) -> Result<(), String> {
         signed("memory.ignore_secs", self.ignore_secs, 1, 2_592_000)?;

@@ -165,3 +165,18 @@ fn per_attempt_timeout_must_fit_the_total() {
     cfg.read_url.timeout_secs = cfg.read_url.total_timeout_secs + 1;
     assert!(cfg.validate().is_err());
 }
+
+#[test]
+fn garage_bounds_are_validated() {
+    let mut cfg = Config::default();
+    cfg.garage.max_bytes = 21 * 1024 * 1024;
+    assert!(cfg.validate().unwrap_err().contains("garage.max_bytes"));
+    cfg.garage.max_bytes = Config::default().garage.max_bytes;
+    cfg.garage.bucket = "Bucket/../x".into();
+    assert!(cfg.validate().unwrap_err().contains("garage.bucket"));
+    cfg.garage.bucket = Config::default().garage.bucket;
+    cfg.garage.endpoint = "ftp://example.org".into();
+    assert!(cfg.validate().unwrap_err().contains("garage.endpoint"));
+    cfg.garage.endpoint = "http://garage:3900".into();
+    cfg.validate().unwrap();
+}
