@@ -3,6 +3,7 @@ use crate::*;
 
 impl VoiceSettings {
     pub(crate) fn validate(&self) -> Result<(), String> {
+        crate::config::parse_http_endpoint(&self.base_url, "voice.base_url")?;
         count("voice.timeout_secs", self.timeout_secs, 5, 120)?;
         count("voice.max_bytes", self.max_bytes, 65_536, 20_971_520)?;
         count("voice.max_duration_secs", self.max_duration_secs, 5, 1800)?;

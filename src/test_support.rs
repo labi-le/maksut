@@ -107,6 +107,7 @@ pub(crate) async fn fake_settings(root: &Path, script: &str) -> Settings {
         cookies_file: None,
         cookie_refresh_url: None,
         chat: None,
+        voice_base_url: Url::parse("http://127.0.0.1:9/").unwrap(),
         garage: None,
         router: Router::default(),
         chat_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

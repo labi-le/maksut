@@ -100,12 +100,11 @@ pub(crate) struct GithubSettings {
     pub(crate) cache_ttl_secs: u64,
 }
 
-/// Speech-to-text for voice and audio attachments. `enabled` and a non-empty
-/// `model` are both required before any download or model call happens.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct VoiceSettings {
     pub(crate) enabled: bool,
+    pub(crate) base_url: String,
     pub(crate) model: String,
     pub(crate) timeout_secs: u64,
     pub(crate) max_bytes: u64,
@@ -521,8 +520,9 @@ defaults!(GithubSettings {
 
 defaults!(VoiceSettings {
     enabled: true,
-    model: "gemini-2.5-flash".into(),
-    timeout_secs: 25,
+    base_url: "http://speaches:8000/v1".into(),
+    model: "Systran/faster-whisper-small".into(),
+    timeout_secs: 90,
     max_bytes: 4 * 1024 * 1024,
     max_duration_secs: 300,
     max_transcript_chars: 2000,

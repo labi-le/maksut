@@ -11,7 +11,7 @@ from unittest import mock
 
 IMAGE = "ghcr.io/labi-le/maksut"
 # Pinned literally so a narrowed export list cannot silently drop a mounted path.
-EXPORTED_PATHS = ("src", "tools", "docs", "Cargo.toml", "README.md", "AGENTS.md")
+EXPORTED_PATHS = ("src", "tools", "docs", "speaches", "Cargo.toml", "README.md", "AGENTS.md")
 
 
 def load_module(tmp: str):
@@ -161,6 +161,12 @@ class FakeGitAndDocker:
     def named(self, prefix):
         return [call for call in self.calls if call[: len(prefix)] == prefix]
 
+    def compose_ups(self):
+        return [call for call in self.named(["docker", "compose"]) if "up" in call]
+
+    def compose_runs(self):
+        return [call for call in self.named(["docker", "compose"]) if "run" in call]
+
 
 def install(module, fake):
     module.run = fake.run
@@ -181,11 +187,17 @@ class AutoDeployTests(unittest.TestCase):
             self.assertEqual(module.read_deployed_sha(state), "b" * 40)
             export = state / "code" / ("b" * 40)
             self.assertEqual((export / "src" / "main.rs").read_text(), "fn main() {}\n")
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             self.assertIn("--no-build", ups[0])
             self.assertIn("qdrant", ups[0])
             self.assertIn("embeddings", ups[0])
+            self.assertIn("speaches", ups[0])
+            runs = fake.compose_runs()
+            self.assertEqual(len(runs), 1)
+            self.assertIn("--profile", runs[0])
+            self.assertIn("provision", runs[0])
+            self.assertIn("speaches-models", runs[0])
             self.assertTrue(ups[0][3].endswith(module.COMPOSE_OVERRIDE))
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], "b" * 40)
@@ -286,7 +298,7 @@ class AutoDeployTests(unittest.TestCase):
                 reasons,
             )
             self.assertIn(["docker", "pull", "--quiet", f"{IMAGE}:{sha}"], fake.calls)
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], sha)
@@ -303,7 +315,7 @@ class AutoDeployTests(unittest.TestCase):
             inspect = fake.named(["docker", "inspect"])
             self.assertEqual(len(inspect), 1)
             self.assertEqual(inspect[0][-1], "maksut-maksut-1")
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], sha)
@@ -322,7 +334,7 @@ class AutoDeployTests(unittest.TestCase):
                 ),
             )
             self.assertTrue(module.deploy_once(repo, state))
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             env = [item for item in fake.envs if item.get("MAKSUT_CODE_DIR")][0]
             self.assertEqual(env["MAKSUT_CODE_DIR"], str(state / "code" / sha))
@@ -343,7 +355,7 @@ class AutoDeployTests(unittest.TestCase):
                 ),
             )
             self.assertTrue(module.deploy_once(repo, state))
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             env = [item for item in fake.envs if item.get("MAKSUT_IMAGE_TAG")][0]
             self.assertEqual(env["MAKSUT_IMAGE_TAG"], sha)
@@ -404,7 +416,7 @@ class AutoDeployTests(unittest.TestCase):
             fake = install(module, FakeGitAndDocker(branch="wip"))
             self.assertTrue(module.deploy_once(repo, state))
             self.assertEqual(fake.named(["git", "merge"]), [])
-            self.assertEqual(len(fake.named(["docker", "compose"])), 1)
+            self.assertEqual(len(fake.compose_ups()), 1)
 
     def test_missing_code_export_aborts_the_deploy(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -470,7 +482,7 @@ class AutoDeployTests(unittest.TestCase):
                 any("maksut-qdrant-1 is not running" in reason for reason in reasons),
                 reasons,
             )
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             self.assertIn("qdrant", ups[0])
 
@@ -498,7 +510,7 @@ class AutoDeployTests(unittest.TestCase):
                 any("maksut-qdrant-1 is not running" in reason for reason in reasons),
                 reasons,
             )
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             self.assertIn("qdrant", ups[0])
 
@@ -528,7 +540,7 @@ class AutoDeployTests(unittest.TestCase):
                 any("maksut-embeddings-1 is not running" in reason for reason in reasons),
                 reasons,
             )
-            ups = fake.named(["docker", "compose"])
+            ups = fake.compose_ups()
             self.assertEqual(len(ups), 1)
             self.assertIn("embeddings", ups[0])
 

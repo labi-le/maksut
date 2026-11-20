@@ -1,5 +1,4 @@
 use crate::*;
-use serde_json::json;
 use teloxide::types::Audio;
 
 /// Substituted when a voice or audio attachment cannot be downloaded or transcribed.
@@ -11,7 +10,8 @@ pub(crate) const UNRECOGNISED: &str = "[не удалось распознать
 pub(crate) struct VoiceAttachment {
     pub(crate) file_id: FileId,
     pub(crate) duration_secs: u32,
-    /// OpenAI `input_audio.format`: ogg, mp3, wav, flac, m4a, webm.
+    /// Container name used for the uploaded filename and MIME type: ogg, mp3,
+    /// wav, flac, m4a, webm.
     pub(crate) format: &'static str,
     pub(crate) label: &'static str,
     /// Set only for a replied attachment, so the block never attributes the
@@ -55,6 +55,7 @@ static VOICE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(cfg.telegram.connect_timeout_secs))
         .timeout(Duration::from_secs(cfg.voice.timeout_secs))
+        .redirect(reqwest::redirect::Policy::none())
         .pool_idle_timeout(Duration::from_secs(cfg.telegram.pool_idle_timeout_secs))
         .tcp_keepalive(Duration::from_secs(cfg.telegram.tcp_keepalive_secs))
         .tcp_nodelay(true)
@@ -62,13 +63,9 @@ static VOICE_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 
-static VOICE_AUTH_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 pub(crate) fn enabled() -> bool {
     let voice = &config().voice;
-    voice.enabled
-        && !voice.model.trim().is_empty()
-        && !VOICE_AUTH_FAILED.load(std::sync::atomic::Ordering::Relaxed)
+    voice.enabled && !voice.model.trim().is_empty()
 }
 /// The current message's voice note, audio, or addressed video, else the
 /// attachment it replies to. Audio with an unknown container is skipped.
@@ -177,7 +174,6 @@ fn known_format(ext: &str) -> Option<&'static str> {
 pub(crate) async fn transcribe(
     bot: &Bot,
     attachment: &VoiceAttachment,
-    api_key: &str,
     base_url: &Url,
 ) -> Result<(String, Option<Usage>), VoiceError> {
     let settings = &config().voice;
@@ -195,7 +191,7 @@ pub(crate) async fn transcribe(
             .await
             .map_err(|_| VoiceError::Download)?;
         let bytes = download(bot, attachment).await?;
-        transcribe_bytes(&bytes, attachment.format, api_key, base_url).await
+        transcribe_bytes(bytes, attachment.format, base_url).await
     };
     let (transcript, usage) = time::timeout(Duration::from_secs(settings.timeout_secs), bounded)
         .await
@@ -263,16 +259,12 @@ pub(crate) async fn transcription(
     {
         return None;
     }
-    let chat = cfg.chat.as_ref()?;
-    let (text, usage) =
-        match transcribe(bot, &candidate.attachment, &chat.api_key, &chat.base_url).await {
-            Ok(pair) => pair,
-            Err(error) => {
-                tracing::warn!("Voice transcription failed: {error}");
-                if matches!(candidate.attachment.label, "видео" | "видеокружок") {
-                    return None;
-                }
-                (UNRECOGNISED.to_owned(), None)
+    let (text, usage) = match transcribe(bot, &candidate.attachment, &cfg.voice_base_url).await {
+        Ok(pair) => pair,
+        Err(error) => {
+            tracing::warn!("Voice transcription failed: {error}");
+            if matches!(candidate.attachment.label, "видео" | "видеокружок") {
+                return None;
             }
         };
     if let Some(s) = message.from.as_ref() {
@@ -416,51 +408,31 @@ async fn read_bounded_body(
 }
 
 pub(crate) async fn transcribe_bytes(
-    bytes: &[u8],
+    bytes: Vec<u8>,
     format: &str,
-    api_key: &str,
     base_url: &Url,
 ) -> Result<(String, Option<Usage>), VoiceError> {
     let mut endpoint = base_url.clone();
     endpoint.set_path(&format!(
-        "{}/chat/completions",
+        "{}/audio/transcriptions",
         endpoint.path().trim_end_matches('/')
     ));
     let settings = &config().voice;
-    let mut body = json!({
-        "model": settings.model,
-        "messages": [
-            {"role": "system", "content": VOICE_TRANSCRIBE_PROMPT},
-            {"role": "user", "content": [{
-                "type": "input_audio",
-                "input_audio": {"data": "", "format": format}
-            }]}
-        ],
-        "max_tokens": u32::try_from(settings.max_transcript_chars).unwrap_or(8000),
-        "temperature": 0
-    });
-    // Assigning the encoded audio in place moves one allocation instead of
-    // serialising the multi-megabyte string through `json!`.
-    match body.pointer_mut("/messages/1/content/0/input_audio/data") {
-        Some(slot) => *slot = Value::String(base64_encode(bytes)),
-        None => return Err(VoiceError::Transcription),
-    }
+    let file = reqwest::multipart::Part::bytes(bytes)
+        .file_name(format!("voice.{format}"))
+        .mime_str(audio_mime(format))
+        .map_err(|_| VoiceError::Transcription)?;
+    let form = reqwest::multipart::Form::new()
+        .text("model", settings.model.clone())
+        .part("file", file);
     let response = VOICE_CLIENT
         .post(endpoint)
-        .bearer_auth(api_key)
-        .header("content-type", "application/json")
-        .body(body.to_string())
+        .multipart(form)
         .send()
         .await
         .map_err(|_| VoiceError::Transcription)?;
     let code = response.status().as_u16();
     if !response.status().is_success() {
-        let local = base_url
-            .host_str()
-            .is_some_and(|h| matches!(h, "127.0.0.1" | "localhost" | "::1" | "[::1]"));
-        if matches!(code, 400 | 401 | 403 | 404) && !local {
-            VOICE_AUTH_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
         tracing::warn!("Voice transcription HTTP {code}");
         return Err(VoiceError::Transcription);
     }
@@ -470,11 +442,26 @@ pub(crate) async fn transcribe_bytes(
         .map_err(|_| VoiceError::Transcription)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| VoiceError::Transcription)?;
     let usage = Usage::from_response(&value);
-    let text = transcript_from_response(&value).ok_or(VoiceError::Transcription)?;
-    let text = text.trim();
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     (!text.is_empty())
         .then(|| (text.to_owned(), usage))
         .ok_or(VoiceError::Transcription)
+}
+
+fn audio_mime(format: &str) -> &'static str {
+    match format {
+        "ogg" => "audio/ogg",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        "webm" => "audio/webm",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Accepts a plain string or the content-part array multimodal gateways return.

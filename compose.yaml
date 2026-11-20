@@ -36,6 +36,8 @@ services:
       EMBEDDING_URL: ${EMBEDDING_URL:-http://embeddings:8080/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
+      VOICE_BASE_URL: ${VOICE_BASE_URL:-http://speaches:8000/v1}
+      VOICE_MODEL: ${VOICE_MODEL:-Systran/faster-whisper-small}
       # Empty endpoint keeps chat-media ingest disabled; see ADR 029.
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-maksut}
@@ -122,6 +124,56 @@ services:
       retries: 5
       start_period: 60s
 
+  # CPU speech-to-text. Weights are preloaded by the one-shot below because the
+  # bot's 25s voice deadline cannot cover a model download on first use.
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:${SPEACHES_IMAGE_TAG:-0.8.3-cpu}
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HF_HOME: /home/ubuntu/.cache/huggingface
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      ENABLE_UI: "false"
+      LOG_LEVEL: info
+      WHISPER__INFERENCE_DEVICE: cpu
+      WHISPER__COMPUTE_TYPE: int8
+      WHISPER__CPU_THREADS: "2"
+      WHISPER__TTL: "-1"
+    volumes:
+      - speaches:/home/ubuntu/.cache/huggingface
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # One-shot companion of `speaches`; `run --rm` exits after the cache is warm.
+  speaches-models:
+    image: ghcr.io/speaches-ai/speaches:${SPEACHES_IMAGE_TAG:-0.8.3-cpu}
+    profiles: ["provision"]
+    restart: "no"
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["python", "/opt/speaches/provision_models.py"]
+    environment:
+      HF_HOME: /home/ubuntu/.cache/huggingface
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VOICE_MODEL: ${VOICE_MODEL:-Systran/faster-whisper-small}
+    volumes:
+      - speaches:/home/ubuntu/.cache/huggingface
+      - ${MAKSUT_CODE_DIR:-.}/speaches:/opt/speaches:ro
+    mem_limit: 1g
+
   # S3-compatible store for chat media, keyed by the sha256 of the bytes.
   # Provisioning (layout, bucket, access key) is manual, see ADR 029; with
   # GARAGE_ENDPOINT unset the bot never contacts this service.
@@ -179,3 +231,5 @@ volumes:
   data:
     name: maksut_data
     external: true
+  speaches:
+    name: maksut_speaches

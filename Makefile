@@ -1,4 +1,4 @@
-.PHONY: help logs logs-bot logs-cookies logs-deploy logs-improve deploy-status deploy-now
+.PHONY: help logs logs-bot logs-cookies logs-speaches logs-deploy logs-improve speaches-models deploy-status deploy-now
 
 TAIL ?= 100
 
@@ -7,8 +7,10 @@ help:
 	@printf "  make logs            Follow all logs (maksut + cookie-refresh + deploy + self-improve)\n"
 	@printf "  make logs-bot        Follow maksut container logs (TAIL=$(TAIL))\n"
 	@printf "  make logs-cookies    Follow cookie-refresh container logs (TAIL=$(TAIL))\n"
+	@printf "  make logs-speaches   Follow speaches container logs (TAIL=$(TAIL))\n"
 	@printf "  make logs-deploy     Follow maksut-deploy-hook.service journal logs (TAIL=$(TAIL))\n"
 	@printf "  make logs-improve    Follow maksut-self-improve.service journal logs (TAIL=$(TAIL))\n"
+	@printf "  make speaches-models Download VOICE_MODEL (default Systran/faster-whisper-small) into maksut_speaches\n"
 	@printf "  make deploy-status   Show deployed SHA, HEAD, origin/main, container image drift, and recent deploy events\n"
 	@printf "  make deploy-now      Run the published deploy shim now (the path the webhook takes)\n"
 
@@ -23,6 +25,12 @@ logs-bot:
 
 logs-cookies:
 	docker compose -f compose.yaml logs -f --tail $(TAIL) cookie-refresh
+
+logs-speaches:
+	docker compose -f compose.yaml logs -f --tail $(TAIL) speaches
+
+speaches-models:
+	docker compose -f compose.yaml --profile provision run --rm --no-deps speaches-models
 
 logs-deploy:
 	journalctl --user -u maksut-deploy-hook.service -f -n $(TAIL) --no-pager

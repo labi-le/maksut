@@ -8,6 +8,7 @@
 - Research replies can now attach files: for media questions the bot searches rutracker and The Pirate Bay, shows release name, size and swarm in the dossier, and sends the found `.torrent` files plus direct file links after the answer ([#121](https://github.com/labi-le/maksut/issues/121))
 - Added per-chat router settings: the bot owner can set `router_mode` (`off`/`jev`) and `router_min_confidence` for one chat through the `chat_settings` tool or the Mini App's «Чаты» tab, with the global `[router]` section as the fallback ([#123](https://github.com/labi-le/maksut/issues/123))
 - Chat media is archived to Garage by sha256 content address (`chat_media` and `chat_media_blobs`), images are described once per blob with a vision model (`garage.describe_model`) and indexed in Qdrant (`kind = "media"`), `chat_search` searches both messages and media descriptions, and `send_chat_media` re-sends archived chat media via cached `file_id` or Garage fallback ([#113](https://github.com/labi-le/maksut/issues/113))
+- Voice and audio messages are transcribed by the bot's own local Speaches (faster-whisper on CPU) service instead of a cloud model: speech recognition no longer needs an LLM provider key or quota, audio is only sent to `voice.base_url`, and a failed local service substitutes the usual `[не удалось распознать голосовое]` marker without a cloud fallback
 
 ### Fixed
 

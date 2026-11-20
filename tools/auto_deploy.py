@@ -29,11 +29,16 @@ COMPOSE_FILE = os.environ.get("AUTO_DEPLOY_COMPOSE_FILE", "compose.yaml")
 SERVICE = os.environ.get("AUTO_DEPLOY_SERVICE", "maksut")
 QDRANT_SERVICE = os.environ.get("AUTO_DEPLOY_QDRANT_SERVICE", "qdrant")
 EMBEDDINGS_SERVICE = os.environ.get("AUTO_DEPLOY_EMBEDDINGS_SERVICE", "embeddings")
+SPEACHES_SERVICE = os.environ.get("AUTO_DEPLOY_SPEACHES_SERVICE", "speaches")
+SPEACHES_MODELS_SERVICE = os.environ.get(
+    "AUTO_DEPLOY_SPEACHES_MODELS_SERVICE", "speaches-models"
+)
 GIT_TIMEOUT = 60
 PULL_TIMEOUT = 300
 UP_TIMEOUT = 120
+PROVISION_TIMEOUT = 600
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-CODE_PATHS = ("src", "tools", "docs", "Cargo.toml", "README.md", "AGENTS.md")
+CODE_PATHS = ("src", "tools", "docs", "speaches", "Cargo.toml", "README.md", "AGENTS.md")
 # Written next to the checkout so relative bind mounts and `env_file` keep
 # resolving against the repository root, then removed.
 COMPOSE_OVERRIDE = ".auto-deploy.compose.yaml"
@@ -45,6 +50,7 @@ QDRANT_CONTAINER = os.environ.get("AUTO_DEPLOY_QDRANT_CONTAINER", "maksut-qdrant
 EMBEDDINGS_CONTAINER = os.environ.get(
     "AUTO_DEPLOY_EMBEDDINGS_CONTAINER", "maksut-embeddings-1"
 )
+SPEACHES_CONTAINER = os.environ.get("AUTO_DEPLOY_SPEACHES_CONTAINER", "maksut-speaches-1")
 CODE_MOUNT = "/var/lib/maksut/code/src"
 INSPECT_TIMEOUT = 30
 # `docker inspect` without a template prints the whole config, including the
@@ -174,9 +180,9 @@ def container_drift(sha: str, state_dir: Path) -> str | None:
             break
     if not source or os.path.realpath(source) != os.path.realpath(expected):
         return f"code mount {source or 'missing'} != {expected}"
-    # The deploy brings qdrant and embeddings up alongside maksut; a missing or
+    # The deploy brings qdrant, embeddings, and speaches up alongside maksut; a missing or
     # stopped sidecar is drift even when the bot's own image and mount match.
-    for sidecar in (QDRANT_CONTAINER, EMBEDDINGS_CONTAINER):
+    for sidecar in (QDRANT_CONTAINER, EMBEDDINGS_CONTAINER, SPEACHES_CONTAINER):
         state = inspect_container(sidecar)
         if state is None:
             return f"no {sidecar} container"
@@ -287,6 +293,20 @@ def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path)
     env = dict(os.environ)
     env["MAKSUT_IMAGE_TAG"] = sha
     env["MAKSUT_CODE_DIR"] = str(code_dir)
+    # A ~650MB speech image must not consume UP_TIMEOUT on the first pull; the
+    # outcome is advisory because `up` pulls a missing image itself.
+    try:
+        pull = run(
+            ["docker", "compose", "-f", str(compose_path), "pull", "--quiet", SPEACHES_SERVICE],
+            timeout=PULL_TIMEOUT,
+            cwd=repo,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"docker compose pull {SPEACHES_SERVICE} failed: {type(error).__name__}")
+    else:
+        if pull.returncode != 0:
+            log(f"docker compose pull {SPEACHES_SERVICE} failed: {last_stderr_line(pull)}")
     try:
         proc = run(
             [
@@ -300,6 +320,7 @@ def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path)
                 SERVICE,
                 QDRANT_SERVICE,
                 EMBEDDINGS_SERVICE,
+                SPEACHES_SERVICE,
             ],
             timeout=UP_TIMEOUT,
             cwd=repo,
@@ -312,6 +333,36 @@ def recreate_container(repo: Path, sha: str, code_dir: Path, compose_path: Path)
         log(f"docker compose up failed: {last_stderr_line(proc)}")
         return False
     return True
+
+
+def provision_speaches_models(repo: Path, code_dir: Path, compose_path: Path) -> None:
+    """Warm the STT weight cache; failure is logged and never blocks the bot."""
+    env = dict(os.environ)
+    env["MAKSUT_CODE_DIR"] = str(code_dir)
+    try:
+        proc = run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(compose_path),
+                "--profile",
+                "provision",
+                "run",
+                "--rm",
+                "--no-deps",
+                "-T",
+                SPEACHES_MODELS_SERVICE,
+            ],
+            timeout=PROVISION_TIMEOUT,
+            cwd=repo,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"speaches models: {type(error).__name__}")
+        return
+    if proc.returncode != 0:
+        log(f"speaches models: {last_stderr_line(proc)}")
 
 
 def remove_image(sha: str) -> None:
@@ -361,6 +412,7 @@ def deploy_once(
     try:
         if not recreate_container(repo, target_sha, code_dir, compose_path):
             return False
+        provision_speaches_models(repo, code_dir, compose_path)
     finally:
         if temporary:
             compose_path.unlink(missing_ok=True)

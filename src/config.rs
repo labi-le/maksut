@@ -132,6 +132,12 @@ impl Config {
         if let Some(value) = env_value("LLM_SEARCH_URL") {
             self.search.url = Some(value);
         }
+        if let Some(value) = env_value("VOICE_BASE_URL") {
+            self.voice.base_url = value;
+        }
+        if let Some(value) = env_value("VOICE_MODEL") {
+            self.voice.model = value;
+        }
         if let Some(value) = env_value("QDRANT_URL") {
             self.memory.qdrant_url = value;
         }

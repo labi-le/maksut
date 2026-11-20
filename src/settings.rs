@@ -12,6 +12,7 @@ pub(crate) struct Settings {
     pub(crate) cookies_file: Option<PathBuf>,
     pub(crate) cookie_refresh_url: Option<Url>,
     pub(crate) chat: Option<ChatConfig>,
+    pub(crate) voice_base_url: Url,
     pub(crate) garage: Option<Arc<crate::garage::GarageClient>>,
     pub(crate) router: Router,
     pub(crate) chat_locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::RwLock<()>>>>>,
@@ -77,6 +78,7 @@ impl Settings {
             _ => None,
         };
         let router = Router::from_config(&cfg.router)?;
+        let voice_base_url = parse_http_endpoint(&cfg.voice.base_url, "voice.base_url")?;
         let cookie_refresh_url = cfg
             .paths
             .cookie_refresh_url
@@ -102,6 +104,7 @@ impl Settings {
             cookies_file,
             cookie_refresh_url,
             chat,
+            voice_base_url,
             garage: crate::garage::GarageClient::from_config().map(Arc::new),
             router,
             chat_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
