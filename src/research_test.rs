@@ -733,7 +733,7 @@ async fn research_timeout_returns_a_partial_dossier_with_a_header() {
         "teloxide production".to_owned(),
     ];
 
-    let (dossier, sources) = collect_research(
+    let (dossier, sources, _attachments) = collect_research(
         Arc::clone(&config.search),
         "вопрос",
         &queries,

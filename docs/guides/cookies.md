@@ -21,6 +21,10 @@ Cookies come from an authenticated Chrome profile (`~/.config/google-chrome/Defa
   - For X/Twitter, if the video already succeeded and only the photo helper failed with an auth error, only the photo helper is retried.
   - For TikTok and Pinterest/Instagram photo posts, cookies are refreshed before re-reading post metadata.
 
+## Request-scoped cookie headers (`src/cookies.rs`)
+
+`page_cookies(source, page, scope)` is the only jar reader and `page_cookies_async` its blocking-worker wrapper for async callers: rows must match the request host (`Domain=TRUE` rows against `scope.subdomain_hosts`, `Domain=FALSE` rows against `scope.exact_hosts`), match the request path, be unexpired, and carry HTTPS-only rows solely on HTTPS. At least one `scope.auth_names` cookie must be present, otherwise the call fails closed: a signed-out jar must not look signed in. `tiktok_page_cookies` is the TikTok scope; the tracker scope (`rutracker.org`, `bb_session`) reads a separate `RUTRACKER_COOKIES_FILE` so the refresh sidecar, which atomically rewrites `cookies.txt`, cannot drop a tracker session mid-run and the tracker jar never leaks into yt-dlp requests.
+
 ## Initial SSH key setup and manual fallback
 
 Before first start, create a dedicated service SSH key in `.secrets/cookie-refresh` (gitignored and excluded from the Docker build context):

@@ -35,6 +35,7 @@ self_improve_dir = "/var/lib/maksut/self-improve"
 sticker_sets_file = "sticker_sets.txt"
 sticker_descriptions_file = "sticker_descriptions.json"
 # cookies_file = "/run/secrets/maksut/cookies.txt"
+# rutracker_cookies_file = "/run/secrets/maksut/rutracker.txt"
 # cookie_refresh_url = "http://cookie-refresh:8080"
 
 [telegram]
@@ -166,6 +167,10 @@ question_max_chars = 500
 url_max_chars = 2048
 max_tracked = 256
 tracked_ttl_secs = 3600
+torrent_hits = 5
+torrent_max_bytes = 524288
+max_attachments = 3
+attachment_max_bytes = 20971520
 
 [read_url]
 max_bytes = 2097152

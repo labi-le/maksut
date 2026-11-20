@@ -947,3 +947,13 @@ async fn telegram_bot_client_drops_idle_pooled_socket_after_idle_timeout() {
     assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
     server.abort();
 }
+
+#[test]
+fn research_attachment_markup_is_rejected_before_upload() {
+    assert!(crate::attachment_send::reject_markup("text/html; charset=UTF-8").is_err());
+    assert!(crate::attachment_send::reject_markup("application/xhtml+xml").is_err());
+    assert!(crate::attachment_send::reject_markup("text/plain").is_err());
+    assert!(crate::attachment_send::reject_markup("application/x-bittorrent").is_ok());
+    assert!(crate::attachment_send::reject_markup("application/octet-stream").is_ok());
+    assert!(crate::attachment_send::reject_markup("").is_ok());
+}

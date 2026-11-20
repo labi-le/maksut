@@ -23,7 +23,7 @@ pub(crate) async fn deliver_chat_reply(
     cfg: &Settings,
     chat: &ChatConfig,
     followup: bool,
-    reply: ChatReply,
+    mut reply: ChatReply,
 ) {
     if followup && is_pass_reply(&reply.text) && reply.sticker.is_none() && reply.decision.is_none()
     {
@@ -91,6 +91,26 @@ pub(crate) async fn deliver_chat_reply(
         };
         let uid = message.from.as_ref().map_or(UserId(0), |u| u.id);
         record_assistant_reply(&cfg.database, message.chat.id, uid, rec, id, 0).await;
+    }
+    // Attachment uploads can take up to `read_url.total_timeout_secs` each;
+    // running them here would hold the chat lock, the per-user lock and a model
+    // concurrency permit for the whole transfer. The text is already sent, so
+    // the files go out from a detached task.
+    let attachments = std::mem::take(&mut reply.attachments);
+    if !attachments.is_empty() {
+        let bot = bot.clone();
+        let chat_id = message.chat.id;
+        let reply_to = message.id;
+        tokio::spawn(async move {
+            let report = crate::attachment_send::send(&bot, chat_id, &attachments).await;
+            if report.failed > 0 {
+                let note = format!("не удалось приложить файлов: {}", report.failed);
+                let _ = crate::rich_message::send_chat_chunk(
+                    &bot, chat_id, reply_to, &note, true, None,
+                )
+                .await;
+            }
+        });
     }
     if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 7) {
         chat.clear_followup(message.chat.id).await;

@@ -26,7 +26,10 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
                 continue;
             }
         };
-        if !entry.file_name().as_encoded_bytes().starts_with(b"post-") {
+        let name = entry.file_name();
+        let is_post = name.as_encoded_bytes().starts_with(b"post-");
+        let is_attach = name.as_encoded_bytes().starts_with(b"attach-");
+        if !is_post && !is_attach {
             continue;
         }
         let metadata = match entry.metadata() {
@@ -40,7 +43,9 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
                 continue;
             }
         };
-        if !metadata.is_dir() {
+        // Post directories belong to the download pipeline; attachment files
+        // are single trimmed uploads that only need removal after a crash.
+        if (is_post && !metadata.is_dir()) || (is_attach && !metadata.is_file()) {
             continue;
         }
         let modified = match metadata.modified() {
@@ -58,11 +63,16 @@ pub(crate) fn cleanup_old_downloads(download_dir: &Path) {
             .duration_since(modified)
             .is_ok_and(|age| age > Duration::from_secs(config().cleanup.max_age_secs))
         {
-            if let Err(error) = fs::remove_dir_all(entry.path()) {
+            let removal = if is_post {
+                fs::remove_dir_all(entry.path())
+            } else {
+                fs::remove_file(entry.path())
+            };
+            if let Err(error) = removal {
                 tracing::error!(
                     path = %entry.path().display(),
                     error = %error,
-                    "unable to remove directory during startup cleanup"
+                    "unable to remove entry during startup cleanup"
                 );
             } else {
                 removed += 1;

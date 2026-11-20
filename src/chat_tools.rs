@@ -458,6 +458,7 @@ pub(crate) async fn run_tool_call(
                             }
                         }
                         state.research.sources = outcome.sources;
+                        state.research.attachments = outcome.attachments;
                         outcome.result
                     }
                     Err(reason) => reason,
