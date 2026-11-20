@@ -232,7 +232,7 @@ pub(crate) struct ResearchSettings {
     pub(crate) torrent_hits: usize,
     /// Byte cap for one tracker response, HTML or JSON.
     pub(crate) torrent_max_bytes: usize,
-    /// Files the research reply may attach after the dossier text.
+    /// Files a reply may attach after the text (`research` and `read_url`).
     pub(crate) max_attachments: usize,
     /// Byte cap for one attachment download; Telegram rejects 50 MB uploads.
     pub(crate) attachment_max_bytes: u64,

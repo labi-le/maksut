@@ -375,6 +375,26 @@ pub(crate) async fn run_tool_call(
                     .to_string()
             } else if state.read_url_calls >= config().chat.read_url_calls_per_reply {
                 "лимит чтения ссылок на ответ".to_string()
+            } else if let Some(att) = crate::research_attachments::source_attachment(
+                crate::read_url::split_url_selector(target).0,
+            ) {
+                let limit = config().research.max_attachments;
+                if limit == 0 || state.research.attachments.len() >= limit {
+                    "лимит вложений на ответ".to_string()
+                } else {
+                    state.read_url_calls += 1;
+                    ack_lookup(ctx, state);
+                    let msg = format!(
+                        "файл {} будет отправлен в чат вместе с ответом",
+                        att.filename
+                    );
+                    let _ = crate::research_attachments::push_bounded(
+                        &mut state.research.attachments,
+                        att,
+                        limit,
+                    );
+                    msg
+                }
             } else {
                 state.read_url_calls += 1;
                 ack_lookup(ctx, state);
@@ -467,7 +487,14 @@ pub(crate) async fn run_tool_call(
                             }
                         }
                         state.research.sources = outcome.sources;
-                        state.research.attachments = outcome.attachments;
+                        let limit = config().research.max_attachments;
+                        for att in outcome.attachments {
+                            let _ = crate::research_attachments::push_bounded(
+                                &mut state.research.attachments,
+                                att,
+                                limit,
+                            );
+                        }
                         outcome.result
                     }
                     Err(reason) => reason,

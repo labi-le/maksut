@@ -391,11 +391,12 @@ pub(crate) async fn chat_reply_with_proposal(
             chat.remember_urls(turn.chat_id, &state.discovered_urls)
                 .await;
             let bare_prompt = turn.prompt.trim().is_empty();
-            if (turn.followup || bare_prompt || state.sticker.is_some() || is_pass_reply(raw_c))
-                && content.is_empty()
-                && !state.allow_sticker
+            let can_pass =
+                turn.followup || bare_prompt || state.sticker.is_some() || is_pass_reply(raw_c);
+            let no_extra = !state.allow_sticker
                 && state.status_fallback.is_none()
-            {
+                && state.research.attachments.is_empty();
+            if can_pass && content.is_empty() && no_extra {
                 tracing::debug!(round, "model chose PASS");
                 return Ok(ChatReply {
                     sticker: state.sticker,
@@ -432,7 +433,8 @@ pub(crate) async fn chat_reply_with_proposal(
             } else {
                 text
             };
-            let empty = text.is_empty() && sticker.is_none() && state.decision.is_none();
+            let has_out = state.decision.is_some() || !state.research.attachments.is_empty();
+            let empty = text.is_empty() && sticker.is_none() && !has_out;
             if !state.research.used && empty && !turn.followup && !bare_prompt && !turn.sticker_mode
             {
                 return Err("empty".into());
@@ -443,7 +445,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 decision: state.decision,
                 proposed_feature: state.proposed_feature,
                 attachments: state.research.attachments,
-                pass: false,
+                ..Default::default()
             });
         }
         if let Some(m) = messages
@@ -453,6 +455,7 @@ pub(crate) async fn chat_reply_with_proposal(
             m["content"] = json!(user_text.as_str());
         }
         let ac = reply.get("content").cloned().unwrap_or(Value::Null);
+        let raw = ac.as_str().unwrap_or("").trim().to_owned();
         messages.push(json!({"role": "assistant", "content": ac, "tool_calls": calls}));
         for call in &calls {
             let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -464,12 +467,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 c.pointer("/function/name").and_then(Value::as_str) == Some("send_sticker")
             })
         {
-            let raw = reply
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
-            let (cleaned, _) = crate::chat_urls::strip_raw_tool_call_tags(raw);
+            let (cleaned, _) = crate::chat_urls::strip_raw_tool_call_tags(&raw);
             let text = if cleaned.is_empty() || is_pass_reply(&cleaned) {
                 String::new()
             } else {
@@ -482,7 +480,8 @@ pub(crate) async fn chat_reply_with_proposal(
                 sticker: state.sticker,
                 decision: state.decision,
                 proposed_feature: state.proposed_feature,
-                ..Default::default()
+                attachments: state.research.attachments,
+                pass: false,
             });
         }
         if state.inspect_calls > 0 && !state.inspect_announced {

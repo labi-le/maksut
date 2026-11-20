@@ -3092,6 +3092,9 @@ fn embedded_prompts_are_trimmed_and_enforce_mandatory_rules() {
     assert!(SYSTEM_PROMPT.contains("# Mandatory Language & Style"));
     assert!(SYSTEM_PROMPT.contains("MUST communicate in Russian"));
     assert!(SYSTEM_PROMPT.contains("# Focus & Epistemic Grounding (MANDATORY)"));
+    assert!(SYSTEM_PROMPT.contains("src/attachment_send.rs"));
+    assert!(SYSTEM_PROMPT.contains("src/torrent.rs"));
+    assert!(SPEAKER_DIRECTIVE_HEADER.contains("сюсюкаться"));
     assert!(FOLLOWUP_PROMPT.contains("§ Follow-up Mode"));
     assert!(STICKER_MODE_PROMPT.contains("§ Sticker Reaction Mode"));
 }
@@ -3695,5 +3698,83 @@ async fn forced_synthesis_sends_none_and_never_retries_the_same_non_reasoning_ca
         "forced synthesis must explicitly disable reasoning_effort: {last_body}"
     );
     assert!(last_body.get("tools").is_none(), "{last_body}");
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn read_url_queues_direct_image_attachment_for_telegram_upload() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_img","type":"function","function":{"name":"read_url","arguments":"{\"url\":\"https://files.catbox.moe/i9b4qr.png\"}"}}]}}]}"#.to_owned(),
+        r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#.to_owned(),
+    ])
+    .await;
+    let config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let turn = ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(1),
+        sender_name: "Денис",
+        username: Some("crudoshlepa"),
+        message_id: 1,
+        reply_user_id: None,
+        owner: true,
+        prompt: "отправь эту фотку сюда https://files.catbox.moe/i9b4qr.png",
+        image: None,
+        effort: None,
+        followup: true,
+        sticker_mode: false,
+        router_mode: RouterMode::Off,
+        reply_context: None,
+        bot: None,
+    };
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &turn,
+        None,
+    )
+    .await
+    .expect("attachment-only reply must succeed without Err(\"empty\")");
+    assert!(
+        !reply.pass,
+        "followup turn with queued attachment must not take the PASS branch"
+    );
+    assert_eq!(reply.attachments.len(), 1);
+    assert_eq!(
+        reply.attachments[0].url,
+        "https://files.catbox.moe/i9b4qr.png"
+    );
+    assert_eq!(reply.attachments[0].filename, "i9b4qr.png");
+    assert_eq!(reply.attachments[0].kind(), crate::media::MediaKind::Photo);
+    let requests = llm.requests.lock().unwrap();
+    let second = body_of(&requests[1]);
+    let tool_msg = second["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    assert!(
+        tool_msg["content"]
+            .as_str()
+            .unwrap()
+            .contains("файл i9b4qr.png будет отправлен в чат вместе с ответом"),
+        "{tool_msg}"
+    );
     llm.task.abort();
 }

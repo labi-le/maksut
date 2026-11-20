@@ -30,8 +30,8 @@ pub(crate) struct ChatReply {
     pub(crate) sticker: Option<FileId>,
     pub(crate) decision: Option<crate::self_improve::PendingDecision>,
     pub(crate) proposed_feature: bool,
-    /// Files the research turn attaches after the text, already bounded by
-    /// `research.max_attachments`.
+    /// Files the turn attaches after the reply text (from `research` or
+    /// `read_url`), already bounded by `research.max_attachments`.
     pub(crate) attachments: Vec<crate::research_attachments::ResearchAttachment>,
     pub(crate) pass: bool,
 }

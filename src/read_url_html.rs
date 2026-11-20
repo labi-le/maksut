@@ -101,44 +101,51 @@ fn collect_document_links(
     base: &Url,
     links: &mut Vec<(String, Url)>,
 ) {
-    for node in document
-        .select("a[href], link[rel='alternate'][href]")
-        .iter()
-    {
-        if links.len() >= config().read_url.max_discovered_links {
-            break;
-        }
-        let Some(href) = node.attr("href") else {
-            continue;
-        };
-        let Ok(mut resolved) = base.join(href.trim()) else {
-            continue;
-        };
-        resolved.set_fragment(None);
-        if resolved.as_str().len() <= config().read_url.max_link_chars
-            && matches!(resolved.scheme(), "http" | "https")
-            && validate_url(&resolved).is_ok()
-            && !links.iter().any(|(_, existing)| existing == &resolved)
-        {
-            let raw_label: String = node
-                .text()
-                .chars()
-                .filter(|ch| !ch.is_control())
-                .take(1_000)
-                .collect();
-            let label = truncate_chars(
-                &raw_label.split_whitespace().collect::<Vec<_>>().join(" "),
-                80,
-            )
-            .0;
-            let label = if label.is_empty() {
-                node.attr("title")
-                    .map(|title| sanitize_title(&title))
-                    .unwrap_or_default()
-            } else {
-                label
+    let max_links = config().read_url.max_discovered_links;
+    let max_chars = config().read_url.max_link_chars;
+    for (selector, attr, is_img) in [
+        ("a[href], link[rel='alternate'][href]", "href", false),
+        ("img[src]", "src", true),
+    ] {
+        for node in document.select(selector).iter() {
+            if links.len() >= max_links {
+                break;
+            }
+            let Some(href) = node.attr(attr) else {
+                continue;
             };
-            links.push((label, resolved));
+            let Ok(mut resolved) = base.join(href.trim()) else {
+                continue;
+            };
+            resolved.set_fragment(None);
+            if resolved.as_str().len() <= max_chars
+                && matches!(resolved.scheme(), "http" | "https")
+                && (!is_img
+                    || crate::research_attachments::source_attachment_url(&resolved).is_some())
+                && validate_url(&resolved).is_ok()
+                && !links.iter().any(|(_, existing)| existing == &resolved)
+            {
+                let raw_label: String = node
+                    .text()
+                    .chars()
+                    .filter(|ch| !ch.is_control())
+                    .take(1_000)
+                    .collect();
+                let label = truncate_chars(
+                    &raw_label.split_whitespace().collect::<Vec<_>>().join(" "),
+                    80,
+                )
+                .0;
+                let label = if label.is_empty() {
+                    node.attr("title")
+                        .or_else(|| node.attr("alt"))
+                        .map(|title| sanitize_title(&title))
+                        .unwrap_or_default()
+                } else {
+                    label
+                };
+                links.push((label, resolved));
+            }
         }
     }
 }

@@ -55,34 +55,28 @@ pub(crate) fn select(
     }
     let mut attachments: Vec<ResearchAttachment> = Vec::new();
     for hit in hits {
-        if attachments.len() >= limit {
-            return attachments;
-        }
         let Some(url) = hit.download_url.as_ref() else {
             continue;
         };
-        if attachments.iter().any(|existing| &existing.url == url) {
-            continue;
+        if !push_bounded(
+            &mut attachments,
+            ResearchAttachment {
+                url: url.clone(),
+                filename: torrent_filename(hit),
+            },
+            limit,
+        ) && attachments.len() >= limit
+        {
+            return attachments;
         }
-        attachments.push(ResearchAttachment {
-            url: url.clone(),
-            filename: torrent_filename(hit),
-        });
     }
     for source in sources {
         if attachments.len() >= limit {
             break;
         }
-        let Some(attachment) = source_attachment(&source.url) else {
-            continue;
-        };
-        if attachments
-            .iter()
-            .any(|existing| existing.url == attachment.url)
-        {
-            continue;
+        if let Some(attachment) = source_attachment(&source.url) {
+            let _ = push_bounded(&mut attachments, attachment, limit);
         }
-        attachments.push(attachment);
     }
     attachments
 }
@@ -99,8 +93,24 @@ fn torrent_filename(hit: &TorrentHit) -> String {
 
 /// A direct link only qualifies when its path ends in an attachable extension;
 /// an HTML page with a `.pdf` query parameter is not a file.
-fn source_attachment(raw: &str) -> Option<ResearchAttachment> {
+pub(crate) fn push_bounded(
+    attachments: &mut Vec<ResearchAttachment>,
+    attachment: ResearchAttachment,
+    limit: usize,
+) -> bool {
+    if attachments.len() >= limit || attachments.iter().any(|e| e.url == attachment.url) {
+        return false;
+    }
+    attachments.push(attachment);
+    true
+}
+
+pub(crate) fn source_attachment(raw: &str) -> Option<ResearchAttachment> {
     let url = Url::parse(raw).ok()?;
+    source_attachment_url(&url)
+}
+
+pub(crate) fn source_attachment_url(url: &Url) -> Option<ResearchAttachment> {
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
@@ -117,7 +127,7 @@ fn source_attachment(raw: &str) -> Option<ResearchAttachment> {
         stem
     };
     Some(ResearchAttachment {
-        url: raw.to_owned(),
+        url: url.as_str().to_owned(),
         filename: format!("{stem}.{ext}"),
     })
 }

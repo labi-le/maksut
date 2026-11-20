@@ -407,8 +407,6 @@ const REACTIONS: &[&str] = &[
     "угу",
     "ага",
     "ну да",
-    "да",
-    "нет",
     "молодец",
     "браво",
     "зачёт",
@@ -493,11 +491,11 @@ fn jev_state(input: &RouterInput<'_>) -> String {
     };
     let followup = if input.followup { "да" } else { "нет" };
     let msg = clamp_state(input.text.trim());
-    let mut state = format!(
+    let mut s = format!(
         "чат: {chat}\nобращение: {address}\nокно продолжения: {followup}\nсообщение: {msg}"
     );
-    if let Some(context) = input.reply_context {
-        state.push_str(&format!("\nконтекст ответа: {}", clamp_state(context)));
+    if let Some(ctx) = input.reply_context {
+        s.push_str(&format!("\nконтекст ответа: {}", clamp_state(ctx)));
     }
-    state
+    s
 }

@@ -110,6 +110,7 @@ pub(crate) async fn deliver_chat_reply(
     // the files go out from a detached task.
     let attachments = std::mem::take(&mut reply.attachments);
     if !attachments.is_empty() {
+        delivered = true;
         let bot = bot.clone();
         let chat_id = message.chat.id;
         let reply_to = message.id;

@@ -255,6 +255,8 @@ fn xml_rss_extracts_links_and_html_footer_includes_anchor_labels() {
     let html = r#"<html><head><title>Главная</title></head><body>
         <p>Короткий текст.</p>
         <a href="/news.html">Свежие новости</a>
+        <img src="https://files.catbox.moe/i9b4qr.png" alt="Портрет">
+        <img src="/pixel.gif">
         </body></html>"#
         .as_bytes();
     let html_page = render_page(
@@ -269,6 +271,27 @@ fn xml_rss_extracts_links_and_html_footer_includes_anchor_labels() {
             .contains("- Свежие новости: http://stolyarov.info/news.html"),
         "{}",
         html_page.text
+    );
+    assert!(
+        html_page
+            .text
+            .contains("- Портрет: https://files.catbox.moe/i9b4qr.png"),
+        "{}",
+        html_page.text
+    );
+    assert!(
+        html_page
+            .links
+            .contains(&Url::parse("https://files.catbox.moe/i9b4qr.png").unwrap()),
+        "{:?}",
+        html_page.links
+    );
+    assert!(
+        !html_page
+            .links
+            .iter()
+            .any(|u| u.as_str().ends_with("pixel.gif")),
+        "non-attachable img src extensions must not pollute discovered links"
     );
 }
 

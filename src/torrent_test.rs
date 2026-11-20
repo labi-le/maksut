@@ -126,6 +126,8 @@ fn human_size_switches_units() {
 #[test]
 fn tracker_intent_gate_matches_release_words_only() {
     assert!(wants_torrents("найди фильм Дюна", &[]));
+    assert!(wants_torrents("найди симс 3", &[]));
+    assert!(wants_torrents("найди репак игры", &[]));
     assert!(wants_torrents(
         "что нового",
         &["сериал 2024 смотреть".into()]
@@ -136,6 +138,11 @@ fn tracker_intent_gate_matches_release_words_only() {
         "что такое lifetimes",
         &["rust lifetimes".into()]
     ));
+    assert!(
+        !wants_torrents("как настроить миграцию базы", &[]),
+        "'миграцию' must not trigger on the 'игр' prefix stem"
+    );
+    assert!(!wants_torrents("тигр в зоопарке", &[]));
 }
 
 #[test]

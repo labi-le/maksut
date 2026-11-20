@@ -18,3 +18,4 @@
 - Kept follow-up mode silent on punctuation-only replies and short closing thanks/farewells while preserving the active speaker's window across cross-participant reactions
 - Enabled referencing recent uncaptioned media in private chat (including follow-up translation requests)
 - Summarized multi-line feature goals to a compact first line in `issue_created` notifications and expanded `explicit_feature_request` triggers
+- Enabled `read_url` to queue direct image and file URLs (plus `<img src>` links discovered on HTML pages) for Telegram attachment upload, expanded tracker release search triggers to game/repack requests, and kept follow-up windows open on standalone `"да"` / `"нет"` choice replies

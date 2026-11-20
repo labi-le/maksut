@@ -675,6 +675,23 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         chat.followup_active(chat_id).await,
         "active speaker's followup window must survive a cross-speaker short reaction"
     );
+    let yes_followup = ResolvedChatInput {
+        prompt: "да".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    assert_ne!(
+        jrouter.gate(JEV, &chat, &owner_msg, &yes_followup).await,
+        Decision::Silent,
+        "active speaker's followup 'да' must not return Silent or clear the followup window"
+    );
+    assert!(
+        chat.followup_active(chat_id).await,
+        "active speaker's followup window must survive a standalone 'да' answer"
+    );
     chat.note_reply(chat_id, Some(UserId(1))).await;
     let message: Message = serde_json::from_value(serde_json::json!({
         "message_id": 1,

@@ -25,7 +25,7 @@ pub(crate) struct TorrentSearch {
 /// Release words that make a tracker pass worth one request. The gate is
 /// deliberately a substring match on the whole question: a false positive
 /// costs one bounded request, a false negative hides the feature.
-const INTENT_WORDS: [&str; 34] = [
+const INTENT_WORDS: &[&str] = &[
     "торрент",
     "torrent",
     "раздач",
@@ -62,6 +62,8 @@ const INTENT_WORDS: [&str; 34] = [
     "hevc",
 ];
 
+const INTENT_WORD_PREFIXES: &[&str] = &["репак", "repack", "игр", "game", "симс", "sims"];
+
 pub(crate) fn wants_torrents(question: &str, queries: &[String]) -> bool {
     let mut haystack = question.to_lowercase();
     for query in queries {
@@ -69,6 +71,10 @@ pub(crate) fn wants_torrents(question: &str, queries: &[String]) -> bool {
         haystack.push_str(&query.to_lowercase());
     }
     INTENT_WORDS.iter().any(|word| haystack.contains(word))
+        || haystack
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .any(|w| INTENT_WORD_PREFIXES.iter().any(|p| w.starts_with(p)))
 }
 
 /// One tracker pass for a release query. Providers run in parallel; a provider
