@@ -20,6 +20,7 @@ impl Config {
         self.media.validate(&self.telegram)?;
         self.memory.validate()?;
         self.media_cache.validate()?;
+        self.garage.validate()?;
         self.code.validate()?;
         self.improve.validate()?;
         self.cookies.validate()?;

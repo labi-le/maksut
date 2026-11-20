@@ -240,6 +240,7 @@ pub(crate) async fn handle_message(
         return Ok(());
     }
     let _ = record_user(flags).await;
+    crate::media_ingest::spawn(&bot, &cfg, &message, flags);
     if owner
         && message.chat.is_private()
         && crate::self_improve::handle_owner_text(&bot, &message, &cfg, typed).await

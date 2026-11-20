@@ -322,6 +322,22 @@ pub(crate) struct MediaCacheSettings {
     pub(crate) max_file_id_bytes: usize,
 }
 
+/// Content-addressed store for chat media. An empty `endpoint` disables ingest
+/// entirely, so the bot keeps running when no Garage is reachable.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct GarageSettings {
+    pub(crate) endpoint: String,
+    pub(crate) bucket: String,
+    pub(crate) region: String,
+    /// Hard cap per object; Bot API `getFile` never hands over more than 20 MiB.
+    pub(crate) max_bytes: u64,
+    pub(crate) max_video_secs: u64,
+    /// Concurrent downloads and uploads; every object can be 20 MiB.
+    pub(crate) concurrency: usize,
+    pub(crate) timeout_secs: u64,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct CodeSettings {
@@ -645,6 +661,16 @@ defaults!(MediaCacheSettings {
     max_publications: 200,
     max_description_utf16: 1024,
     max_file_id_bytes: 1024,
+});
+
+defaults!(GarageSettings {
+    endpoint: String::new(),
+    bucket: "maksut".into(),
+    region: "garage".into(),
+    max_bytes: 20 * 1024 * 1024,
+    max_video_secs: 60,
+    concurrency: 2,
+    timeout_secs: 20,
 });
 
 defaults!(CodeSettings {

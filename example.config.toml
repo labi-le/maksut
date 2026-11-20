@@ -248,6 +248,17 @@ max_publications = 200
 max_description_utf16 = 1024
 max_file_id_bytes = 1024
 
+# Content-addressed chat media. Empty endpoint disables ingest; credentials come
+# from GARAGE_ACCESS_KEY_ID and GARAGE_SECRET_ACCESS_KEY, never from this file.
+[garage]
+endpoint = ""
+bucket = "maksut"
+region = "garage"
+max_bytes = 20971520
+max_video_secs = 60
+concurrency = 2
+timeout_secs = 20
+
 [code]
 max_file_bytes = 262144
 max_output_chars = 8000

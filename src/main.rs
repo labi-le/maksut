@@ -124,7 +124,10 @@ pub(crate) use diagnostics::*;
 mod links;
 pub(crate) use links::*;
 mod browser;
+mod garage;
 mod media;
+mod media_ingest;
+mod media_store;
 mod read_url;
 mod read_url_cache;
 mod read_url_html;
@@ -340,6 +343,10 @@ mod log_redact_test;
 mod logging_test;
 #[cfg(test)]
 mod media_cache_test;
+#[cfg(test)]
+mod media_ingest_test;
+#[cfg(test)]
+mod media_store_test;
 #[cfg(test)]
 mod media_test;
 #[cfg(test)]

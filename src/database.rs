@@ -103,6 +103,7 @@ pub(crate) async fn open_database(url: &str) -> Result<SqlitePool, sqlx::Error> 
         .await?;
     migrate_chat_turns(&pool).await?;
     init_cache(&pool).await?;
+    crate::media_store::init_media_store(&pool).await?;
     tracing::info!(
         elapsed_ms = elapsed_ms(started),
         "database pool and schema ready"
