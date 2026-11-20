@@ -38,6 +38,7 @@ impl GarageClient {
             .region(aws_sdk_s3::config::Region::new(settings.region.clone()))
             .endpoint_url(settings.endpoint.trim())
             .credentials_provider(credentials)
+            .http_client(http_client())
             // Garage serves buckets as path segments, not host names.
             .force_path_style(true)
             // Only the mandatory checksum is computed: every extra algorithm
@@ -114,6 +115,18 @@ impl GarageClient {
         }
         Ok(out)
     }
+}
+
+/// `aws-sdk-s3` 1.x selects its built-in connector through the `rustls` feature,
+/// which resolves rustls 0.21 -- end of life, with no patched release. Building the
+/// hyper 1.x connector here pins the SDK to the rustls 0.23 `ring` provider the
+/// rest of the process uses.
+fn http_client() -> aws_sdk_s3::config::SharedHttpClient {
+    aws_smithy_http_client::Builder::new()
+        .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+            aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+        ))
+        .build_https()
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
