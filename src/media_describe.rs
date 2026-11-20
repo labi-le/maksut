@@ -163,8 +163,9 @@ pub(crate) async fn describe_bytes(
                 "image_url": {"url": ""}
             }]}
         ],
-        "max_tokens": 200,
-        "temperature": 0
+        "max_tokens": 300,
+        "temperature": 0,
+        "reasoning_effort": "none"
     });
     *body.pointer_mut("/messages/1/content/0/image_url/url")? =
         Value::String(format!("data:{mime};base64,{}", base64_encode(bytes)));
