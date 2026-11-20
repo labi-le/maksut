@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Long voice notes now finish local transcription instead of hitting the old timeout: `voice.timeout_secs` defaults to 90 s (CPU faster-whisper runs about 3x faster than real time) and the STT client refuses HTTP redirects
 - Preserved substantive text replies on directly addressed turns when `jev` classifies the turn as `sticker_mode` without a sticker tool call
 - Kept the speaker's group follow-up window active on second-person sentences that mention another participant without a vocative comma
 - Handled `PASS` on closing replies to the bot without an empty-reply error while keeping the speaker's follow-up window open

@@ -266,7 +266,9 @@ pub(crate) async fn transcription(
             if matches!(candidate.attachment.label, "видео" | "видеокружок") {
                 return None;
             }
-        };
+            (UNRECOGNISED.to_owned(), None)
+        }
+    };
     if let Some(s) = message.from.as_ref() {
         let site = UsageSite {
             chat_id: message.chat.id,

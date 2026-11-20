@@ -102,10 +102,16 @@ cache_ttl_secs = 60
 # {base_url}/audio/transcriptions with `model` and `file`; no LLM key is sent.
 # An empty model or enabled = false disables transcription. max_transcript_chars
 # bounds what reaches the prompt and chat history.
+#
+# timeout_secs bounds the full transcription request: model weights load on first
+# request (15–20s for faster-whisper-small on CPU), then the audio is transcribed.
+# Longer audio (approaching 300s max_duration_secs) requires more time; default is
+# 90s to accommodate CPU inference and Russian language processing on typical loads.
+# Increase further if uploads regularly time out.
 enabled = true
 base_url = "http://speaches:8000/v1"
 model = "Systran/faster-whisper-small"
-timeout_secs = 25
+timeout_secs = 90
 max_bytes = 4194304
 max_duration_secs = 300
 max_transcript_chars = 2000

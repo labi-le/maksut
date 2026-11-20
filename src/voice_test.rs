@@ -1,4 +1,4 @@
-use crate::test_support::{body_of, fake_settings, mock_server};
+use crate::test_support::{body_of, fake_settings, mock_server, mock_server_with_statuses};
 use crate::voice::{
     candidate, format_block, transcribe_bytes, transcript_from_response, VoiceAttachment,
 };
@@ -303,6 +303,73 @@ async fn voice_message_is_transcribed_recorded_and_answered() {
         .await
         .iter()
         .any(|request| request.method == "getfile"));
+    drop(requests);
+    llm.task.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_transcription_substitutes_the_marker_and_still_answers() {
+    let root = tempfile::tempdir().unwrap();
+    let mut settings = fake_settings(root.path(), "#!/bin/sh\n").await;
+    let api = crate::feature_support::FeatureApi::new().await;
+    let llm = mock_server_with_statuses(vec![
+        (500, String::new()),
+        (
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"слышал"}}]}"#.into(),
+        ),
+    ])
+    .await;
+    settings.voice_base_url = llm.url.clone();
+    settings.chat = Some(ChatConfig::new(
+        llm.url.clone(),
+        "secret".into(),
+        "model".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    ));
+    let cfg = Arc::new(settings);
+    let message = message(serde_json::json!({
+        "message_id": 74,
+        "date": 1_700_000_000,
+        "chat": {"id": 1, "type": "private"},
+        "from": {"id": 1, "is_bot": false, "first_name": "Owner"},
+        "voice": {
+            "file_id": "voice-file",
+            "file_unique_id": "unique-voice",
+            "duration": 5,
+            "mime_type": "audio/ogg"
+        }
+    }));
+    time::timeout(
+        Duration::from_secs(10),
+        handle_message(api.bot.clone(), message, Arc::clone(&cfg)),
+    )
+    .await
+    .expect("voice turn stalled")
+    .unwrap();
+
+    let requests = llm.requests.lock().unwrap().clone();
+    assert_eq!(
+        requests.len(),
+        2,
+        "transcription attempt then chat completion"
+    );
+    let chat = body_of(&requests[1]);
+    let last = chat["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default();
+    let marker = crate::voice::UNRECOGNISED;
+    assert!(last.contains(marker), "{last}");
+    let stored: (String,) = sqlx::query_as("SELECT text FROM chat_messages WHERE role = 'user'")
+        .fetch_one(&cfg.database)
+        .await
+        .unwrap();
+    assert_eq!(stored.0, marker);
     drop(requests);
     llm.task.abort();
 }
