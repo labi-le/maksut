@@ -676,7 +676,7 @@ defaults!(GarageSettings {
     max_video_secs: 60,
     concurrency: 2,
     timeout_secs: 20,
-    describe_model: "gemini-2.5-flash".into(),
+    describe_model: "deepseek-v4.1-flash".into(),
     describe_max_chars: 400,
 });
 

@@ -230,17 +230,28 @@ pub(crate) async fn load_memory(
             .bind(chat_id.0)
             .fetch_optional(pool)
             .await?;
-    let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT CASE WHEN role = 'assistant' THEN 0 ELSE author_id END, author_name, role, text FROM chat_messages WHERE chat_id = ? AND compacted_at IS NULL AND flags = 0 AND text NOT LIKE '%<tool_call>%' AND (message_id IS NULL OR message_id != ?) ORDER BY id DESC LIMIT 200",
+    type MemoryRow = (i64, String, String, String, Option<String>, Option<String>);
+    let rows: Vec<MemoryRow> = sqlx::query_as(
+        "SELECT CASE WHEN m.role = 'assistant' THEN 0 ELSE m.author_id END, m.author_name, m.role, m.text, c.kind, b.description \
+         FROM chat_messages m LEFT JOIN chat_media c ON c.chat_id = m.chat_id AND c.message_id = m.message_id \
+         LEFT JOIN chat_media_blobs b ON b.sha256 = c.storage_key \
+         WHERE m.chat_id = ? AND m.compacted_at IS NULL AND (m.flags = 0 OR (m.flags = 4 AND c.message_id IS NOT NULL)) \
+           AND m.text NOT LIKE '%<tool_call>%' AND (m.message_id IS NULL OR m.message_id != ?) ORDER BY m.id DESC LIMIT 200",
     )
     .bind(chat_id.0)
     .bind(i64::from(current_id))
     .fetch_all(pool)
     .await?;
-    let mut selected = Vec::new();
-    let mut chars = 0;
-    let history = rows.len();
-    for (author_id, author_name, role, text) in rows {
+    let (mut selected, mut chars, history) = (Vec::new(), 0, rows.len());
+    for (author_id, author_name, role, text, mkind, desc) in rows {
+        let text = match mkind.as_deref() {
+            Some(k) => crate::media_describe::compose_media_search_text(
+                k,
+                &text,
+                desc.as_deref().unwrap_or(""),
+            ),
+            None => text,
+        };
         let line = format_line(&author_name, author_id, &text);
         chars += line.chars().count();
         if chars > config().memory.recent_max_chars && !selected.is_empty() {

@@ -52,9 +52,9 @@ pub(crate) async fn ensure_described(
     content_type: &str,
     bytes: &[u8],
     usage_site: Option<&UsageSite>,
-) {
+) -> bool {
     if !enabled() {
-        return;
+        return false;
     }
     if crate::media_store::blob_description(pool, storage_key)
         .await
@@ -62,32 +62,70 @@ pub(crate) async fn ensure_described(
         .flatten()
         .is_some()
     {
-        return;
+        return false;
     }
     let Some((description, usage)) =
         describe_bytes(bytes, content_type, &chat.api_key, &chat.base_url).await
     else {
-        return;
+        return false;
     };
     let model = config().garage.describe_model.trim();
     if let Some(site) = usage_site {
         site.record(pool, model, KIND_MEDIA_DESCRIBE, usage).await;
     }
     let flags = crate::memory_guard::detect_flags(&description);
+    let now = crate::memory::unix_now();
     if flags & (crate::memory::FLAG_SECRET | crate::memory::FLAG_INJECTION) != 0 {
         tracing::warn!(stage = "describe_flags", "chat media description withheld");
-        return;
+        let _ = crate::media_store::set_blob_description(pool, storage_key, "", now).await;
+        return false;
     }
-    let _ = crate::media_store::set_blob_description(
-        pool,
-        storage_key,
-        &description,
-        crate::memory::unix_now(),
-    )
-    .await;
+    let _ = crate::media_store::set_blob_description(pool, storage_key, &description, now).await;
     if let Some(client) = QdrantClient::from_config() {
+        let _ = sync_media_points_for_blob(chat, pool, &client, storage_key).await;
         let _ = sync_media_points(chat, pool, &client).await;
     }
+    true
+}
+pub(crate) async fn backfill_blob_descriptions(
+    chat: &ChatConfig,
+    pool: &SqlitePool,
+    garage: &crate::garage::GarageClient,
+    limit: usize,
+) -> usize {
+    if !enabled() || limit == 0 {
+        return 0;
+    }
+    let cap = i64::try_from(config().chat.image_max_bytes).unwrap_or(i64::MAX);
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT sha256, kind FROM chat_media_blobs \
+         WHERE description = '' AND described_at = 0 \
+           AND kind IN ('photo', 'sticker') AND bytes > 0 AND bytes <= ? \
+         ORDER BY created_at DESC LIMIT ?",
+    )
+    .bind(cap)
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let mut done = 0usize;
+    for (sha256, kind) in rows {
+        if !enabled() {
+            break;
+        }
+        let Ok(bytes) = garage.get(&sha256).await else {
+            continue;
+        };
+        let mime = if kind == "sticker" {
+            "image/webp"
+        } else {
+            "image/jpeg"
+        };
+        if ensure_described(chat, pool, &sha256, mime, &bytes, None).await {
+            done += 1;
+        }
+    }
+    done
 }
 
 pub(crate) async fn describe_bytes(
@@ -279,61 +317,16 @@ pub(crate) async fn sync_media_points(
             break;
         };
         let scanned = rows.len();
-        let mut items = Vec::with_capacity(scanned);
-        let mut texts = Vec::with_capacity(scanned);
-        for (id, chat_id, author_id, author_name, created_at, tg_id, msg_text, mkind, skey, desc) in
-            rows
-        {
-            let combined = compose_media_search_text(&mkind, &msg_text, &desc);
-            let chunk = crate::chat_text::truncate_text(&combined, max_chars);
-            texts.push(chunk.clone());
-            items.push((
-                id,
-                chat_id,
-                author_id,
-                author_name,
-                created_at,
-                tg_id,
-                mkind,
-                skey,
-                chunk,
-            ));
-        }
-        let vectors = embed_texts(chat, &texts).await?;
-        if vectors.len() != items.len() {
-            return Err("embedding count mismatch".into());
-        }
-        let mut points = Vec::with_capacity(scanned);
-        for ((id, chat_id, author_id, author_name, created_at, tg_id, mkind, skey, text), vector) in
-            items.into_iter().zip(vectors)
-        {
-            let vector = unit_vector(vector).ok_or_else(|| "empty embedding vector".to_string())?;
-            points.push(Point {
-                id: qdrant::point_id(&format!("media:{model}:{chat_id}:{id}")),
-                vector,
-                payload: json!({
-                    "kind": "media",
-                    "chat_id": chat_id,
-                    "author_id": author_id,
-                    "author_name": author_name,
-                    "created_at": created_at,
-                    "message_id": id,
-                    "telegram_message_id": tg_id,
-                    "media_kind": mkind,
-                    "storage_key": skey,
-                    "text": text,
-                    "model": model,
-                }),
-            });
-        }
-        if !points.is_empty() {
-            if !inferred_checked {
-                let inferred = points.first().map(|p| p.vector.len()).unwrap_or(0);
-                let _ = client.ensure(inferred).await?;
-                inferred_checked = true;
-            }
-            client.upsert(&points).await?;
-            synced += points.len();
+        if !rows.is_empty() {
+            synced += embed_and_upsert_media_rows(
+                chat,
+                client,
+                &model,
+                max_chars,
+                rows,
+                &mut inferred_checked,
+            )
+            .await?;
         }
         cursor_id = last_id;
         set_media_cursor(pool, &cursor_key, cursor_id).await;
@@ -342,6 +335,108 @@ pub(crate) async fn sync_media_points(
         }
     }
     Ok(synced)
+}
+
+pub(crate) async fn sync_media_points_for_blob(
+    chat: &ChatConfig,
+    pool: &SqlitePool,
+    client: &QdrantClient,
+    storage_key: &str,
+) -> Result<usize, String> {
+    let model = config().memory.embedding_model.trim().to_owned();
+    if model.is_empty() {
+        return Ok(0);
+    }
+    let max_chars = config().memory.embedding_max_chars;
+    let rows: Vec<MediaIndexRow> = sqlx::query_as(
+        "SELECT m.id, m.chat_id, \
+                CASE WHEN m.role = 'assistant' THEN 0 ELSE m.author_id END, \
+                m.author_name, m.created_at, c.message_id, m.text, \
+                c.kind, c.storage_key, COALESCE(b.description, '') \
+         FROM chat_messages m \
+         JOIN chat_media c ON c.chat_id = m.chat_id AND c.message_id = m.message_id \
+         LEFT JOIN chat_media_blobs b ON b.sha256 = c.storage_key \
+         WHERE (m.flags & ~4) = 0 AND c.storage_key = ? \
+           AND (trim(COALESCE(b.description, '')) <> '' \
+                OR (trim(m.text) <> '' AND trim(m.text) <> '[вложение]')) \
+         ORDER BY m.id LIMIT 32",
+    )
+    .bind(storage_key)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| "database".to_string())?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let mut inferred_checked = config().memory.embedding_dim > 0;
+    embed_and_upsert_media_rows(chat, client, &model, max_chars, rows, &mut inferred_checked).await
+}
+
+async fn embed_and_upsert_media_rows(
+    chat: &ChatConfig,
+    client: &QdrantClient,
+    model: &str,
+    max_chars: usize,
+    rows: Vec<MediaIndexRow>,
+    inferred_checked: &mut bool,
+) -> Result<usize, String> {
+    let scanned = rows.len();
+    let mut items = Vec::with_capacity(scanned);
+    let mut texts = Vec::with_capacity(scanned);
+    for (id, chat_id, author_id, author_name, created_at, tg_id, msg_text, mkind, skey, desc) in
+        rows
+    {
+        let combined = compose_media_search_text(&mkind, &msg_text, &desc);
+        let chunk = crate::chat_text::truncate_text(&combined, max_chars);
+        texts.push(chunk.clone());
+        items.push((
+            id,
+            chat_id,
+            author_id,
+            author_name,
+            created_at,
+            tg_id,
+            mkind,
+            skey,
+            chunk,
+        ));
+    }
+    let vectors = embed_texts(chat, &texts).await?;
+    if vectors.len() != items.len() {
+        return Err("embedding count mismatch".into());
+    }
+    let mut points = Vec::with_capacity(scanned);
+    for ((id, chat_id, author_id, author_name, created_at, tg_id, mkind, skey, text), vector) in
+        items.into_iter().zip(vectors)
+    {
+        let vector = unit_vector(vector).ok_or_else(|| "empty embedding vector".to_string())?;
+        points.push(Point {
+            id: qdrant::point_id(&format!("media:{model}:{chat_id}:{id}")),
+            vector,
+            payload: json!({
+                "kind": "media",
+                "chat_id": chat_id,
+                "author_id": author_id,
+                "author_name": author_name,
+                "created_at": created_at,
+                "message_id": id,
+                "telegram_message_id": tg_id,
+                "media_kind": mkind,
+                "storage_key": skey,
+                "text": text,
+                "model": model,
+            }),
+        });
+    }
+    if !points.is_empty() {
+        if !*inferred_checked {
+            let inferred = points.first().map(|p| p.vector.len()).unwrap_or(0);
+            let _ = client.ensure(inferred).await?;
+            *inferred_checked = true;
+        }
+        client.upsert(&points).await?;
+    }
+    Ok(points.len())
 }
 
 pub(crate) fn compose_media_search_text(

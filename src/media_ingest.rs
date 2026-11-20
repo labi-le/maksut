@@ -10,7 +10,17 @@ pub(crate) struct MediaCandidate {
     pub(crate) file_id: FileId,
     pub(crate) file_unique_id: String,
     pub(crate) content_type: String,
+    pub(crate) thumb_file_id: Option<FileId>,
     pub(crate) is_group: bool,
+}
+
+fn thumb_id(
+    thumb: Option<&teloxide::types::PhotoSize>,
+    settings: &GarageSettings,
+) -> Option<FileId> {
+    thumb
+        .filter(|t| fits_size(t.file.size, settings))
+        .map(|t| t.file.id.clone())
 }
 
 static INGEST_SEMAPHORE: std::sync::LazyLock<Semaphore> =
@@ -20,108 +30,118 @@ static INGEST_SEMAPHORE: std::sync::LazyLock<Semaphore> =
 /// several photo sizes store the largest one; animations and videos are gated by
 /// duration before any download happens.
 pub(crate) fn candidate(message: &Message, settings: &GarageSettings) -> Option<MediaCandidate> {
-    let (file_id, file_unique_id, kind, content_type) = if let Some(photo) = message.photo() {
-        let best = photo
-            .iter()
-            .max_by_key(|size| u64::from(size.width) * u64::from(size.height))?;
-        if !fits_size(best.file.size, settings) {
-            return None;
-        }
-        (
-            best.file.id.clone(),
-            best.file.unique_id.0.clone(),
-            "photo",
-            "image/jpeg".to_owned(),
-        )
-    } else if let Some(video) = message.video() {
-        if !fits_size(video.file.size, settings)
-            || !fits_duration(video.duration.seconds(), settings)
-        {
-            return None;
-        }
-        (
-            video.file.id.clone(),
-            video.file.unique_id.0.clone(),
-            "video",
-            mime_or(video.mime_type.as_ref(), "video/mp4"),
-        )
-    } else if let Some(animation) = message.animation() {
-        if !fits_size(animation.file.size, settings)
-            || !fits_duration(animation.duration.seconds(), settings)
-        {
-            return None;
-        }
-        (
-            animation.file.id.clone(),
-            animation.file.unique_id.0.clone(),
-            "animation",
-            mime_or(animation.mime_type.as_ref(), "video/mp4"),
-        )
-    } else if let Some(document) = message.document() {
-        if !fits_size(document.file.size, settings) {
-            return None;
-        }
-        (
-            document.file.id.clone(),
-            document.file.unique_id.0.clone(),
-            "document",
-            mime_or(document.mime_type.as_ref(), "application/octet-stream"),
-        )
-    } else if let Some(audio) = message.audio() {
-        if !fits_size(audio.file.size, settings) {
-            return None;
-        }
-        (
-            audio.file.id.clone(),
-            audio.file.unique_id.0.clone(),
-            "audio",
-            mime_or(audio.mime_type.as_ref(), "audio/mpeg"),
-        )
-    } else if let Some(voice) = message.voice() {
-        if !fits_size(voice.file.size, settings) {
-            return None;
-        }
-        (
-            voice.file.id.clone(),
-            voice.file.unique_id.0.clone(),
-            "voice",
-            mime_or(voice.mime_type.as_ref(), "audio/ogg"),
-        )
-    } else if let Some(sticker) = message.sticker() {
-        if !sticker.is_animated() && !sticker.is_video() {
-            if !fits_size(sticker.file.size, settings) {
+    let (file_id, file_unique_id, kind, content_type, thumb_file_id) =
+        if let Some(photo) = message.photo() {
+            let best = photo
+                .iter()
+                .max_by_key(|size| u64::from(size.width) * u64::from(size.height))?;
+            if !fits_size(best.file.size, settings) {
                 return None;
             }
             (
-                sticker.file.id.clone(),
-                sticker.file.unique_id.0.clone(),
-                "sticker",
-                "image/webp".to_owned(),
-            )
-        } else {
-            let thumb = sticker.thumbnail.as_ref()?;
-            if !fits_size(thumb.file.size, settings) {
-                return None;
-            }
-            (
-                thumb.file.id.clone(),
-                thumb.file.unique_id.0.clone(),
-                "sticker",
+                best.file.id.clone(),
+                best.file.unique_id.0.clone(),
+                "photo",
                 "image/jpeg".to_owned(),
+                None,
             )
-        }
-    } else {
-        let note = message.video_note()?;
-        if !fits_size(note.file.size, settings) {
-            return None;
-        }
-        (
-            note.file.id.clone(),
-            note.file.unique_id.0.clone(),
-            "video_note",
-            "video/mp4".to_owned(),
-        )
-    };
+        } else if let Some(video) = message.video() {
+            if !fits_size(video.file.size, settings)
+                || !fits_duration(video.duration.seconds(), settings)
+            {
+                return None;
+            }
+            (
+                video.file.id.clone(),
+                video.file.unique_id.0.clone(),
+                "video",
+                mime_or(video.mime_type.as_ref(), "video/mp4"),
+                thumb_id(video.thumbnail.as_ref(), settings),
+            )
+        } else if let Some(animation) = message.animation() {
+            if !fits_size(animation.file.size, settings)
+                || !fits_duration(animation.duration.seconds(), settings)
+            {
+                return None;
+            }
+            (
+                animation.file.id.clone(),
+                animation.file.unique_id.0.clone(),
+                "animation",
+                mime_or(animation.mime_type.as_ref(), "video/mp4"),
+                thumb_id(animation.thumbnail.as_ref(), settings),
+            )
+        } else if let Some(document) = message.document() {
+            if !fits_size(document.file.size, settings) {
+                return None;
+            }
+            (
+                document.file.id.clone(),
+                document.file.unique_id.0.clone(),
+                "document",
+                mime_or(document.mime_type.as_ref(), "application/octet-stream"),
+                None,
+            )
+        } else if let Some(audio) = message.audio() {
+            if !fits_size(audio.file.size, settings) {
+                return None;
+            }
+            (
+                audio.file.id.clone(),
+                audio.file.unique_id.0.clone(),
+                "audio",
+                mime_or(audio.mime_type.as_ref(), "audio/mpeg"),
+                None,
+            )
+        } else if let Some(voice) = message.voice() {
+            if !fits_size(voice.file.size, settings) {
+                return None;
+            }
+            (
+                voice.file.id.clone(),
+                voice.file.unique_id.0.clone(),
+                "voice",
+                mime_or(voice.mime_type.as_ref(), "audio/ogg"),
+                None,
+            )
+        } else if let Some(sticker) = message.sticker() {
+            if !sticker.is_animated() && !sticker.is_video() {
+                if !fits_size(sticker.file.size, settings) {
+                    return None;
+                }
+                (
+                    sticker.file.id.clone(),
+                    sticker.file.unique_id.0.clone(),
+                    "sticker",
+                    "image/webp".to_owned(),
+                    None,
+                )
+            } else {
+                let thumb = sticker.thumbnail.as_ref()?;
+                if !fits_size(thumb.file.size, settings) {
+                    return None;
+                }
+                (
+                    thumb.file.id.clone(),
+                    thumb.file.unique_id.0.clone(),
+                    "sticker",
+                    "image/jpeg".to_owned(),
+                    None,
+                )
+            }
+        } else {
+            let note = message.video_note()?;
+            if !fits_size(note.file.size, settings) {
+                return None;
+            }
+            (
+                note.file.id.clone(),
+                note.file.unique_id.0.clone(),
+                "video_note",
+                "video/mp4".to_owned(),
+                thumb_id(note.thumbnail.as_ref(), settings),
+            )
+        };
     Some(MediaCandidate {
         chat_id: message.chat.id.0,
         message_id: i64::from(message.id.0),
@@ -129,6 +149,7 @@ pub(crate) fn candidate(message: &Message, settings: &GarageSettings) -> Option<
         file_id,
         file_unique_id,
         content_type,
+        thumb_file_id,
         is_group: message.chat.is_group() || message.chat.is_supergroup(),
     })
 }
@@ -213,16 +234,31 @@ async fn ingest(
                 return;
             }
         };
-    if let (Some(chat), Some(image_bytes)) = (cfg.chat.as_ref(), remaining_bytes) {
-        crate::media_describe::ensure_described(
-            chat,
-            &cfg.database,
-            &storage_key,
-            &candidate.content_type,
-            &image_bytes,
-            usage_site.as_ref(),
-        )
-        .await;
+    if let Some(chat) = cfg.chat.as_ref() {
+        let vlm_pair = match remaining_bytes {
+            Some(image_bytes) => Some((image_bytes, candidate.content_type.as_str())),
+            None => match candidate.thumb_file_id.as_ref() {
+                Some(thumb_id) => crate::chat_media::download_raw_file(
+                    &bot,
+                    thumb_id,
+                    config().chat.image_max_bytes,
+                )
+                .await
+                .map(|bytes| (bytes, "image/jpeg")),
+                None => None,
+            },
+        };
+        if let Some((image_bytes, mime)) = vlm_pair {
+            let _ = crate::media_describe::ensure_described(
+                chat,
+                &cfg.database,
+                &storage_key,
+                mime,
+                &image_bytes,
+                usage_site.as_ref(),
+            )
+            .await;
+        }
     }
 }
 

@@ -160,6 +160,8 @@ fn references_recent_image(text: &str, private: bool) -> bool {
         "это че",
         "это чё",
         "а это",
+        "а эту",
+        "а этот",
         "а тут",
         "а здесь",
         "держи еще раз",

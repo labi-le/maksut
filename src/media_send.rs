@@ -56,10 +56,46 @@ pub(crate) async fn run_tool(args: &Value, ctx: &ToolContext<'_>) -> String {
         };
     let garage = GarageClient::from_config();
     match deliver_stored_media(bot, ctx.pool, ctx.chat_id, &stored, garage.as_ref()).await {
-        Ok(_) => format!(
-            "отправлено {} из архива чата (message_id={}, storage_key={})",
-            stored.kind, stored.message_id, stored.storage_key
-        ),
+        Ok((sent_message_id, _)) => {
+            let log_text = match stored.description.as_deref() {
+                Some(desc) if !desc.trim().is_empty() => format!(
+                    "[отправил {} из архива (message_id={}): {}]",
+                    stored.kind, stored.message_id, desc
+                ),
+                _ => format!(
+                    "[отправил {} из архива (message_id={})]",
+                    stored.kind, stored.message_id
+                ),
+            };
+            let _ = crate::memory::record_message(
+                ctx.pool,
+                RecordMessage::new(
+                    ctx.chat_id,
+                    ctx.user_id.0 as i64,
+                    "максут",
+                    "assistant",
+                    &log_text,
+                )
+                .with_message_id(Some(sent_message_id))
+                .with_flags(0),
+            )
+            .await;
+            if let Some(desc) = stored
+                .description
+                .as_deref()
+                .filter(|d| !d.trim().is_empty())
+            {
+                format!(
+                    "отправлено {} из архива чата (message_id={}, storage_key={}, описание: {})",
+                    stored.kind, stored.message_id, stored.storage_key, desc
+                )
+            } else {
+                format!(
+                    "отправлено {} из архива чата (message_id={}, storage_key={})",
+                    stored.kind, stored.message_id, stored.storage_key
+                )
+            }
+        }
         Err(reason) => reason,
     }
 }
@@ -70,14 +106,11 @@ pub(crate) async fn deliver_stored_media(
     chat_id: ChatId,
     stored: &StoredChatMedia,
     garage: Option<&GarageClient>,
-) -> Result<SendMediaOutcome, String> {
+) -> Result<(i32, SendMediaOutcome), String> {
     if !stored.file_id.trim().is_empty() {
         let input = InputFile::file_id(FileId(stored.file_id.clone()));
-        if send_by_kind(bot, chat_id, &stored.kind, input)
-            .await
-            .is_ok()
-        {
-            return Ok(SendMediaOutcome::CachedFileId);
+        if let Ok(sent) = send_by_kind(bot, chat_id, &stored.kind, input).await {
+            return Ok((sent.id.0, SendMediaOutcome::CachedFileId));
         }
     }
     let Some(client) = garage else {
@@ -99,7 +132,7 @@ pub(crate) async fn deliver_stored_media(
                 refresh_binding_file_id(pool, stored.chat_id, stored.message_id, &fresh_id).await;
         }
     }
-    Ok(SendMediaOutcome::GarageFallback)
+    Ok((sent.id.0, SendMediaOutcome::GarageFallback))
 }
 
 async fn send_by_kind(

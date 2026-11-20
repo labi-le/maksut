@@ -183,6 +183,7 @@ async fn persist_uploads_once_per_content_address() {
         file_id: FileId("f1".into()),
         file_unique_id: "u1".into(),
         content_type: "image/jpeg".into(),
+        thumb_file_id: None,
         is_group: false,
     };
     persist(&pool, &client, &first, bytes.clone())
@@ -250,6 +251,7 @@ async fn failed_upload_writes_no_binding() {
         file_id: FileId("f1".into()),
         file_unique_id: "u1".into(),
         content_type: "image/jpeg".into(),
+        thumb_file_id: None,
         is_group: false,
     };
     let result = persist(&pool, &client, &picked, b"bytes".to_vec()).await;
@@ -344,7 +346,7 @@ async fn vlm_description_stores_once_per_blob_and_withholds_secret_text() {
         user_id: UserId(7),
         author_name: "аня".into(),
     };
-    crate::media_describe::ensure_described(
+    let _ = crate::media_describe::ensure_described(
         &chat,
         &pool,
         &key1,
@@ -360,7 +362,7 @@ async fn vlm_description_stores_once_per_blob_and_withholds_secret_text() {
             .as_deref(),
         Some("Скриншот таблицы с ценами на видеокарты.")
     );
-    crate::media_describe::ensure_described(
+    let _ = crate::media_describe::ensure_described(
         &chat,
         &pool,
         &key1,
@@ -383,7 +385,7 @@ async fn vlm_description_stores_once_per_blob_and_withholds_secret_text() {
     )
     .await
     .unwrap();
-    crate::media_describe::ensure_described(
+    let _ = crate::media_describe::ensure_described(
         &chat,
         &pool,
         &key2,
@@ -444,7 +446,7 @@ async fn send_chat_media_uses_cached_file_id_and_falls_back_to_garage() {
         crate::media_send::deliver_stored_media(&api.bot, &pool, ChatId(5), &stored, Some(&garage))
             .await
             .unwrap();
-    assert_eq!(first, crate::media_send::SendMediaOutcome::CachedFileId);
+    assert_eq!(first.1, crate::media_send::SendMediaOutcome::CachedFileId);
     assert_eq!(
         s3.requests.lock().unwrap().len(),
         0,
@@ -463,7 +465,10 @@ async fn send_chat_media_uses_cached_file_id_and_falls_back_to_garage() {
         crate::media_send::deliver_stored_media(&api.bot, &pool, ChatId(5), &stored, Some(&garage))
             .await
             .unwrap();
-    assert_eq!(second, crate::media_send::SendMediaOutcome::GarageFallback);
+    assert_eq!(
+        second.1,
+        crate::media_send::SendMediaOutcome::GarageFallback
+    );
     assert_eq!(
         s3.requests.lock().unwrap().len(),
         1,
@@ -473,4 +478,48 @@ async fn send_chat_media_uses_cached_file_id_and_falls_back_to_garage() {
     assert_eq!(snapshots.len(), 2);
     let media = snapshots[1].media();
     assert_eq!(snapshots[1].upload(&media[0]), Some(b"s3bytes".as_slice()));
+}
+
+#[tokio::test]
+async fn backfill_describes_stored_photo_blobs_from_garage() {
+    let (_dir, pool) = crate::test_support::test_pool().await;
+    let s3 = fake_s3_get(200, b"jpeg-from-garage".to_vec()).await;
+    let garage = client(&s3.endpoint, 1024 * 1024);
+    let llm = crate::test_support::mock_server(vec![serde_json::json!({
+        "choices": [{"message": {"role": "assistant", "content": "Фото кота на диване."}}],
+        "usage": {"prompt_tokens": 80, "completion_tokens": 8}
+    })
+    .to_string()])
+    .await;
+    let chat = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    let key = "ab".repeat(32);
+    crate::media_store::insert_blob(
+        &pool,
+        &crate::media_store::BlobRecord {
+            sha256: &key,
+            kind: "photo",
+            bytes: 16,
+            created_at: 30,
+        },
+    )
+    .await
+    .unwrap();
+    let backfilled =
+        crate::media_describe::backfill_blob_descriptions(&chat, &pool, &garage, 4).await;
+    assert_eq!(backfilled, 1);
+    assert_eq!(
+        crate::media_store::blob_description(&pool, &key)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("Фото кота на диване.")
+    );
+    llm.task.abort();
 }

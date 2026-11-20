@@ -245,6 +245,9 @@ pub(crate) async fn reindex_with(
                 .to_string();
             }
         };
+    if let Some(garage) = crate::garage::GarageClient::from_config() {
+        let _ = crate::media_describe::backfill_blob_descriptions(chat, pool, &garage, 8).await;
+    }
     let _ = crate::media_describe::sync_media_points(chat, pool, client).await;
     match coverage(pool, Some(client), &model).await {
         Ok((done, pending)) => json!({
@@ -298,6 +301,18 @@ pub(crate) async fn chat_indexer(cfg: Arc<Settings>) {
                             Err(reason) => {
                                 tracing::warn!("Qdrant self memory sync failed: {reason}");
                             }
+                        }
+                    }
+                    if let Some(garage) = cfg.garage.as_deref() {
+                        let count = crate::media_describe::backfill_blob_descriptions(
+                            chat,
+                            &cfg.database,
+                            garage,
+                            4,
+                        )
+                        .await;
+                        if count > 0 {
+                            tracing::debug!(count, "backfilled blob descriptions from garage");
                         }
                     }
                     match crate::media_describe::sync_media_points(chat, &cfg.database, &client)
