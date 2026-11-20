@@ -137,3 +137,56 @@ pub(crate) fn stem_slice(word: &str) -> &str {
         .and_then(|(idx, _)| word.get(..idx))
         .unwrap_or(word)
 }
+
+#[derive(Clone, Debug)]
+pub(crate) struct MediaMeta {
+    pub(crate) telegram_message_id: i64,
+    pub(crate) kind: String,
+    pub(crate) storage_key: String,
+    pub(crate) description: Option<String>,
+}
+
+pub(crate) async fn lookup_media_meta(
+    pool: &SqlitePool,
+    chat_id: ChatId,
+    hits: &[(f32, i64, i64, String, i64, String)],
+) -> std::collections::HashMap<i64, MediaMeta> {
+    if hits.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let placeholders = std::iter::repeat_n("?", hits.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT m.id, c.message_id, c.kind, c.storage_key, COALESCE(b.description, '') \
+         FROM chat_messages m \
+         JOIN chat_media c ON c.chat_id = m.chat_id AND c.message_id = m.message_id \
+         LEFT JOIN chat_media_blobs b ON b.sha256 = c.storage_key \
+         WHERE m.chat_id = ? AND m.id IN ({placeholders})"
+    );
+    let mut query =
+        sqlx::query_as::<_, (i64, i64, String, String, String)>(sqlx::AssertSqlSafe(sql))
+            .bind(chat_id.0);
+    for row in hits {
+        query = query.bind(row.1);
+    }
+    query
+        .fetch_all(pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(id, tg_id, kind, storage_key, desc)| {
+                    (
+                        id,
+                        MediaMeta {
+                            telegram_message_id: tg_id,
+                            kind,
+                            storage_key,
+                            description: (!desc.trim().is_empty()).then_some(desc),
+                        },
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}

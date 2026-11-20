@@ -87,6 +87,29 @@ pub(crate) fn candidate(message: &Message, settings: &GarageSettings) -> Option<
             "voice",
             mime_or(voice.mime_type.as_ref(), "audio/ogg"),
         )
+    } else if let Some(sticker) = message.sticker() {
+        if !sticker.is_animated() && !sticker.is_video() {
+            if !fits_size(sticker.file.size, settings) {
+                return None;
+            }
+            (
+                sticker.file.id.clone(),
+                sticker.file.unique_id.0.clone(),
+                "sticker",
+                "image/webp".to_owned(),
+            )
+        } else {
+            let thumb = sticker.thumbnail.as_ref()?;
+            if !fits_size(thumb.file.size, settings) {
+                return None;
+            }
+            (
+                thumb.file.id.clone(),
+                thumb.file.unique_id.0.clone(),
+                "sticker",
+                "image/jpeg".to_owned(),
+            )
+        }
     } else {
         let note = message.video_note()?;
         if !fits_size(note.file.size, settings) {
@@ -138,12 +161,22 @@ pub(crate) fn spawn(bot: &Bot, cfg: &Arc<Settings>, message: &Message, flags: i6
     };
     let bot = bot.clone();
     let cfg = Arc::clone(cfg);
+    let usage_site = message.from.as_ref().map(|sender| UsageSite {
+        chat_id: message.chat.id,
+        user_id: sender.id,
+        author_name: crate::chat_style::display_author_name(sender),
+    });
     tokio::spawn(async move {
-        ingest(bot, cfg, candidate).await;
+        ingest(bot, cfg, candidate, usage_site).await;
     });
 }
 
-async fn ingest(bot: Bot, cfg: Arc<Settings>, candidate: MediaCandidate) {
+async fn ingest(
+    bot: Bot,
+    cfg: Arc<Settings>,
+    candidate: MediaCandidate,
+    usage_site: Option<UsageSite>,
+) {
     let Some(client) = cfg.garage.as_deref() else {
         return;
     };
@@ -168,13 +201,28 @@ async fn ingest(bot: Bot, cfg: Arc<Settings>, candidate: MediaCandidate) {
         );
         return;
     };
-    match persist(&cfg.database, client, &candidate, bytes).await {
-        Ok(()) => {}
-        Err(error) => tracing::warn!(
-            stage = error.stage(),
-            kind = candidate.kind,
-            "chat media ingest failed"
-        ),
+    let (storage_key, remaining_bytes) =
+        match persist(&cfg.database, client, &candidate, bytes).await {
+            Ok(pair) => pair,
+            Err(error) => {
+                tracing::warn!(
+                    stage = error.stage(),
+                    kind = candidate.kind,
+                    "chat media ingest failed"
+                );
+                return;
+            }
+        };
+    if let (Some(chat), Some(image_bytes)) = (cfg.chat.as_ref(), remaining_bytes) {
+        crate::media_describe::ensure_described(
+            chat,
+            &cfg.database,
+            &storage_key,
+            &candidate.content_type,
+            &image_bytes,
+            usage_site.as_ref(),
+        )
+        .await;
     }
 }
 
@@ -185,14 +233,20 @@ pub(crate) async fn persist(
     client: &GarageClient,
     candidate: &MediaCandidate,
     bytes: Vec<u8>,
-) -> Result<(), IngestError> {
+) -> Result<(String, Option<Vec<u8>>), IngestError> {
     let now = crate::memory::unix_now();
     let storage_key = sha256_hex(&bytes);
     let stored_bytes = bytes.len() as i64;
-    if !crate::media_store::blob_known(pool, &storage_key)
+    let describable = crate::media_describe::is_describable_image(
+        candidate.kind,
+        &candidate.content_type,
+        bytes.len(),
+    );
+    let remaining = if !crate::media_store::blob_known(pool, &storage_key)
         .await
         .map_err(|_| IngestError::Store)?
     {
+        let vlm_copy = describable.then(|| bytes.clone());
         client
             .put(&storage_key, bytes, &candidate.content_type)
             .await
@@ -208,7 +262,10 @@ pub(crate) async fn persist(
         )
         .await
         .map_err(|_| IngestError::Store)?;
-    }
+        vlm_copy
+    } else {
+        describable.then_some(bytes)
+    };
     crate::media_store::insert_binding(
         pool,
         &crate::media_store::MediaBinding {
@@ -222,7 +279,8 @@ pub(crate) async fn persist(
         now,
     )
     .await
-    .map_err(|_| IngestError::Store)
+    .map_err(|_| IngestError::Store)?;
+    Ok((storage_key, remaining))
 }
 
 /// Failure categories only: raw storage errors stay out of logs and chat, the

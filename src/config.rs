@@ -168,6 +168,9 @@ impl Config {
         if let Some(value) = env_value("GARAGE_REGION") {
             self.garage.region = value;
         }
+        if let Some(value) = env_value("GARAGE_DESCRIBE_MODEL") {
+            self.garage.describe_model = value;
+        }
         Ok(())
     }
 }

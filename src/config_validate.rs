@@ -264,6 +264,10 @@ impl ChatSettings {
                 "chat.github_comment_calls_per_reply",
                 self.github_comment_calls_per_reply,
             ),
+            (
+                "chat.send_chat_media_calls_per_reply",
+                self.send_chat_media_calls_per_reply,
+            ),
         ] {
             usize_count(key, value, 1, 64)?;
         }

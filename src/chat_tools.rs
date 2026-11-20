@@ -32,6 +32,7 @@ pub(crate) struct ToolState {
     pub(crate) search_calls: usize,
     pub(crate) read_url_calls: usize,
     pub(crate) chat_search_calls: usize,
+    pub(crate) send_chat_media_calls: usize,
     pub(crate) inspect_calls: usize,
     pub(crate) chat_profile_calls: usize,
     pub(crate) read_logs_calls: usize,
@@ -62,6 +63,7 @@ impl ToolState {
             search_calls: 0,
             read_url_calls: 0,
             chat_search_calls: 0,
+            send_chat_media_calls: 0,
             inspect_calls: 0,
             chat_profile_calls: 0,
             read_logs_calls: 0,
@@ -524,6 +526,15 @@ pub(crate) async fn run_tool_call(
                         }
                     }
                 }
+            }
+        }
+        Some(ToolKind::SendChatMedia) => {
+            if state.send_chat_media_calls >= config().chat.send_chat_media_calls_per_reply {
+                "лимит отправки медиа из архива на ответ".to_string()
+            } else {
+                state.send_chat_media_calls += 1;
+                ack_lookup(ctx, state);
+                crate::media_send::run_tool(&args, ctx).await
             }
         }
         Some(ToolKind::UsageStats) => {

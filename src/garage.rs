@@ -12,6 +12,7 @@ pub(crate) struct GarageClient {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum GarageError {
     Put,
+    Get,
     TooLarge,
 }
 
@@ -78,6 +79,40 @@ impl GarageClient {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(_)) | Err(_) => Err(GarageError::Put),
         }
+    }
+
+    /// Fetches one content-addressed object under `max_bytes` and `timeout`.
+    pub(crate) async fn get(&self, key: &str) -> Result<Vec<u8>, GarageError> {
+        let request = self.client.get_object().bucket(&self.bucket).key(key);
+        let deadline = time::Instant::now() + self.timeout;
+        let response = match time::timeout_at(deadline, request.send()).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) | Err(_) => return Err(GarageError::Get),
+        };
+        if response
+            .content_length()
+            .and_then(|len| u64::try_from(len).ok())
+            .is_some_and(|len| len > self.max_bytes)
+        {
+            return Err(GarageError::TooLarge);
+        }
+        let mut body = response.body;
+        let mut out = Vec::new();
+        loop {
+            let next = match time::timeout_at(deadline, body.next()).await {
+                Ok(Some(Ok(chunk))) => chunk,
+                Ok(Some(Err(_))) | Err(_) => return Err(GarageError::Get),
+                Ok(None) => break,
+            };
+            if out.len() as u64 + next.len() as u64 > self.max_bytes {
+                return Err(GarageError::TooLarge);
+            }
+            out.extend_from_slice(&next);
+        }
+        if out.is_empty() {
+            return Err(GarageError::Get);
+        }
+        Ok(out)
     }
 }
 

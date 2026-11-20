@@ -41,6 +41,7 @@ fn builtin_visibility_matches_current_roles() {
         "find_stickers",
         "send_sticker",
         "chat_search",
+        "send_chat_media",
     ] {
         assert!(
             registry.find(name, false).is_some(),
@@ -89,6 +90,7 @@ fn builtin_visibility_matches_current_roles() {
             "find_stickers".to_string(),
             "send_sticker".to_string(),
             "chat_search".to_string(),
+            "send_chat_media".to_string(),
         ],
     );
     assert_eq!(
@@ -113,6 +115,7 @@ fn builtin_visibility_matches_current_roles() {
             "find_stickers".to_string(),
             "send_sticker".to_string(),
             "chat_search".to_string(),
+            "send_chat_media".to_string(),
             "chat_index".to_string(),
             "chat_settings".to_string(),
         ],
@@ -134,6 +137,7 @@ fn builtin_visibility_matches_current_roles() {
             "find_stickers".to_string(),
             "send_sticker".to_string(),
             "chat_search".to_string(),
+            "send_chat_media".to_string(),
         ],
     );
     assert_eq!(
@@ -156,6 +160,7 @@ fn builtin_visibility_matches_current_roles() {
             "find_stickers".to_string(),
             "send_sticker".to_string(),
             "chat_search".to_string(),
+            "send_chat_media".to_string(),
             "chat_index".to_string(),
             "chat_settings".to_string(),
         ],
@@ -283,6 +288,11 @@ fn builtin_names_match_their_kinds_and_visibility() {
         (ToolKind::FindStickers, "find_stickers", ToolVisibility::All),
         (ToolKind::SendSticker, "send_sticker", ToolVisibility::All),
         (ToolKind::ChatSearch, "chat_search", ToolVisibility::All),
+        (
+            ToolKind::SendChatMedia,
+            "send_chat_media",
+            ToolVisibility::All,
+        ),
         (ToolKind::ChatIndex, "chat_index", ToolVisibility::Owner),
         (
             ToolKind::ChatSettings,

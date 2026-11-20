@@ -8,6 +8,7 @@ pub(crate) const KIND_CHAT_RETRY: &str = "chat_retry";
 pub(crate) const KIND_STATUS_REPAIR: &str = "status_repair";
 pub(crate) const KIND_FEATURE_TITLE: &str = "feature_title";
 pub(crate) const KIND_VOICE_STT: &str = "voice_stt";
+pub(crate) const KIND_MEDIA_DESCRIBE: &str = "media_describe";
 
 const SECONDS_PER_DAY: i64 = 86_400;
 

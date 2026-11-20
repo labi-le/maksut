@@ -83,6 +83,7 @@ pub(crate) struct ChatSettings {
     pub(crate) research_cancel_calls_per_reply: usize,
     pub(crate) github_calls_per_reply: usize,
     pub(crate) github_comment_calls_per_reply: usize,
+    pub(crate) send_chat_media_calls_per_reply: usize,
 }
 
 /// The GitHub tools talk to exactly one repository. `repo` and `api_base` are
@@ -336,6 +337,9 @@ pub(crate) struct GarageSettings {
     /// Concurrent downloads and uploads; every object can be 20 MiB.
     pub(crate) concurrency: usize,
     pub(crate) timeout_secs: u64,
+    /// Vision model on `llm.base_url` for short image descriptions; empty disables VLM descriptions.
+    pub(crate) describe_model: String,
+    pub(crate) describe_max_chars: usize,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -504,6 +508,7 @@ defaults!(ChatSettings {
     research_cancel_calls_per_reply: 2,
     github_calls_per_reply: 4,
     github_comment_calls_per_reply: 1,
+    send_chat_media_calls_per_reply: 3,
 });
 
 defaults!(GithubSettings {
@@ -671,6 +676,8 @@ defaults!(GarageSettings {
     max_video_secs: 60,
     concurrency: 2,
     timeout_secs: 20,
+    describe_model: "gemini-2.5-flash".into(),
+    describe_max_chars: 400,
 });
 
 defaults!(CodeSettings {

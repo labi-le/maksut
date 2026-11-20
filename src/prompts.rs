@@ -41,6 +41,8 @@ embed_prompts! {
     FEATURE_TITLE_PROMPT => "prompts/feature_title.md",
     /// System prompt for the OpenAI-compatible audio transcription call.
     VOICE_TRANSCRIBE_PROMPT => "prompts/voice_transcribe.md",
+    /// System prompt for the OpenAI-compatible image description call.
+    MEDIA_DESCRIBE_PROMPT => "prompts/media_describe.md",
     /// Empty-caption media/sticker prompt inside an active follow-up window.
     MEDIA_FOLLOWUP_PROMPT => "prompts/media_followup.md",
     /// Empty-caption media/sticker prompt on a direct mention or reply.

@@ -194,7 +194,13 @@ impl GarageSettings {
         count("garage.max_bytes", self.max_bytes, 1024, 20 * 1024 * 1024)?;
         count("garage.max_video_secs", self.max_video_secs, 1, 3600)?;
         usize_count("garage.concurrency", self.concurrency, 1, 16)?;
-        count("garage.timeout_secs", self.timeout_secs, 1, 300)
+        count("garage.timeout_secs", self.timeout_secs, 1, 300)?;
+        usize_count(
+            "garage.describe_max_chars",
+            self.describe_max_chars,
+            40,
+            4000,
+        )
     }
 }
 

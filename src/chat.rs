@@ -395,7 +395,8 @@ pub(crate) async fn chat_reply_with_proposal(
                 turn.followup || bare_prompt || state.sticker.is_some() || is_pass_reply(raw_c);
             let no_extra = !state.allow_sticker
                 && state.status_fallback.is_none()
-                && state.research.attachments.is_empty();
+                && state.research.attachments.is_empty()
+                && state.send_chat_media_calls == 0;
             if can_pass && content.is_empty() && no_extra {
                 tracing::debug!(round, "model chose PASS");
                 return Ok(ChatReply {
@@ -433,7 +434,9 @@ pub(crate) async fn chat_reply_with_proposal(
             } else {
                 text
             };
-            let has_out = state.decision.is_some() || !state.research.attachments.is_empty();
+            let has_out = state.decision.is_some()
+                || !state.research.attachments.is_empty()
+                || state.send_chat_media_calls > 0;
             let empty = text.is_empty() && sticker.is_none() && !has_out;
             if !state.research.used && empty && !turn.followup && !bare_prompt && !turn.sticker_mode
             {

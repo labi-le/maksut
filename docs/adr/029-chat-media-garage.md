@@ -1,8 +1,7 @@
 # 029: Chat media in `chat_media` and Garage, deduplicated by sha256
 
 Date: 2026-11-20
-Status: implemented (storage and ingest); retrieval, descriptions and delivery are
-deferred to the decisions named below
+Status: implemented
 
 ## Context
 
@@ -26,7 +25,9 @@ forever, ingest every attachment of enabled chats, use `aws-sdk-s3`, and keep
 
 ```
 chat_media_blobs(sha256 TEXT PRIMARY KEY, kind TEXT NOT NULL,
-                 bytes INTEGER NOT NULL, created_at INTEGER NOT NULL)
+                 bytes INTEGER NOT NULL, created_at INTEGER NOT NULL,
+                 description TEXT NOT NULL DEFAULT '',
+                 described_at INTEGER NOT NULL DEFAULT 0)
 ```
 
 `chat_media` binds a message to that blob:
@@ -166,18 +167,14 @@ Then set `GARAGE_ENDPOINT=http://garage:3900`, `GARAGE_ACCESS_KEY_ID` and
 - **Bytes in SQLite.** It would grow the live database volume and the backup in
   the same way, while losing the content-address deduplication across rows.
 
-## Deferred
+## Image descriptions, Qdrant indexing, and delivery
 
-- **Image descriptions and `kind:"media"` vectors.** Description text needs a
-  prompt file, which is maintainer-owned; the `chat_media_blobs.description` /
-  `described_at` columns therefore do not exist yet. Without descriptions a
-  media vector would duplicate the existing `kind:"chat"` vector for the
-  caption, so the Qdrant side stays unchanged.
-- **Retrieval and delivery.** Extending `chat_search` output or adding a send
-  tool changes a tool contract that the maintainer owns. Until then the stored
-  rows are written, not read: `storage_key` is the pointer a future read path
-  will use.
-
+- **VLM image descriptions (`src/media_describe.rs`, `src/prompts/media_describe.md`):**
+  When `garage.describe_model` (default `gemini-2.5-flash`, overridable by `GARAGE_DESCRIBE_MODEL`) is non-empty, `media_ingest` describes newly stored photos, stickers (or animated/video sticker thumbnails), and image documents (`image/*`, up to `chat.image_max_bytes`) via `POST {llm.base_url}/chat/completions` (`max_tokens = 200`, `temperature = 0`), clamps the output to `garage.describe_max_chars` (default 400), records `llm_usage` under `KIND_MEDIA_DESCRIBE = "media_describe"`, checks `memory_guard::detect_flags` to withhold secret/injection descriptions, and writes `description` / `described_at` to `chat_media_blobs`. Because descriptions live on `chat_media_blobs`, identical bytes across messages and chats are described at most once.
+- **Qdrant `kind:"media"` indexing (`sync_media_points` in `src/media_describe.rs`):**
+  Both post-description ingest and `chat_indexer` / `reindex_with` embed unflagged (`m.flags = 0`) media messages that have a non-empty blob description or caption (`compose_media_search_text`) and upsert points with id `point_id("media:{model}:{chat_id}:{m.id}")` and payload `kind = "media"`, `chat_id`, `message_id`, `telegram_message_id`, `media_kind`, `storage_key`, `text`, and `model`, advancing `qdrant_media_cursor:{identity}|{model}` in `memory_meta`.
+- **Retrieval and delivery (`src/chat_search.rs`, `src/media_send.rs`):**
+  `chat_search` queries Qdrant across `kind in ["chat", "media"]` (and includes blob descriptions in lexical fallback) and attaches `telegram_message_id`, `media_kind`, `storage_key`, and `media_description` to matching rows that have a `chat_media` binding. The `send_chat_media` function tool (`ToolVisibility::All`, capped by `chat.send_chat_media_calls_per_reply` default 3) resolves a binding strictly within `ctx.chat_id` by `message_id` (internal or Telegram id) or `storage_key`, tries sending by cached Telegram `file_id` first, and on failure downloads the object from Garage (`GarageClient::get`) and refreshes `chat_media.file_id` from the sent message.
 ## Verification
 
 `src/media_ingest_test.rs` covers: the largest photo size wins; a video above 60

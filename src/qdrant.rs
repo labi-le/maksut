@@ -73,6 +73,10 @@ pub(crate) fn key_match(key: &str, value: Value) -> Value {
     json!({"key": key, "match": {"value": value}})
 }
 
+pub(crate) fn key_match_any(key: &str, values: &[&str]) -> Value {
+    json!({"key": key, "match": {"any": values}})
+}
+
 pub(crate) fn key_range(key: &str, gte: Option<i64>, lt: Option<i64>) -> Value {
     let mut range = serde_json::Map::new();
     if let Some(value) = gte {

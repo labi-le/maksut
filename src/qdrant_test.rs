@@ -174,9 +174,9 @@ async fn chat_search_answers_from_qdrant_when_indexed() {
     let requests = qdrant.requests.lock().unwrap();
     let query = body_of(&requests[8]);
     let must = query["filter"]["must"].as_array().unwrap();
-    assert!(must
-        .iter()
-        .any(|clause| clause["key"] == "kind" && clause["match"]["value"] == "chat"));
+    assert!(must.iter().any(
+        |clause| clause["key"] == "kind" && clause["match"]["any"] == json!(["chat", "media"])
+    ));
     assert!(must
         .iter()
         .any(|clause| clause["key"] == "chat_id" && clause["match"]["value"] == 1));
@@ -697,6 +697,114 @@ async fn chat_search_qdrant_expands_user_hit_with_adjacent_assistant_reply() {
             "какой я пылесос выбрал",
             "Qrevo Edge 3 Pro: волосы не мотает вообще"
         ]
+    );
+    embed.task.abort();
+    qdrant.task.abort();
+}
+
+#[tokio::test]
+async fn media_points_sync_to_qdrant_and_surface_in_chat_search() {
+    let (_dir, pool) = test_pool().await;
+    crate::memory::record_message(
+        &pool,
+        RecordMessage::new(ChatId(1), 10, "аня", "user", "[вложение]")
+            .with_message_id(Some(501))
+            .with_flags(crate::memory::FLAG_JUNK),
+    )
+    .await
+    .unwrap();
+    let internal_id: i64 = sqlx::query_scalar("SELECT id FROM chat_messages LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let key = "ab".repeat(32);
+    crate::media_store::insert_blob(
+        &pool,
+        &crate::media_store::BlobRecord {
+            sha256: &key,
+            kind: "photo",
+            bytes: 512,
+            created_at: 1_700_000_000,
+        },
+    )
+    .await
+    .unwrap();
+    crate::media_store::set_blob_description(
+        &pool,
+        &key,
+        "мем с котом в шапке и надписью про прод",
+        1_700_000_001,
+    )
+    .await
+    .unwrap();
+    crate::media_store::insert_binding(
+        &pool,
+        &crate::media_store::MediaBinding {
+            chat_id: 1,
+            message_id: 501,
+            kind: "photo",
+            file_unique_id: "u-501",
+            file_id: "f-501",
+            storage_key: &key,
+        },
+        1_700_000_000,
+    )
+    .await
+    .unwrap();
+
+    let embed = mock_server(vec![
+        embeddings_body(&[axis(0)]),
+        embeddings_body(&[axis(0)]),
+    ])
+    .await;
+    let chat = chat_config(&embed.url);
+    let qdrant = mock_server(
+        [
+            ready_responses(),
+            vec![
+                "{}".to_string(),
+                json!({
+                    "result": {"points": [{
+                        "id": 1,
+                        "score": 0.92,
+                        "payload": {
+                            "kind": "media",
+                            "message_id": internal_id,
+                            "telegram_message_id": 501,
+                            "author_id": 10,
+                            "author_name": "аня",
+                            "created_at": 1_700_000_000,
+                            "media_kind": "photo",
+                            "storage_key": key,
+                            "text": "[photo: мем с котом в шапке и надписью про прод]",
+                        },
+                    }]},
+                })
+                .to_string(),
+            ],
+        ]
+        .concat(),
+    )
+    .await;
+    let qclient = client(&qdrant);
+    let synced = crate::media_describe::sync_media_points(&chat, &pool, &qclient)
+        .await
+        .unwrap();
+    assert_eq!(synced, 1);
+
+    let request = parse_search_request(&json!({"query": "мем с котом про прод"})).unwrap();
+    let output = search_with(&chat, &pool, ChatId(1), 0, &request, Some(&qclient))
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_str(&output).unwrap();
+    let hit = &value["results"][0];
+    assert_eq!(hit["message_id"], internal_id);
+    assert_eq!(hit["telegram_message_id"], 501);
+    assert_eq!(hit["media_kind"], "photo");
+    assert_eq!(hit["storage_key"], key);
+    assert_eq!(
+        hit["media_description"],
+        "мем с котом в шапке и надписью про прод"
     );
     embed.task.abort();
     qdrant.task.abort();

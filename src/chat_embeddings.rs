@@ -245,6 +245,7 @@ pub(crate) async fn reindex_with(
                 .to_string();
             }
         };
+    let _ = crate::media_describe::sync_media_points(chat, pool, client).await;
     match coverage(pool, Some(client), &model).await {
         Ok((done, pending)) => json!({
             "note": "отчёт по покрытию индекса",
@@ -297,6 +298,15 @@ pub(crate) async fn chat_indexer(cfg: Arc<Settings>) {
                             Err(reason) => {
                                 tracing::warn!("Qdrant self memory sync failed: {reason}");
                             }
+                        }
+                    }
+                    match crate::media_describe::sync_media_points(chat, &cfg.database, &client)
+                        .await
+                    {
+                        Ok(0) => {}
+                        Ok(count) => tracing::debug!(count, "media vectors indexed in qdrant"),
+                        Err(reason) => {
+                            tracing::warn!("Qdrant media index failed: {reason}");
                         }
                     }
                 }
