@@ -27,7 +27,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Check out the reviewer revision
         uses: actions/checkout@v4
@@ -44,4 +44,5 @@ jobs:
           LLM_MODEL: ${{ vars.PR_REVIEW_MODEL || 'gemini-4-argon' }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          PR_REVIEW_FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: python3 tools/pr_review.py

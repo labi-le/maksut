@@ -31,11 +31,13 @@ possible because the workflow only depends on the token.
   **default branch**: pull-request head code never runs with the PAT in scope,
   which is the same reason `buer` keeps its PAT inside a separate proxy
   container.
-- `tools/pr_review.py` (Python standard library only) reads the PR through the
-  REST API, caps the diff at 120 000 characters, and asks the LiteLLM gateway for
-  one strict-JSON review that carries `severity`, `file`, `line`, `claim`, and
-  `evidence` per finding. `AGENTS.md` from that checkout is part of the
-  prompt; the pull request text is declared untrusted data.
+- `tools/pr_review.py` (Python standard library only) reads the PR and its full
+  diff through the REST API, bounded by a 1-hour execution deadline, and asks the
+  LiteLLM gateway for one strict-JSON review that carries `severity`, `file`,
+  `line`, `claim`, and `evidence` per finding. `AGENTS.md`,
+  `docs/communication-guide.md`, all `docs/guides/*.md`, and all `docs/adr/*.md`
+  from that checkout are preloaded in full in the prompt; the pull request text
+  is declared untrusted data.
 - The published event is `REQUEST_CHANGES` when a P0/P1 finding exists or the
   model's verdict asks for changes, otherwise `APPROVE`. Reviews are body-only:
   inline comments are not posted, and the repository's branch protection, not a
