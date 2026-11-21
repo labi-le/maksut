@@ -289,6 +289,7 @@ pub(crate) async fn download_with_timeout(
                         files: Vec::new(),
                         skipped: 0,
                         size_skipped: 0,
+                        limit_skipped: 0,
                     },
                     process_ok: false,
                     limited: false,
@@ -312,6 +313,7 @@ pub(crate) async fn download_with_timeout(
                 files: Vec::new(),
                 skipped: 0,
                 size_skipped: 0,
+                limit_skipped: 0,
             },
             process_ok: true,
             limited: false,
@@ -325,6 +327,7 @@ pub(crate) async fn download_with_timeout(
     if let Some(metadata) = metadata {
         result.description = metadata.description;
         result.selection.skipped += metadata.skipped;
+        result.selection.limit_skipped += metadata.limit_skipped;
         let max_images = if source == Some("tiktok") {
             config().media.max_tiktok_photos
         } else {

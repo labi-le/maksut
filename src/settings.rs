@@ -111,7 +111,7 @@ impl Settings {
             self_improve_dir: PathBuf::from(&cfg.paths.self_improve_dir),
             sticker_replies: StickerReplies::default(),
             sticker_catalog: Arc::new(RwLock::new(crate::stickers::StickerCatalog::default())),
-            max_media_bytes: cfg.media.max_bytes,
+            max_media_bytes: cfg.max_media_bytes(),
             downloads: Arc::new(Semaphore::new(cfg.media.concurrent_downloads)),
             user_rate_limits: Arc::new(RwLock::new(HashMap::new())),
         };

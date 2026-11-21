@@ -68,6 +68,28 @@ fn tiktok_photo_metadata_keeps_up_to_thirty_five_images() {
         images.skipped,
         urls.len() - config().media.max_tiktok_photos
     );
+    assert_eq!(images.limit_skipped, images.skipped);
+}
+
+#[test]
+fn image_metadata_marks_entries_beyond_the_file_cap_as_limit_skips() {
+    let entries: Vec<serde_json::Value> = (0..config().media.max_files + 2)
+        .map(|index| {
+            serde_json::json!({
+                "formats": [],
+                "thumbnails": [{
+                    "url": format!("https://scontent.cdninstagram.com/{index}.jpg"),
+                    "width": 1200,
+                    "height": 1200
+                }]
+            })
+        })
+        .collect();
+    let info = serde_json::json!({ "entries": entries });
+    let post = collect_images(&info, "instagram");
+    assert_eq!(post.images.len(), config().media.max_files);
+    assert_eq!(post.limit_skipped, 2);
+    assert_eq!(post.skipped, 2);
 }
 
 #[test]

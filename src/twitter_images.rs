@@ -99,6 +99,7 @@ pub(crate) async fn extract_twitter_images(
         images: Vec::new(),
         has_video,
         skipped: 0,
+        limit_skipped: 0,
         alternates: Vec::new(),
         description: info
             .get("description")

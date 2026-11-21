@@ -17,7 +17,7 @@ impl Config {
         self.search.validate()?;
         self.research.validate()?;
         self.read_url.validate()?;
-        self.media.validate(&self.telegram)?;
+        self.media.validate()?;
         self.memory.validate()?;
         self.media_cache.validate()?;
         self.garage.validate()?;

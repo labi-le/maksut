@@ -44,7 +44,11 @@ fn enforces_file_count_and_size_boundaries() {
     let result = select_media(dir.path(), &manifest, 2).unwrap();
     assert_eq!(result.files.len(), config().media.max_files);
     assert_eq!(result.skipped, 2);
+    assert_eq!(result.limit_skipped, 2);
+    assert_eq!(result.size_skipped, 0);
     let result = select_media(dir.path(), &manifest, 1).unwrap();
     assert!(result.files.is_empty());
     assert_eq!(result.skipped, 12);
+    assert_eq!(result.limit_skipped, 0);
+    assert_eq!(result.size_skipped, 12);
 }

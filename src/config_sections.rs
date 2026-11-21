@@ -37,7 +37,8 @@ pub(crate) struct TelegramSettings {
     pub(crate) request_timeout_secs: u64,
     pub(crate) pool_idle_timeout_secs: u64,
     pub(crate) tcp_keepalive_secs: u64,
-    /// Telegram rejects uploads above 50 MB; `media.max_bytes` must fit under it.
+    /// Telegram rejects uploads above 50 MB; a positive `media.max_bytes` is
+    /// clamped to it at runtime.
     pub(crate) file_limit_bytes: u64,
 }
 
@@ -260,13 +261,16 @@ pub(crate) struct ReadUrlSettings {
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct MediaSettings {
-    pub(crate) max_bytes: u64,
+    /// Per-file byte cap; `-1` and `0` mean no configured ceiling, so only
+    /// `telegram.file_limit_bytes` bounds an upload.
+    pub(crate) max_bytes: i64,
     pub(crate) max_files: usize,
     pub(crate) max_tiktok_photos: usize,
     pub(crate) user_download_limit: usize,
     pub(crate) concurrent_downloads: usize,
     pub(crate) download_timeout_secs: u64,
-    pub(crate) max_video_duration_secs: u64,
+    /// Video duration ceiling in seconds; `-1` and `0` mean no duration limit.
+    pub(crate) max_video_duration_secs: i64,
     pub(crate) youtube_probe_timeout_secs: u64,
     pub(crate) max_metadata_bytes: u64,
     pub(crate) mp4_mux_headroom: u64,
@@ -610,7 +614,7 @@ defaults!(ReadUrlSettings {
 });
 
 defaults!(MediaSettings {
-    max_bytes: 45 * 1024 * 1024,
+    max_bytes: 200 * 1024 * 1024,
     max_files: 10,
     max_tiktok_photos: 35,
     user_download_limit: 3,

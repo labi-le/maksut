@@ -93,10 +93,15 @@ pub(crate) fn diagnostic_message(diagnostic: FailureDiagnostic, max_bytes: u64) 
         "Region blocked" => "Публикация недоступна в регионе сервера бота (геоблок).",
         "Members only" => "Публикация доступна только платным подписчикам канала (Members only).",
         "Video filtered" => {
-            let mins = crate::config::config().media.max_video_duration_secs / 60;
-            return format!(
-                "Видео слишком длинное (лимит {mins} мин) или это активный/предстоящий стрим; такие ролики не скачиваются."
-            );
+            return match crate::config::config().max_video_duration_secs() {
+                Some(seconds) => format!(
+                    "Видео слишком длинное (лимит {} мин) или это активный/предстоящий стрим; такие ролики не скачиваются.",
+                    seconds / 60
+                ),
+                None => {
+                    "Это активный/предстоящий стрим; такие ролики не скачиваются.".to_string()
+                }
+            };
         }
         "Format unavailable" => "Сайт не выдал подходящий видеопоток со звуком (Requested format is not available); попробуйте ещё раз.",
         "Download interrupted" => {

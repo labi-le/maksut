@@ -106,6 +106,8 @@ pub(crate) struct ImageMetadata {
     pub(crate) description: Option<String>,
     pub(crate) has_video: bool,
     pub(crate) skipped: usize,
+    /// Entries dropped only because a configured photo cap was reached.
+    pub(crate) limit_skipped: usize,
     pub(crate) alternates: Vec<Vec<Url>>,
 }
 
@@ -114,6 +116,7 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
         images: Vec::new(),
         has_video: false,
         skipped: 0,
+        limit_skipped: 0,
         alternates: Vec::new(),
         description: None,
     };
@@ -152,9 +155,11 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
                     result.skipped += 1;
                 }
             }
-            result.skipped += images
+            let overflow = images
                 .len()
                 .saturating_sub(config().media.max_tiktok_photos);
+            result.skipped += overflow;
+            result.limit_skipped += overflow;
         }
         tracing::debug!(
             source,
@@ -181,6 +186,13 @@ pub(crate) fn collect_images(info: &Value, source: &str) -> ImageMetadata {
                 })
             }),
     );
+    let overflow = items
+        .iter()
+        .skip(config().media.max_files)
+        .filter(|item| !item.is_null())
+        .count();
+    result.skipped += overflow;
+    result.limit_skipped += overflow;
     for item in items.iter().take(config().media.max_files) {
         if item.is_null() {
             result.skipped += 1;

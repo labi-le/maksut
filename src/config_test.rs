@@ -71,10 +71,43 @@ fn router_bounds_are_validated() {
 }
 
 #[test]
-fn media_bytes_must_fit_the_telegram_limit() {
+fn media_size_limit_resolves_sentinels_and_clamps_to_the_bot_api() {
     let mut cfg = Config::default();
-    cfg.media.max_bytes = cfg.telegram.file_limit_bytes + 1;
+    assert_eq!(cfg.media.max_bytes, 200 * 1024 * 1024);
+    cfg.media.max_bytes = 500 * 1024 * 1024;
+    assert_eq!(cfg.max_media_bytes(), cfg.telegram.file_limit_bytes);
+    cfg.media.max_bytes = 10 * 1024 * 1024;
+    assert_eq!(cfg.max_media_bytes(), 10 * 1024 * 1024);
+    for unlimited in [-1, 0] {
+        cfg.media.max_bytes = unlimited;
+        cfg.validate().unwrap();
+        assert_eq!(cfg.max_media_bytes(), cfg.telegram.file_limit_bytes);
+    }
+    cfg.media.max_bytes = 1024;
+    cfg.validate().unwrap();
+    cfg.media.max_bytes = 1023;
     assert!(cfg.validate().is_err());
+    cfg.media.max_bytes = -2;
+    let error = cfg.validate().unwrap_err();
+    assert!(error.contains("media.max_bytes"), "{error}");
+}
+
+#[test]
+fn media_duration_limit_resolves_sentinels() {
+    let mut cfg = Config::default();
+    assert_eq!(cfg.max_video_duration_secs(), Some(17 * 60));
+    for unlimited in [-1, 0] {
+        cfg.media.max_video_duration_secs = unlimited;
+        cfg.validate().unwrap();
+        assert_eq!(cfg.max_video_duration_secs(), None);
+    }
+    cfg.media.max_video_duration_secs = 86_400;
+    cfg.validate().unwrap();
+    cfg.media.max_video_duration_secs = 86_401;
+    assert!(cfg.validate().is_err());
+    cfg.media.max_video_duration_secs = -2;
+    let error = cfg.validate().unwrap_err();
+    assert!(error.contains("media.max_video_duration_secs"), "{error}");
 }
 
 #[test]

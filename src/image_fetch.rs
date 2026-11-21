@@ -221,7 +221,9 @@ pub(crate) async fn add_images(
     let mut used = disk_usage_async(dir).await;
     for (index, first) in images.iter().enumerate() {
         if selection.files.len() == max_files {
-            selection.skipped += images.len() - index;
+            let overflow = images.len() - index;
+            selection.skipped += overflow;
+            selection.limit_skipped += overflow;
             break;
         }
         let mut delivered = false;
