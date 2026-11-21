@@ -470,7 +470,7 @@ pub(crate) async fn chat_reply_with_proposal(
                 c.pointer("/function/name").and_then(Value::as_str) == Some("send_sticker")
             })
         {
-            let (cleaned, _) = crate::chat_urls::strip_raw_tool_call_tags(&raw);
+            let (cleaned, _) = crate::chat_sanitize::strip_raw_tool_call_tags(&raw);
             let text = if cleaned.is_empty() || is_pass_reply(&cleaned) {
                 String::new()
             } else {

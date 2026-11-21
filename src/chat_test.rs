@@ -3546,12 +3546,35 @@ fn expand_repo_blob_links_ignores_nonexistent_paths_inline_code_and_unmatched_ba
 #[test]
 fn strip_raw_tool_call_tags_removes_xml_and_extracts_sticker_hint() {
     let raw = r#"<tool_call>{"name": "send_sticker", "arguments": {"query": "тупой осуждающий взгляд"}}</tool_call>"#;
-    let (cleaned, hint) = crate::chat_urls::strip_raw_tool_call_tags(raw);
+    let (cleaned, hint) = crate::chat_sanitize::strip_raw_tool_call_tags(raw);
     assert_eq!(cleaned, "");
     assert_eq!(hint.as_deref(), Some("тупой осуждающий взгляд"));
     assert_eq!(style_reply(raw), "");
     assert!(is_stop_followup("да отъебись кто тебя звал вообще"));
     assert!(is_stop_followup("ебало на ноль"));
+}
+
+#[test]
+fn strip_raw_tool_call_tags_removes_provider_dsml_markup() {
+    let raw = "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"read_url\">\n<｜｜DSML｜｜ parameter name=\"url\" string=\"true\">http://www.highontechnology.tech/re20.html</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>";
+    let (cleaned, hint) = crate::chat_sanitize::strip_raw_tool_call_tags(raw);
+    assert_eq!(cleaned, "");
+    assert!(hint.is_none());
+
+    let mixed = format!("вот картинка\n{raw}\nготово");
+    let (cleaned, _) = crate::chat_sanitize::strip_raw_tool_call_tags(&mixed);
+    assert_eq!(cleaned, "вот картинка\n\nготово");
+
+    let truncated = "<｜｜DSML｜｜ invoke name=\"read_url\">\n<｜｜DSML｜｜ parameter name=\"url\">http://example.test/x.png";
+    let (cleaned, _) = crate::chat_sanitize::strip_raw_tool_call_tags(truncated);
+    assert_eq!(cleaned, "");
+}
+
+#[test]
+fn strip_provider_tool_markup_leaves_plain_text_untouched() {
+    let text = "частота 6.5 кГц < 8 кГц\n\n\n\nдальше без тегов";
+    assert_eq!(crate::chat_sanitize::strip_provider_tool_markup(text), text);
+    assert_eq!(crate::chat_sanitize::strip_provider_tool_markup("<"), "<");
 }
 
 #[tokio::test]

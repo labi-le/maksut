@@ -93,7 +93,7 @@ pub(crate) fn split_message(text: &str) -> Vec<String> {
 }
 
 pub(crate) fn flatten_reply_text(text: &str) -> String {
-    let (cleaned_input, _) = crate::chat_urls::strip_raw_tool_call_tags(text);
+    let (cleaned_input, _) = crate::chat_sanitize::strip_raw_tool_call_tags(text);
     let mut out = String::with_capacity(cleaned_input.len());
     let mut in_code = false;
     let mut fence_ticks = 0;

@@ -66,6 +66,7 @@ mod chat_tools;
 pub(crate) use chat_tools::*;
 mod chat_settings;
 pub(crate) use chat_settings::*;
+mod chat_sanitize;
 mod chat_urls;
 mod jev;
 mod reaction;
