@@ -13,7 +13,7 @@ fn youtube_format_selection_uses_exact_combined_sizes_and_compatible_codecs() {
         ]
     });
     assert_eq!(
-        choose_youtube_mp4(&info, config().media.max_bytes).as_deref(),
+        choose_youtube_mp4(&info, config().max_media_bytes()).as_deref(),
         Some("136+140")
     );
     assert_eq!(
@@ -22,29 +22,29 @@ fn youtube_format_selection_uses_exact_combined_sizes_and_compatible_codecs() {
     );
     assert_eq!(choose_youtube_mp4(&info, 28_820_425), None); // mux headroom, not just stream sum
     info["formats"][3]["filesize"] = Value::Null;
-    assert_eq!(choose_youtube_mp4(&info, config().media.max_bytes), None);
+    assert_eq!(choose_youtube_mp4(&info, config().max_media_bytes()), None);
     info["formats"][3]["filesize"] = serde_json::json!(u64::MAX);
     info["formats"][2]["filesize"] = serde_json::json!(u64::MAX);
     assert_eq!(choose_youtube_mp4(&info, u64::MAX), None); // checked sum
     info["formats"][2]["filesize"] = serde_json::json!(48_819_050);
     info["formats"][3]["format_id"] = serde_json::json!("136/b");
-    assert_eq!(choose_youtube_mp4(&info, config().media.max_bytes), None);
+    assert_eq!(choose_youtube_mp4(&info, config().max_media_bytes()), None);
     info["formats"][3]["format_id"] = serde_json::json!("136");
     info["formats"][3]["filesize"] = serde_json::json!(26_711_969);
     info["live_status"] = serde_json::json!("is_live");
-    assert_eq!(choose_youtube_mp4(&info, config().media.max_bytes), None);
+    assert_eq!(choose_youtube_mp4(&info, config().max_media_bytes()), None);
     info["live_status"] = Value::Null;
-    assert_eq!(choose_youtube_mp4(&info, config().media.max_bytes), None);
+    assert_eq!(choose_youtube_mp4(&info, config().max_media_bytes()), None);
     info["live_status"] = serde_json::json!("was_live");
     info["entries"] = serde_json::json!([]);
-    assert_eq!(choose_youtube_mp4(&info, config().media.max_bytes), None);
+    assert_eq!(choose_youtube_mp4(&info, config().max_media_bytes()), None);
     info.as_object_mut().unwrap().remove("entries");
     info["formats"] = serde_json::json!([
         {"format_id":"18","ext":"mp4","vcodec":"avc1.42001E","acodec":"mp4a.40.2",
          "width":640,"height":360,"fps":30,"filesize":1_000_000}
     ]);
     assert_eq!(
-        choose_youtube_mp4(&info, config().media.max_bytes).as_deref(),
+        choose_youtube_mp4(&info, config().max_media_bytes()).as_deref(),
         Some("18")
     );
     info["formats"] = serde_json::json!([
@@ -56,13 +56,13 @@ fn youtube_format_selection_uses_exact_combined_sizes_and_compatible_codecs() {
          "abr":130,"filesize":12_404_076}
     ]);
     assert_eq!(
-        choose_youtube_mp4(&info, config().media.max_bytes).as_deref(),
+        choose_youtube_mp4(&info, config().max_media_bytes()).as_deref(),
         Some("135+140-0"),
         "suffixed YouTube audio track IDs and filesize_approx must be accepted"
     );
     info["formats"][0]["format_id"] = serde_json::json!("-135");
     assert_eq!(
-        choose_youtube_mp4(&info, config().media.max_bytes),
+        choose_youtube_mp4(&info, config().max_media_bytes()),
         None,
         "leading hyphen in format_id must be rejected"
     );
@@ -71,6 +71,7 @@ fn youtube_format_selection_uses_exact_combined_sizes_and_compatible_codecs() {
 #[test]
 fn youtube_duration_filter_rejects_live_and_long_videos() {
     assert_eq!(youtube_duration_filter(), "!is_live & duration <= 1020");
+    assert_eq!(duration_filter(None), "!is_live");
     assert_eq!(
         youtube_reject_reason(&serde_json::json!({"live_status":"is_live"})),
         Some("Video filtered")
@@ -86,6 +87,18 @@ fn youtube_duration_filter_rejects_live_and_long_videos() {
     assert_eq!(
         youtube_reject_reason(&serde_json::json!({"live_status":"not_live","duration":130})),
         None
+    );
+    // `-1`/`0` drop the duration ceiling but never admit a live stream.
+    assert_eq!(
+        reject_reason(
+            &serde_json::json!({"live_status":"not_live","duration":300_000}),
+            None
+        ),
+        None
+    );
+    assert_eq!(
+        reject_reason(&serde_json::json!({"live_status":"is_live"}), None),
+        Some("Video filtered")
     );
 }
 
@@ -154,7 +167,7 @@ printf '%s\n' "$dir/result.mp4" > "$manifest"
     );
     let mut cfg = fake_settings(root.path(), &script).await;
     cfg.cookies_file = Some(source.clone());
-    cfg.max_media_bytes = config().media.max_bytes;
+    cfg.max_media_bytes = config().max_media_bytes();
     let url = allowed_url("https://youtu.be/abc").unwrap();
     let work = tempfile::tempdir_in(root.path()).unwrap();
     let selected = download_videos(&url, &cfg, work.path(), Duration::from_secs(3))

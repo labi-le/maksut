@@ -50,6 +50,9 @@ pub(crate) struct Selection {
     pub(crate) files: Vec<MediaFile>,
     pub(crate) skipped: usize,
     pub(crate) size_skipped: usize,
+    /// Files dropped only because a configured count cap (`media.max_files` or
+    /// the photo caps) was already full.
+    pub(crate) limit_skipped: usize,
 }
 
 pub(crate) fn select_media(
@@ -61,6 +64,7 @@ pub(crate) fn select_media(
         files: Vec::new(),
         skipped: 0,
         size_skipped: 0,
+        limit_skipped: 0,
     };
     let confirmed = match fs::File::open(manifest) {
         Ok(file) => file,
@@ -100,14 +104,18 @@ pub(crate) fn select_media(
             selected.skipped += 1;
             continue;
         };
-        if metadata.len() == 0
-            || metadata.len() > max_bytes
-            || selected.files.len() == config().media.max_files
-        {
+        if metadata.len() == 0 {
             selected.skipped += 1;
-            if metadata.len() > max_bytes {
-                selected.size_skipped += 1;
-            }
+            continue;
+        }
+        if metadata.len() > max_bytes {
+            selected.skipped += 1;
+            selected.size_skipped += 1;
+            continue;
+        }
+        if selected.files.len() == config().media.max_files {
+            selected.skipped += 1;
+            selected.limit_skipped += 1;
             continue;
         }
         selected.files.push(MediaFile { path, kind });

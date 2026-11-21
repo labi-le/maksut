@@ -45,6 +45,26 @@ fn stderr_categories_are_specific_and_never_copy_secrets() {
     assert!(!stderr_detail(secret).contains("secret"));
 }
 
+#[test]
+fn selection_detail_stays_reportable_when_one_skip_is_not_a_limit() {
+    let mut selection = Selection {
+        files: Vec::new(),
+        skipped: 2,
+        size_skipped: 1,
+        limit_skipped: 0,
+    };
+    // One unsupported or empty file keeps the cause reportable even next to a limit skip.
+    assert_eq!(limit_selection_detail(&selection), None);
+    selection.size_skipped = 2;
+    assert_eq!(limit_selection_detail(&selection), Some("Size limit"));
+    selection.size_skipped = 0;
+    selection.limit_skipped = 2;
+    assert_eq!(limit_selection_detail(&selection), Some("Media limit"));
+    selection.skipped = 0;
+    selection.limit_skipped = 0;
+    assert_eq!(limit_selection_detail(&selection), None);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn failed_tiktok_download_persists_sanitized_http_diagnostic_after_reopen() {
@@ -351,21 +371,66 @@ async fn features_actual_source_failures_explain_distinct_causes_without_leaking
 }
 
 #[tokio::test]
-async fn features_source_size_limit_is_not_misreported_as_unsupported_or_missing_media() {
+async fn features_size_limit_skip_is_silent_and_journaled() {
     let mut fixture = FeatureFixture::new(&["mp4"], "exit 0").await;
     let mut cfg = (*fixture.cfg).clone();
-    cfg.max_media_bytes = 5; // The completed supported file is eight bytes, not unsupported.
+    cfg.max_media_bytes = 5; // The completed supported file is eight bytes.
     fixture.cfg = Arc::new(cfg);
     fixture.send(1, 1, "Owner", LINK).await;
     let requests = fixture.api.snapshot().await;
-    feature_retained(&requests);
-    assert!(!requests.iter().any(|request| request.is_media()));
-    let reason = feature_reason(&requests, &["размер", "слишком больш", "size"]);
     assert!(
-        !reason.contains("неподдерж") && !reason.contains("не найдено медиа"),
-        "known size-skipped media needs an actionable size reason, not a guessed extractor cause"
+        !requests
+            .iter()
+            .any(|request| request.method == "sendmessage"),
+        "a size-limit skip must not post a chat message"
     );
-    feature_journal_is_safe(&fixture.cfg.database).await;
+    feature_retained(&requests);
+    feature_journal_cause(&fixture.cfg.database, &["size limit"]).await;
+}
+
+#[tokio::test]
+async fn features_mixed_unsupported_and_size_skips_keep_their_chat_message() {
+    let mut fixture = FeatureFixture::new(&[], "exit 0").await;
+    let mut cfg = (*fixture.cfg).clone();
+    cfg.max_media_bytes = 100;
+    fixture.cfg = Arc::new(cfg);
+    fs::write(
+        &fixture.cfg.ytdlp_bin,
+        format!(
+            "#!/bin/sh\n# CUSTOM_METADATA\ndir=; manifest=\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --output) shift; dir=\"${{1%/*}}\" ;;\n    --print-to-file) shift; shift; manifest=$1 ;;\n  esac\n  shift\ndone\ncp '{}' \"$dir/big.mp4\"\nprintf unsupported > \"$dir/small.flv\"\nprintf '%s\\n' \"$dir/big.mp4\" \"$dir/small.flv\" > \"$manifest\"\nexit 0\n",
+            av_fixture().display()
+        ),
+    )
+    .unwrap();
+    fixture.send(1, 1, "Owner", LINK).await;
+    let requests = fixture.api.snapshot().await;
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.method == "sendmessage"),
+        "an unsupported file next to a size skip must stay reportable"
+    );
+    feature_journal_cause(&fixture.cfg.database, &["size limit"]).await;
+}
+
+#[tokio::test]
+async fn features_long_or_live_video_skip_is_silent_and_journaled() {
+    let fixture = FeatureFixture::new(&[], "exit 0").await;
+    fs::write(
+        &fixture.cfg.ytdlp_bin,
+        "#!/bin/sh\n# CUSTOM_METADATA\nprintf '%s\\n' 'ERROR: [youtube] abc: does not pass filter (!is_live & duration <= 1020), skipping' >&2\nexit 9\n",
+    )
+    .unwrap();
+    fixture.send(1, 1, "Owner", LINK).await;
+    let requests = fixture.api.snapshot().await;
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method == "sendmessage"),
+        "a duration or live-stream skip must not post a chat message"
+    );
+    feature_retained(&requests);
+    feature_journal_cause(&fixture.cfg.database, &["video filtered"]).await;
 }
 
 #[tokio::test]

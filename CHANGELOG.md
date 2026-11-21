@@ -10,6 +10,10 @@
 - Chat media is archived to Garage by sha256 content address (`chat_media` and `chat_media_blobs`), images are described once per blob with a vision model (`garage.describe_model`) and indexed in Qdrant (`kind = "media"`), `chat_search` searches both messages and media descriptions, and `send_chat_media` re-sends archived chat media via cached `file_id` or Garage fallback ([#113](https://github.com/labi-le/maksut/issues/113))
 - Voice and audio messages are transcribed by the bot's own local Speaches (faster-whisper on CPU) service instead of a cloud model: speech recognition no longer needs an LLM provider key or quota, audio is only sent to `voice.base_url`, and a failed local service substitutes the usual `[не удалось распознать голосовое]` marker without a cloud fallback
 
+### Changed
+
+- The bot now silently skips videos longer than `media.max_video_duration_secs`, live streams, files over `media.max_bytes` and posts with more than `media.max_files` items, logging the reason and recording it in the failure journal instead of posting an error message; `media.max_bytes` defaults to 200 MiB and `-1` or `0` in either limit removes the ceiling ([#130](https://github.com/labi-le/maksut/issues/130))
+
 ### Fixed
 
 - Chat replies no longer show the model's raw provider tool-call tokens (`<｜｜DSML｜｜ …>`): such blocks are stripped before delivery instead of being sent as message text

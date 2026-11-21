@@ -408,15 +408,19 @@ pub(crate) async fn handle_message(
             );
             record_failure_with_events(&cfg.database, &url, failure.diagnostic, &failure.events)
                 .await;
+            let shown = source_user_diagnostic(failure.diagnostic, &failure.events);
+            // Silence only when the primary cause is a limit; a rewritten
+            // display diagnostic must not turn a real failure into a skip.
+            if is_limit_skip(&failure.diagnostic) {
+                log_limit_skip(&url, &failure.diagnostic);
+                return Ok(());
+            }
             let mut reply = if failure.diagnostic.detail == "Download failed"
                 && failure.diagnostic.stage != "metadata"
             {
                 failure.reason
             } else {
-                user_errors::diagnostic_message(
-                    source_user_diagnostic(failure.diagnostic, &failure.events),
-                    cfg.max_media_bytes,
-                )
+                user_errors::diagnostic_message(shown, cfg.max_media_bytes)
             };
             reply.push_str(&format_failure_context(&url, &failure.events));
             let _ = crate::rich_message::send_quiet_message(&bot, message.chat.id, reply).await;
@@ -427,13 +431,13 @@ pub(crate) async fn handle_message(
         let diagnostic = result.diagnostic.unwrap_or_else(|| {
             FailureDiagnostic::new(
                 "selection",
-                if result.selection.size_skipped != 0 {
-                    "Size limit"
-                } else if result.selection.skipped != 0 {
-                    "Media skipped"
-                } else {
-                    "No sendable media"
-                },
+                limit_selection_detail(&result.selection).unwrap_or(
+                    if result.selection.skipped != 0 {
+                        "Media skipped"
+                    } else {
+                        "No sendable media"
+                    },
+                ),
             )
         });
         let mut events = result.events;
@@ -442,10 +446,15 @@ pub(crate) async fn handle_message(
             trace_event(&mut events, diagnostic);
         }
         record_failure_with_events(&cfg.database, &url, diagnostic, &events).await;
-        let mut reply = user_errors::diagnostic_message(
-            source_user_diagnostic(diagnostic, &events),
-            cfg.max_media_bytes,
-        );
+        let shown = source_user_diagnostic(diagnostic, &events);
+        if is_limit_skip(&diagnostic)
+            && only_limit_skips(&result.selection)
+            && !result.twitter_photos_failed
+        {
+            log_limit_skip(&url, &diagnostic);
+            return Ok(());
+        }
+        let mut reply = user_errors::diagnostic_message(shown, cfg.max_media_bytes);
         reply.push_str(&format_failure_context(&url, &events));
         let _ = crate::rich_message::send_quiet_message(&bot, message.chat.id, reply).await;
         return Ok(());

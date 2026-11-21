@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::Selection;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FailureDiagnostic {
@@ -44,6 +45,43 @@ pub(crate) fn trace_event(events: &mut Vec<FailureDiagnostic>, event: FailureDia
     if events.len() < 12 {
         events.push(event);
     }
+}
+
+/// A skip caused by a configured media limit. The chat stays silent by design:
+/// the operator finds the reason in the log and in `download_failures`.
+/// Delivery rejections and unsupported formats are not limit skips.
+pub(crate) fn is_limit_skip(diagnostic: &FailureDiagnostic) -> bool {
+    diagnostic.stage != "delivery"
+        && matches!(
+            diagnostic.detail,
+            "Video filtered" | "Size limit" | "Media limit" | "Temporary storage limit"
+        )
+}
+
+pub(crate) fn log_limit_skip(url: &Url, diagnostic: &FailureDiagnostic) {
+    tracing::info!(
+        stage = diagnostic.stage,
+        detail = diagnostic.detail,
+        host = url.host_str(),
+        "media skipped silently by limit"
+    );
+}
+
+/// Every skipped item was dropped by a limit, so the cause can stay in the journal.
+pub(crate) fn only_limit_skips(selection: &Selection) -> bool {
+    selection.skipped == selection.size_skipped + selection.limit_skipped
+}
+
+/// A limit detail is safe only when every skipped item was dropped by a limit;
+/// one unsupported or empty file must keep the selection reportable.
+pub(crate) fn limit_selection_detail(selection: &Selection) -> Option<&'static str> {
+    (selection.skipped != 0 && only_limit_skips(selection)).then_some({
+        if selection.size_skipped != 0 {
+            "Size limit"
+        } else {
+            "Media limit"
+        }
+    })
 }
 
 pub(crate) fn source_user_diagnostic(
@@ -160,11 +198,7 @@ pub(crate) async fn report_incomplete_delivery(
     report: crate::DeliveryReport,
 ) {
     let skipped = result.selection.skipped;
-    let selection_detail = if result.selection.size_skipped != 0 {
-        "Size limit"
-    } else {
-        "Media skipped"
-    };
+    let selection_detail = limit_selection_detail(&result.selection).unwrap_or("Media skipped");
     let diagnostic = if let Some(error) = &report.error {
         error.diagnostic
     } else if let Some(failure) = result.diagnostic {
@@ -186,6 +220,14 @@ pub(crate) async fn report_incomplete_delivery(
         trace_event(&mut events, diagnostic);
     }
     record_failure_with_events(&cfg.database, url, diagnostic, &events).await;
+    if report.error.is_none()
+        && !result.twitter_photos_failed
+        && only_limit_skips(&result.selection)
+        && is_limit_skip(&diagnostic)
+    {
+        log_limit_skip(url, &diagnostic);
+        return;
+    }
     let mut warning = format!(
         "Не все медиа доставлены (отправлено {} из {}); исходная ссылка сохранена.",
         report.delivered,

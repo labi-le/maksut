@@ -37,7 +37,7 @@ When a refutation is ITSELF disputed, neither side closes the finding unilateral
 
 **Why performance and resource bounds are their OWN pass.** Every path in `maksut` runs under tight container and Telegram limits:
 
-- Media downloads are bounded by the `media.concurrent_downloads` semaphore (default 2) and per-user `media.user_download_limit` (default 3), with `media.max_bytes` (default 45 MiB, ceiling `telegram.file_limit_bytes`) and `media.download_timeout_secs` (default 180 s).
+- Media downloads are bounded by the `media.concurrent_downloads` semaphore (default 2) and per-user `media.user_download_limit` (default 3), with `media.max_bytes` (default 200 MiB, clamped to `telegram.file_limit_bytes`, `-1`/`0` for no ceiling) and `media.download_timeout_secs` (default 180 s).
 - Single-video YouTube links probe metadata (`media.youtube_probe_timeout_secs`, default 25 s) to pick H.264 + AAC streams whose combined size plus `media.mp4_mux_headroom` (default 64 KiB) fits `media.max_bytes`, muxing without re-encoding instead of burning CPU in `ffmpeg`.
 - `read_url` bounds HTML complexity (`read_url.max_html_elements` default 20_000, `read_url.max_html_depth` default 128) before handing markup to `dom_smoothie`, because parsing hostile DOM trees is a CPU bound, not just a byte cap (`read_url.max_bytes`, default 2 MiB).
 - Avoidable allocations, unbounded reads (`take` / chunked size checks are required on every HTTP and subprocess pipe), and holding locks across `.await` are blocking findings.

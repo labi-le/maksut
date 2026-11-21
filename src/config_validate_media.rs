@@ -100,9 +100,14 @@ impl ReadUrlSettings {
 }
 
 impl MediaSettings {
-    pub(crate) fn validate(&self, telegram: &TelegramSettings) -> Result<(), String> {
-        if self.max_bytes == 0 || self.max_bytes > telegram.file_limit_bytes {
-            return Err("media.max_bytes must be between 1 and telegram.file_limit_bytes".into());
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.max_bytes < -1 || (self.max_bytes > 0 && self.max_bytes < 1024) {
+            return Err(
+                "media.max_bytes must be -1 (no limit), 0 (disabled) or at least 1024 bytes".into(),
+            );
+        }
+        if self.max_bytes > 2 * 1024 * 1024 * 1024 {
+            return Err("media.max_bytes must not exceed 2147483648 bytes".into());
         }
         usize_count("media.max_files", self.max_files, 1, 50)?;
         usize_count("media.max_tiktok_photos", self.max_tiktok_photos, 1, 35)?;
@@ -119,12 +124,12 @@ impl MediaSettings {
             1,
             3600,
         )?;
-        count(
-            "media.max_video_duration_secs",
-            self.max_video_duration_secs,
-            1,
-            86_400,
-        )?;
+        if self.max_video_duration_secs < -1 || self.max_video_duration_secs > 86_400 {
+            return Err(
+                "media.max_video_duration_secs must be -1 (no limit), 0 (disabled) or 1..86400"
+                    .into(),
+            );
+        }
         count(
             "media.youtube_probe_timeout_secs",
             self.youtube_probe_timeout_secs,

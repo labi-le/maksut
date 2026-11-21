@@ -345,7 +345,7 @@ pub(crate) async fn download_videos_attempt(
             } else if size_skipped {
                 "Size limit"
             } else if status.code() == Some(101) {
-                "Media skipped"
+                "Media limit"
             } else {
                 label
             },

@@ -1,26 +1,34 @@
 use crate::*;
 
 pub(crate) fn youtube_duration_filter() -> String {
-    format!(
-        "!is_live & duration <= {}",
-        config().media.max_video_duration_secs
-    )
+    duration_filter(config().max_video_duration_secs())
+}
+
+/// `!is_live` always stays: a live/upcoming stream has no finite length to
+/// download. The duration clause appears only while a limit is configured.
+pub(crate) fn duration_filter(limit: Option<u64>) -> String {
+    match limit {
+        Some(seconds) => format!("!is_live & duration <= {seconds}"),
+        None => "!is_live".to_string(),
+    }
 }
 
 pub(crate) fn youtube_reject_reason(info: &Value) -> Option<&'static str> {
+    reject_reason(info, config().max_video_duration_secs())
+}
+
+pub(crate) fn reject_reason(info: &Value, duration_limit: Option<u64>) -> Option<&'static str> {
     let live_status = info.get("live_status").and_then(Value::as_str);
     if matches!(live_status, Some("is_live" | "is_upcoming" | "post_live"))
         || info.get("is_live").and_then(Value::as_bool) == Some(true)
     {
         return Some("Video filtered");
     }
-    if info
-        .get("duration")
-        .and_then(Value::as_f64)
-        .is_some_and(|duration| {
-            duration.is_finite() && duration > config().media.max_video_duration_secs as f64
-        })
-    {
+    if duration_limit.is_some_and(|limit| {
+        info.get("duration")
+            .and_then(Value::as_f64)
+            .is_some_and(|duration| duration.is_finite() && duration > limit as f64)
+    }) {
         return Some("Video filtered");
     }
     None

@@ -181,7 +181,10 @@ pub(crate) struct KeyView {
     pub(crate) restart_required: bool,
 }
 
-/// The effective value the running process uses, mirroring the whitelist.
+/// The configured value of each whitelisted key, used for display and edit
+/// prefill. Runtime resolution is not applied here: `media.max_bytes` is
+/// clamped by `telegram.file_limit_bytes` and `-1`/`0` resolve to that bound,
+/// so returning the clamp would make a save overwrite the configured value.
 pub(crate) fn effective(config: &Config, key: &str) -> Option<EditValue> {
     Some(match key {
         "log.level" => EditValue::Str(config.log.level.clone()),
@@ -196,11 +199,9 @@ pub(crate) fn effective(config: &Config, key: &str) -> Option<EditValue> {
         "memory.recent_messages" => EditValue::Int(config.memory.recent_messages as i64),
         "memory.summary_max_chars" => EditValue::Int(config.memory.summary_max_chars as i64),
         "media.max_files" => EditValue::Int(config.media.max_files as i64),
-        "media.max_video_duration_secs" => {
-            EditValue::Int(config.media.max_video_duration_secs as i64)
-        }
+        "media.max_video_duration_secs" => EditValue::Int(config.media.max_video_duration_secs),
         "media.download_timeout_secs" => EditValue::Int(config.media.download_timeout_secs as i64),
-        "media.max_bytes" => EditValue::Int(config.media.max_bytes as i64),
+        "media.max_bytes" => EditValue::Int(config.media.max_bytes),
         "research.max_sources" => EditValue::Int(config.research.max_sources as i64),
         "research.timeout_secs" => EditValue::Int(config.research.timeout_secs as i64),
         "read_url.timeout_secs" => EditValue::Int(config.read_url.timeout_secs as i64),

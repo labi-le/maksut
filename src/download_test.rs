@@ -358,7 +358,7 @@ exit 3
 
 #[cfg(unix)]
 #[tokio::test]
-async fn features_aggregate_storage_budget_is_not_a_per_file_size_failure() {
+async fn features_aggregate_storage_budget_is_a_silent_skip_journaled_separately_from_size() {
     let root = tempfile::tempdir().unwrap();
     let mut settings = fake_settings(root.path(), r#"#!/bin/sh
 dir=; while [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then shift; dir="${1%/*}"; fi; shift; done
@@ -384,23 +384,17 @@ sleep 60
         .unwrap();
     assert_eq!(detail, "Temporary storage limit");
     let calls = calls.lock().await;
-    let reply: Value = serde_json::from_str(
-        &calls
-            .iter()
-            .find(|(path, _)| api_method_is(path, "sendMessage"))
-            .unwrap()
-            .1,
-    )
-    .unwrap();
-    assert!(
-        reply["text"].as_str().unwrap().contains("временн"),
-        "explain aggregate storage, not a file's byte cap"
-    );
     assert!(
         calls
             .iter()
-            .all(|(path, _)| api_method_is(path, "sendMessage")),
-        "no delivery or source deletion after quota failure"
+            .all(|(path, _)| !api_method_is(path, "sendMessage")),
+        "the aggregate storage limit must stay silent in the chat"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(path, _)| api_method_is(path, "deleteMessage")),
+        "no source deletion after a quota skip"
     );
     server.abort();
 }

@@ -44,7 +44,7 @@ connect_timeout_secs = 15
 request_timeout_secs = 180
 pool_idle_timeout_secs = 15
 tcp_keepalive_secs = 15
-# Telegram rejects uploads above 50 MB; media.max_bytes must fit under it.
+# Telegram rejects uploads above 50 MB; a positive media.max_bytes is clamped to it.
 file_limit_bytes = 50000000
 
 [chat]
@@ -199,12 +199,15 @@ max_html_elements = 20000
 max_html_depth = 128
 
 [media]
-max_bytes = 47185920
+# -1 or 0 means no configured ceiling; a positive value is clamped by
+# telegram.file_limit_bytes because Telegram rejects larger uploads.
+max_bytes = 209715200
 max_files = 10
 max_tiktok_photos = 35
 user_download_limit = 3
 concurrent_downloads = 2
 download_timeout_secs = 180
+# -1 or 0 removes the duration limit; live streams are always skipped.
 max_video_duration_secs = 1020
 youtube_probe_timeout_secs = 25
 max_metadata_bytes = 4194304

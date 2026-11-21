@@ -83,6 +83,23 @@ impl Config {
         toml::from_str::<Self>(text).map_err(|error| format!("invalid TOML: {error}"))
     }
 
+    /// Per-file byte cap after resolving `media.max_bytes`: a positive value is
+    /// clamped by `telegram.file_limit_bytes` because anything larger cannot be
+    /// uploaded, while `-1` and `0` leave only that Bot API bound.
+    pub(crate) fn max_media_bytes(&self) -> u64 {
+        match u64::try_from(self.media.max_bytes) {
+            Ok(configured) if configured > 0 => configured.min(self.telegram.file_limit_bytes),
+            _ => self.telegram.file_limit_bytes,
+        }
+    }
+
+    /// Video duration ceiling in seconds; `-1` and `0` disable the limit.
+    pub(crate) fn max_video_duration_secs(&self) -> Option<u64> {
+        u64::try_from(self.media.max_video_duration_secs)
+            .ok()
+            .filter(|seconds| *seconds > 0)
+    }
+
     pub(crate) fn apply_env(&mut self) -> Result<(), String> {
         if let Some(value) = env_value("DATABASE_URL") {
             self.paths.database_url = value;
@@ -161,9 +178,9 @@ impl Config {
             })?;
         }
         if let Some(value) = env_value("MAX_MEDIA_BYTES") {
-            self.media.max_bytes = value
-                .parse()
-                .map_err(|_| "MAX_MEDIA_BYTES must be an integer in bytes".to_string())?;
+            self.media.max_bytes = value.parse().map_err(|_| {
+                "MAX_MEDIA_BYTES must be an integer byte count, -1 or 0".to_string()
+            })?;
         }
         if let Some(value) = env_value("GARAGE_ENDPOINT") {
             self.garage.endpoint = value;
