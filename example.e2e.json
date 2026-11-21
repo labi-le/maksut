@@ -8,5 +8,6 @@
   "media_url": "",
   "media_timeout_secs": 300,
   "sticker_prompt": "",
+  "tool_prompt": "найди в интернете официальный сайт Rust и пришли ссылку",
   "require": false
 }

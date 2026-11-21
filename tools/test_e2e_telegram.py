@@ -163,6 +163,7 @@ def config(url: str, **overrides) -> e2e_telegram.Config:
         "media_url": "",
         "media_timeout_secs": 1.0,
         "sticker_prompt": "",
+        "tool_prompt": "",
         "require": False,
     }
     values.update(overrides)
@@ -237,6 +238,15 @@ class ConfigTests(unittest.TestCase):
             loaded = e2e_telegram.load_config(path, environ={e2e_telegram.REQUIRE_ENV: "true"})
         self.assertTrue(loaded.require)
 
+    def test_tool_prompt_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "e2e.json"
+            path.write_text(json.dumps({"chat_id": 1, "bot_username": "b"}), encoding="utf-8")
+            loaded = e2e_telegram.load_config(
+                path, environ={e2e_telegram.TOOL_ENV: "  найди сайт  "}
+            )
+        self.assertEqual(loaded.tool_prompt, "найди сайт")
+
     def test_shared_mcp_url_is_the_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "e2e.json"
@@ -271,6 +281,26 @@ class ParsingTests(unittest.TestCase):
     def test_literal_markup_is_detected(self):
         self.assertEqual(e2e_telegram.leaked_markup("привет <b>мир</b>"), "<b>")
         self.assertIsNone(e2e_telegram.leaked_markup("привет мир"))
+
+    def test_printed_tool_call_markup_is_detected(self):
+        self.assertEqual(
+            e2e_telegram.leaked_markup("<｜｜DSML｜｜ calls>"), "<｜"
+        )
+        self.assertEqual(
+            e2e_telegram.leaked_markup('{"name":"read_url"} <tool_call>'), "<tool_call>"
+        )
+        self.assertIsNone(e2e_telegram.leaked_markup("цена < 1000 ｜ ничего"))
+
+    def test_failed_reply_is_detected(self):
+        self.assertIsNotNone(
+            e2e_telegram.failed_reply("Не получилось ответить, попробуй ещё раз.")
+        )
+        self.assertIsNone(e2e_telegram.failed_reply("вот ссылка: https://example.com"))
+
+    def test_links_include_bare_domains(self):
+        self.assertIsNotNone(e2e_telegram.FIRST_LINK.search("сайт rust-lang.org, там доки"))
+        self.assertIsNotNone(e2e_telegram.FIRST_LINK.search("https://www.rust-lang.org/"))
+        self.assertIsNone(e2e_telegram.FIRST_LINK.search("версия 1.2.3, т.е. без ссылки"))
 
     def test_secret_patterns_are_detected(self):
         self.assertIsNotNone(
@@ -336,6 +366,42 @@ class RunnerTests(unittest.TestCase):
             results = e2e_telegram.Runner(config(server.url)).run()
         self.assertEqual(statuses(results)["formatting"], "fail")
         self.assertIn("<b>", results[2].detail)
+
+    def test_tool_reply_passes_with_a_link(self):
+        chat = FakeChat(reply_text="нашёл: https://www.rust-lang.org/")
+        with FakeServer(chat) as server:
+            results = e2e_telegram.Runner(
+                config(server.url, tool_prompt="найди сайт Rust")
+            ).run()
+        self.assertEqual(statuses(results)["tool-reply"], "pass")
+        self.assertIn("https://www.rust-lang.org/", results[-1].detail)
+
+    def test_tool_reply_requires_a_link(self):
+        chat = FakeChat(reply_text="вот сайт")
+        with FakeServer(chat) as server:
+            results = e2e_telegram.Runner(
+                config(server.url, tool_prompt="найди сайт Rust")
+            ).run()
+        self.assertEqual(statuses(results)["tool-reply"], "fail")
+        self.assertIn("no link", results[-1].detail)
+
+    def test_tool_reply_fails_on_the_generic_error_text(self):
+        chat = FakeChat(reply_text="Не получилось ответить, попробуй ещё раз.")
+        with FakeServer(chat) as server:
+            results = e2e_telegram.Runner(
+                config(server.url, tool_prompt="найди сайт Rust")
+            ).run()
+        self.assertEqual(statuses(results)["tool-reply"], "fail")
+        self.assertIn("error reply", results[-1].detail)
+
+    def test_tool_reply_fails_on_printed_tool_syntax(self):
+        chat = FakeChat(reply_text="<｜｜DSML｜｜ calls> https://example.com")
+        with FakeServer(chat) as server:
+            results = e2e_telegram.Runner(
+                config(server.url, tool_prompt="найди сайт Rust")
+            ).run()
+        self.assertEqual(statuses(results)["tool-reply"], "fail")
+        self.assertIn("markup", results[-1].detail)
 
     def test_media_requires_a_media_message(self):
         chat = FakeChat(media="https://example.com/clip")

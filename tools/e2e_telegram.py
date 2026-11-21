@@ -46,6 +46,7 @@ MCP_URL_ENV = "MAKSUT_E2E_MCP_URL"
 BOT_ENV = "MAKSUT_E2E_BOT_USERNAME"
 MEDIA_ENV = "MAKSUT_E2E_MEDIA_URL"
 STICKER_ENV = "MAKSUT_E2E_STICKER_PROMPT"
+TOOL_ENV = "MAKSUT_E2E_TOOL_PROMPT"
 REQUIRE_ENV = "MAKSUT_E2E_REQUIRE"
 
 DEFAULT_CONFIG = Path("self-improve/e2e.json")
@@ -71,14 +72,19 @@ SUPPORTED_KEYS = frozenset(
         "media_url",
         "media_timeout_secs",
         "sticker_prompt",
+        "tool_prompt",
         "require",
     }
 )
 
-# Literal parse_mode markup in an outgoing message means the bot escaped or shipped
-# its own tags instead of formatting them.
+# Literal markup in an outgoing message means the bot escaped or shipped its own
+# tags instead of formatting them. Printed tool-call syntax is the same defect in
+# a provider dialect: `<tool_call>` JSON, and the fullwidth-bar tags (U+FF5C)
+# DeepSeek emits when it answers without a tool schema.
 MARKUP_TAG = re.compile(
-    r"</?(?:b|strong|i|em|u|s|code|pre|a|tg-emoji)(?:\s+[a-z-]+=\"[^\"]*\")*\s*/?>",
+    r"</?(?:b|strong|i|em|u|s|code|pre|a|tg-emoji)(?:\s+[a-z-]+=\"[^\"]*\")*\s*/?>"
+    r"|</?tool_call>"
+    r"|<\uff5c",
     re.IGNORECASE,
 )
 # Values that must never reach a chat: bot tokens and explicit secret assignments.
@@ -88,6 +94,15 @@ SECRET_PATTERNS = (
     re.compile(r"\bTELEGRAM_(?:API_HASH|SESSION)\s*="),
 )
 DOWNLOADED = re.compile(r"^Media downloaded to (.*?)\.?$", re.DOTALL)
+# The generic turn-failure texts mean the model produced no answer at all.
+FAILED_REPLY = re.compile(
+    r"Не получилось ответить|ллмка (?:временно отвалилась|отвалилась по таймауту|вернула ошибку)"
+)
+FIRST_LINK = re.compile(
+    r"https?://[^\s<>\"'）)]+"
+    r"|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?:/[^\s<>\"'）)]*)?",
+    re.IGNORECASE,
+)
 
 
 class ConfigError(Exception):
@@ -113,6 +128,7 @@ class Config:
     media_url: str = ""
     media_timeout_secs: float = 300.0
     sticker_prompt: str = ""
+    tool_prompt: str = ""
     require: bool = False
 
 
@@ -184,6 +200,7 @@ def build_config(raw: dict, default_mcp_url: str = DEFAULT_MCP_URL) -> Config:
             raw.get("media_timeout_secs", 300.0), "media_timeout_secs", MAX_TIMEOUT_SECS
         ),
         sticker_prompt=_text(raw.get("sticker_prompt", ""), "sticker_prompt", required=False),
+        tool_prompt=_text(raw.get("tool_prompt", ""), "tool_prompt", required=False),
         require=_truthy(raw.get("require", False)),
     )
 
@@ -214,6 +231,7 @@ def load_config(path: Path | None = None, environ: dict | None = None) -> Config
         (BOT_ENV, "bot_username", lambda value: _text(value, "bot_username", required=True)),
         (MEDIA_ENV, "media_url", lambda value: _text(value, "media_url", required=False)),
         (STICKER_ENV, "sticker_prompt", lambda value: _text(value, "sticker_prompt", required=False)),
+        (TOOL_ENV, "tool_prompt", lambda value: _text(value, "tool_prompt", required=False)),
         (REQUIRE_ENV, "require", _truthy),
     )
     provided = text is not None
@@ -392,6 +410,11 @@ def leaked_secret(text: str) -> str | None:
     return None
 
 
+def failed_reply(text: str) -> str | None:
+    match = FAILED_REPLY.search(text)
+    return match.group(0) if match else None
+
+
 class Runner:
     """Runs the checks in order and stops the dependent ones on a hard failure."""
 
@@ -426,6 +449,8 @@ class Runner:
             results.extend(self._media())
         if self.config.sticker_prompt:
             results.append(self._sticker())
+        if self.config.tool_prompt:
+            results.append(self._tool_reply())
         return results
 
     def _conversation(self) -> tuple[dict, float]:
@@ -558,6 +583,40 @@ class Runner:
         except (Unavailable, Failed) as error:
             return Result("sticker", "fail", str(error))
         return Result("sticker", "pass", f"message {record.get('id')}: {record.get('media')}")
+
+    def _tool_reply(self) -> Result:
+        """A prompt that needs the search/read_url round must come back as a
+        real answer carrying the link, not a generic failure or printed tool
+        syntax."""
+        try:
+            marker = self._latest_id()
+            self.client.call(
+                "send_message",
+                {
+                    "chat_id": self.config.chat_id,
+                    "message": with_mention(self.config.tool_prompt, self.config.bot_username),
+                },
+            )
+            record = self._await(
+                marker, self.config.timeout_secs, "no bot reply to the tool prompt"
+            )
+        except (Unavailable, Failed) as error:
+            return Result("tool-reply", "fail", str(error))
+        text = record.get("text") or ""
+        failure = failed_reply(text)
+        if failure:
+            return Result("tool-reply", "fail", f"bot sent an error reply: {failure}")
+        tag = leaked_markup(text)
+        if tag:
+            return Result("tool-reply", "fail", f"literal markup in the tool answer: {tag}")
+        link = FIRST_LINK.search(text)
+        if link is None:
+            return Result("tool-reply", "fail", "the tool answer carries no link")
+        return Result(
+            "tool-reply",
+            "pass",
+            f"message {record.get('id')}: answered with {_truncate(link.group(0), 120)}",
+        )
 
 
 def render(results: list[Result]) -> str:
