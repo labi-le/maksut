@@ -1061,3 +1061,76 @@ pub(crate) async fn jev_stub(status: &'static str, body: String, delay: Duration
         task,
     }
 }
+
+use crate::attachment_image::AttachmentFetcher;
+use crate::bounded_fetch::{FetchCategory, FetchError, Fetched};
+use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Mutex;
+
+/// Replays a scripted response per `fetch` call, so an image-attachment test
+/// states the page, the redirect the detector had to follow, and the failure in
+/// the exact order they occur. An exhausted queue fails rather than hangs.
+pub(crate) struct MockAttachmentFetcher {
+    responses: Mutex<VecDeque<Result<Fetched, FetchError>>>,
+    calls: AtomicUsize,
+}
+
+impl Default for MockAttachmentFetcher {
+    fn default() -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::new()),
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl MockAttachmentFetcher {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn push(&self, response: Result<Fetched, FetchError>) {
+        if let Ok(mut queue) = self.responses.lock() {
+            queue.push_back(response);
+        }
+    }
+
+    /// How many times the seam was entered: a case that expects a scripted body
+    /// also asserts the request count, so an accidental network path shows up as
+    /// a skipped call rather than a silently passing assertion.
+    pub(crate) fn calls(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
+}
+
+impl AttachmentFetcher for MockAttachmentFetcher {
+    fn fetch<'a>(
+        &'a self,
+        _url: Url,
+        _accept: &'static str,
+        _cap: usize,
+        _deadline: time::Instant,
+    ) -> Pin<Box<dyn Future<Output = Result<Fetched, FetchError>> + Send + 'a>> {
+        // Take the scripted response outside the future: the guard must not
+        // live across the await inside it.
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        let response = self
+            .responses
+            .lock()
+            .ok()
+            .and_then(|mut queue| queue.pop_front());
+        Box::pin(async move {
+            response.unwrap_or_else(|| {
+                Err(FetchError {
+                    category: FetchCategory::Transport,
+                    status: None,
+                    host: None,
+                    path: None,
+                    message: "mock attachment fetcher is exhausted".to_owned(),
+                })
+            })
+        })
+    }
+}

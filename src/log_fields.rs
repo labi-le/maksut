@@ -219,8 +219,49 @@ pub(crate) fn tool_call_args(args: &Value, args_len: usize) {
     );
 }
 
-pub(crate) fn tool_result(tool: &str, result_bytes: usize) {
-    tracing::debug!(tool, result_bytes, "tool result");
+/// One line per dispatched tool call: `info` because a turn's latency and token
+/// cost are read from these, and the tool name is the only identifier needed.
+pub(crate) fn tool_finished(
+    tool: &str,
+    result_bytes: usize,
+    elapsed_ms: u64,
+    outcome: &'static str,
+) {
+    tracing::info!(tool, result_bytes, elapsed_ms, outcome, "tool finished");
+}
+
+/// Tool results are unstructured text, so this is a best-effort log label, not
+/// a control-flow decision: a failed tool still returns its own WARN line.
+pub(crate) fn tool_outcome(text: &str) -> &'static str {
+    let text = text.trim_start();
+    const ERROR_PREFIXES: &[&str] = &[
+        "ошибка",
+        "не удалось",
+        "не отправлено",
+        "лимит",
+        "недоступ",
+        "некоррект",
+        "таймаут",
+        "можно ",
+        "укажи ",
+        "нужен ",
+        "нужна ",
+        "файл не ",
+        "ссылка не",
+        "хост ",
+        "инструмент ",
+        "статистика ",
+        "поиск ",
+        "пусто",
+        "ничего ",
+        "read_url:",
+        "chat_search:",
+    ];
+    if text.is_empty() || ERROR_PREFIXES.iter().any(|prefix| text.starts_with(prefix)) {
+        "error"
+    } else {
+        "ok"
+    }
 }
 
 pub(crate) fn telegraph_start(host: Option<&str>, chars: usize, nodes: usize) {

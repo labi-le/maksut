@@ -1,6 +1,11 @@
+use crate::prelude::*;
+
+use crate::attachment_image::PreparedAttachment;
 use crate::media::MediaKind;
 use crate::research::ResearchSource;
-use crate::research_attachments::{attachment_kind, select};
+use crate::research_attachments::{
+    attachment_kind, select, source_attachment, source_attachment_url, ResearchAttachment,
+};
 use crate::torrent::TorrentHit;
 
 fn source(url: &str) -> ResearchSource {
@@ -120,4 +125,52 @@ fn bidi_and_zero_width_characters_cannot_spoof_a_filename() {
     assert!(!name.contains('\u{202e}'), "{name}");
     assert!(!name.contains('\u{200b}'), "{name}");
     assert!(name.ends_with(".torrent"), "{name}");
+}
+
+fn prepared_fixture() -> PreparedAttachment {
+    PreparedAttachment {
+        path: PathBuf::from("/tmp/maksut/book.pdf"),
+        kind: MediaKind::Document,
+        filename: "book.pdf".into(),
+        host: Some("example.com".into()),
+        url_path: Some("/book.pdf".into()),
+        bytes: 4096,
+    }
+}
+
+#[test]
+fn selection_only_plans_downloads() {
+    let hits = vec![hit(
+        "https://rutracker.org/forum/viewtopic.php?t=11",
+        Some("https://rutracker.org/forum/dl.php?t=11"),
+        "planned",
+    )];
+    let sources = vec![source("https://example.com/book.pdf")];
+    let attachments = select(&sources, &hits, 3);
+    assert_eq!(attachments.len(), 2);
+    assert!(attachments.iter().all(|a| a.prepared.is_none()));
+
+    let direct = source_attachment("https://example.com/book.pdf").expect("direct link");
+    assert!(direct.prepared.is_none());
+    let url = Url::parse("https://example.com/book.pdf").expect("url");
+    assert!(source_attachment_url(&url).expect("url").prepared.is_none());
+}
+
+#[test]
+fn a_prepared_attachment_still_compares_and_clones() {
+    let unprepared = ResearchAttachment {
+        url: "https://example.com/book.pdf".into(),
+        filename: "book.pdf".into(),
+        prepared: None,
+    };
+    let mut prepared = unprepared.clone();
+    prepared.prepared = Some(prepared_fixture());
+
+    assert_ne!(prepared, unprepared);
+    assert_eq!(prepared, prepared.clone());
+    assert_eq!(
+        prepared.prepared.as_ref().map(|p| p.bytes),
+        Some(4096),
+        "a clone keeps the same prepared descriptor"
+    );
 }

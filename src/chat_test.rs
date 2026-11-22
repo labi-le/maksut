@@ -1,6 +1,15 @@
+use crate::bounded_fetch::{FetchCategory, FetchError, Fetched};
 use crate::test_support::*;
 use crate::test_support::{chat_reply, chat_reply_with_proposal};
 use crate::*;
+
+struct PreparedFileGuard(PathBuf);
+
+impl Drop for PreparedFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 
 #[test]
 fn chat_prompt_needs_the_name_in_groups() {
@@ -3737,7 +3746,9 @@ async fn read_url_queues_direct_image_attachment_for_telegram_upload() {
         r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#.to_owned(),
     ])
     .await;
-    let config = ChatConfig::new(
+    let fetcher = Arc::new(MockAttachmentFetcher::new());
+    fetcher.push(Ok(image_body("files.catbox.moe", "/i9b4qr.png")));
+    let mut config = ChatConfig::new(
         llm.url.clone(),
         "key".into(),
         "deepseek-v4.1-flash".into(),
@@ -3745,6 +3756,7 @@ async fn read_url_queues_direct_image_attachment_for_telegram_upload() {
         SearchProvider::DuckDuckGo,
         None,
     );
+    config.attachment_fetcher = fetcher.clone();
     let turn = ChatTurn {
         chat_id: ChatId(1),
         user_id: UserId(1),
@@ -3783,6 +3795,26 @@ async fn read_url_queues_direct_image_attachment_for_telegram_upload() {
     );
     assert_eq!(reply.attachments[0].filename, "i9b4qr.png");
     assert_eq!(reply.attachments[0].kind(), crate::media::MediaKind::Photo);
+    let prepared = reply.attachments[0]
+        .prepared
+        .as_ref()
+        .expect("a queued photo must already be downloaded");
+    assert_eq!(prepared.kind, crate::media::MediaKind::Photo);
+    assert_eq!(prepared.bytes, PNG.len() as u64);
+    assert_eq!(
+        std::fs::read(&prepared.path).expect("the prepared file must exist"),
+        PNG
+    );
+    assert_eq!(
+        fetcher.calls(),
+        1,
+        "the photo must come from the injected fetcher, not the network"
+    );
+    let ready = format!(
+        "картинка {} готова к отправке",
+        reply.attachments[0].filename
+    );
+    let _guard = PreparedFileGuard(prepared.path.clone());
     let requests = llm.requests.lock().unwrap();
     let second = body_of(&requests[1]);
     let tool_msg = second["messages"]
@@ -3792,11 +3824,186 @@ async fn read_url_queues_direct_image_attachment_for_telegram_upload() {
         .find(|m| m["role"] == "tool")
         .unwrap();
     assert!(
-        tool_msg["content"]
-            .as_str()
-            .unwrap()
-            .contains("файл i9b4qr.png будет отправлен в чат вместе с ответом"),
+        tool_msg["content"].as_str().unwrap().contains(&ready),
         "{tool_msg}"
+    );
+    llm.task.abort();
+}
+
+/// A PNG header is all the content sniffing needs, and the marker tail lets a
+/// case prove the saved bytes came from the scripted response.
+const PNG: [u8; 24] = [
+    0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R',
+    0xAB, 0xAB, 0xAB, 0xAB, 0xAB, 0xAB, 0xAB, 0xAB,
+];
+
+fn image_body(host: &str, path: &str) -> Fetched {
+    Fetched {
+        body: PNG.to_vec(),
+        content_type: "image/png".to_owned(),
+        host: Some(host.to_owned()),
+        path: Some(path.to_owned()),
+    }
+}
+
+fn throttled(host: &str, path: &str) -> FetchError {
+    FetchError {
+        category: FetchCategory::Http,
+        status: Some(429),
+        host: Some(host.to_owned()),
+        path: Some(path.to_owned()),
+        message: "хост ответил ошибкой".to_owned(),
+    }
+}
+
+fn image_turn(prompt: &'static str) -> ChatTurn<'static> {
+    ChatTurn {
+        chat_id: ChatId(1),
+        user_id: UserId(1),
+        sender_name: "Денис",
+        username: Some("crudoshlepa"),
+        message_id: 1,
+        reply_user_id: None,
+        owner: true,
+        prompt,
+        image: None,
+        effort: None,
+        followup: true,
+        sticker_mode: false,
+        router_mode: RouterMode::Off,
+        reply_context: None,
+        bot: None,
+    }
+}
+
+#[tokio::test]
+async fn read_url_does_not_queue_an_image_the_site_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_img","type":"function","function":{"name":"read_url","arguments":"{\"url\":\"https://files.catbox.moe/blocked.png\"}"}}]}}]}"#.to_owned(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"не смог скачать картинку"}}]}"#.to_owned(),
+    ])
+    .await;
+    let fetcher = Arc::new(MockAttachmentFetcher::new());
+    fetcher.push(Err(throttled("files.catbox.moe", "/blocked.png")));
+    let mut config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    config.attachment_fetcher = fetcher.clone();
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &image_turn("прочитай https://files.catbox.moe/blocked.png"),
+        None,
+    )
+    .await
+    .expect("a refused image must not fail the turn");
+    assert!(
+        reply.attachments.is_empty(),
+        "a rejected image must not be queued: {:?}",
+        reply.attachments
+    );
+    assert_eq!(fetcher.calls(), 1, "one bounded fetch, no detector retry");
+    let requests = llm.requests.lock().unwrap();
+    let tool_msg = tool_contents(&requests[1]).join("\n");
+    assert!(
+        tool_msg
+            .contains("не отправлено: сайт ограничил запросы; попробуй другую ссылку из поиска"),
+        "{tool_msg}"
+    );
+    assert!(
+        !tool_msg.contains("готова к отправке"),
+        "a rejected image must not claim to be ready: {tool_msg}"
+    );
+    llm.task.abort();
+}
+
+#[tokio::test]
+async fn read_url_honours_a_second_image_url_in_the_same_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_database(&format!(
+        "sqlite://{}",
+        dir.path().join("state.db").display()
+    ))
+    .await
+    .unwrap();
+    let llm = mock_server(vec![
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_a","type":"function","function":{"name":"read_url","arguments":"{\"url\":\"https://files.catbox.moe/blocked.png\"}"}}]}}]}"#.to_owned(),
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_b","type":"function","function":{"name":"read_url","arguments":"{\"url\":\"https://files.catbox.moe/ok.png\"}"}}]}}]}"#.to_owned(),
+        r#"{"choices":[{"message":{"role":"assistant","content":"вот картинка"}}]}"#.to_owned(),
+    ])
+    .await;
+    let fetcher = Arc::new(MockAttachmentFetcher::new());
+    fetcher.push(Err(throttled("files.catbox.moe", "/blocked.png")));
+    fetcher.push(Ok(image_body("files.catbox.moe", "/ok.png")));
+    let mut config = ChatConfig::new(
+        llm.url.clone(),
+        "key".into(),
+        "deepseek-v4.1-flash".into(),
+        llm.url.clone(),
+        SearchProvider::DuckDuckGo,
+        None,
+    );
+    config.attachment_fetcher = fetcher.clone();
+    let reply = chat_reply_with_proposal(
+        &config,
+        &pool,
+        &StickerReplies::for_tests(),
+        &StickerCatalog::default(),
+        &image_turn(
+            "сравни https://files.catbox.moe/blocked.png и https://files.catbox.moe/ok.png",
+        ),
+        None,
+    )
+    .await
+    .expect("the second image must still be queued");
+    assert_eq!(
+        reply.attachments.len(),
+        1,
+        "exactly the second image is queued: {:?}",
+        reply.attachments
+    );
+    assert_eq!(reply.attachments[0].url, "https://files.catbox.moe/ok.png");
+    assert!(
+        reply.attachments[0].prepared.is_some(),
+        "the retried image must be downloaded"
+    );
+    assert_eq!(
+        fetcher.calls(),
+        2,
+        "one refusal for the first url, one fetch for the second"
+    );
+    let prepared = reply.attachments[0]
+        .prepared
+        .as_ref()
+        .expect("prepared attachment");
+    assert_eq!(prepared.url_path.as_deref(), Some("/ok.png"));
+    let _guard = PreparedFileGuard(prepared.path.clone());
+    let requests = llm.requests.lock().unwrap();
+    let tool_msgs = tool_contents(&requests[2]);
+    assert_eq!(tool_msgs.len(), 2, "{tool_msgs:?}");
+    assert!(
+        tool_msgs[0].contains("не отправлено"),
+        "the first url must be reported as refused: {}",
+        tool_msgs[0]
+    );
+    assert!(
+        tool_msgs[1].contains("готова к отправке"),
+        "the second url must be reported as ready: {}",
+        tool_msgs[1]
     );
     llm.task.abort();
 }

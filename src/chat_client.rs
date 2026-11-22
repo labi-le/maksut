@@ -36,6 +36,9 @@ pub(crate) struct ChatConfig {
     pub(crate) profile_cache: Arc<Mutex<crate::chat_profile::ProfileCache>>,
     pub(crate) research_cooldown: Duration,
     pub(crate) code_dir: PathBuf,
+    /// The one seam through which an attachment download leaves the process; a
+    /// test swaps it so no case depends on a reachable host.
+    pub(crate) attachment_fetcher: Arc<dyn crate::attachment_image::AttachmentFetcher>,
     judge: Arc<ReasoningJudge>,
 }
 
@@ -90,6 +93,7 @@ impl ChatConfig {
             profile_cache: Arc::new(Mutex::new(crate::chat_profile::ProfileCache::default())),
             research_cooldown: Duration::from_secs(settings.research.cooldown_secs),
             code_dir: PathBuf::from(&settings.paths.code_dir),
+            attachment_fetcher: Arc::new(crate::attachment_image::HttpAttachmentFetcher),
             judge,
         }
     }

@@ -1,4 +1,5 @@
 use crate::*;
+use tracing::Instrument;
 
 async fn record_assistant_reply(
     pool: &SqlitePool,
@@ -32,12 +33,14 @@ pub(crate) async fn deliver_chat_reply(
         if !message.chat.is_private()
             && (followup || crate::addressing::reply_to_bot(message, &cfg.bot_username))
         {
+            crate::attachment_send::cleanup(&reply.attachments).await;
             chat.note_reply(message.chat.id, message.from.as_ref().map(|u| u.id))
                 .await;
             tracing::debug!("PASS reply kept followup active, nothing delivered");
             return;
         }
         if followup {
+            crate::attachment_send::cleanup(&reply.attachments).await;
             tracing::debug!("followup PASS, nothing delivered");
             return;
         }
@@ -112,18 +115,38 @@ pub(crate) async fn deliver_chat_reply(
     if !attachments.is_empty() {
         delivered = true;
         let bot = bot.clone();
+        let fetcher = chat.attachment_fetcher.clone();
         let chat_id = message.chat.id;
         let reply_to = message.id;
-        tokio::spawn(async move {
-            let report = crate::attachment_send::send(&bot, chat_id, &attachments).await;
-            if report.failed > 0 {
-                let note = format!("не удалось приложить файлов: {}", report.failed);
-                let _ = crate::rich_message::send_chat_chunk(
-                    &bot, chat_id, reply_to, &note, true, None,
-                )
-                .await;
+        let span = tracing::info_span!(
+            "send_attachments",
+            chat_id = message.chat.id.0,
+            reply_to = message.id.0
+        );
+        tokio::spawn(
+            async move {
+                let started = time::Instant::now();
+                let count = attachments.len();
+                let report =
+                    crate::attachment_send::send(&bot, chat_id, &attachments, fetcher.as_ref())
+                        .await;
+                tracing::info!(
+                    count,
+                    sent = report.sent,
+                    failed = report.failed,
+                    elapsed_ms = crate::log_fields::elapsed_ms(started),
+                    "attachments finished"
+                );
+                if report.failed > 0 {
+                    let note = format!("не удалось приложить файлов: {}", report.failed);
+                    let _ = crate::rich_message::send_chat_chunk(
+                        &bot, chat_id, reply_to, &note, true, None,
+                    )
+                    .await;
+                }
             }
-        });
+            .instrument(span),
+        );
     }
     if is_stop_followup(p) && (followup || p.split_whitespace().count() <= 7) {
         chat.clear_followup(message.chat.id).await;

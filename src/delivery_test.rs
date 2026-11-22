@@ -1,4 +1,8 @@
+use crate::attachment_image::PreparedAttachment;
+use crate::bounded_fetch::{FetchCategory, FetchError, Fetched};
 use crate::feature_support::*;
+use crate::media::MediaKind;
+use crate::research_attachments::ResearchAttachment;
 use crate::test_support::*;
 use crate::*;
 
@@ -1053,4 +1057,115 @@ fn research_attachment_markup_is_rejected_before_upload() {
     assert!(crate::attachment_send::reject_markup("application/x-bittorrent").is_ok());
     assert!(crate::attachment_send::reject_markup("application/octet-stream").is_ok());
     assert!(crate::attachment_send::reject_markup("").is_ok());
+}
+
+fn planned_attachment(url: &str, filename: &str) -> ResearchAttachment {
+    ResearchAttachment {
+        url: url.to_owned(),
+        filename: filename.to_owned(),
+        prepared: None,
+    }
+}
+
+fn fetched_image(body: Vec<u8>, content_type: &str, host: &str, path: &str) -> Fetched {
+    Fetched {
+        body,
+        content_type: content_type.to_owned(),
+        host: Some(host.to_owned()),
+        path: Some(path.to_owned()),
+    }
+}
+
+#[tokio::test]
+async fn prepared_attachment_resolves_without_the_network() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("attach-1-0-cat.jpg");
+    std::fs::write(&path, [0xFF, 0xD8, 0xFF]).unwrap();
+    let attachment = ResearchAttachment {
+        url: "https://cdn.example.com/cat.jpg".to_owned(),
+        filename: "cat.jpg".to_owned(),
+        prepared: Some(PreparedAttachment {
+            path: path.clone(),
+            kind: MediaKind::Photo,
+            filename: "cat.jpg".to_owned(),
+            host: Some("cdn.example.com".to_owned()),
+            url_path: Some("/cat.jpg".to_owned()),
+            bytes: 3,
+        }),
+    };
+    // An exhausted mock fails every call, so a resolve that succeeds proves the
+    // fetcher was never consulted.
+    let fetcher = MockAttachmentFetcher::new();
+    let resolved =
+        match crate::attachment_send::resolve_attachment(root.path(), 0, &attachment, &fetcher)
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(failure) => panic!("prepared attachment hit the network: {}", failure.category),
+        };
+    assert_eq!(fetcher.calls(), 0);
+    assert_eq!(resolved.path, path);
+    assert_eq!(resolved.kind, MediaKind::Photo);
+    assert_eq!(resolved.filename, "cat.jpg");
+    assert_eq!(resolved.host.as_deref(), Some("cdn.example.com"));
+    assert_eq!(resolved.url_path.as_deref(), Some("/cat.jpg"));
+    assert_eq!(resolved.bytes, Some(3));
+    assert_eq!(resolved.source, "prepared");
+}
+
+#[tokio::test]
+async fn unprepared_photo_is_fetched_into_a_temp_file() {
+    let root = tempfile::tempdir().unwrap();
+    let fetcher = MockAttachmentFetcher::new();
+    let image = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    fetcher.push(Ok(fetched_image(
+        image.clone(),
+        "image/png",
+        "cdn.example.com",
+        "/cat.png",
+    )));
+    let attachment = planned_attachment("https://cdn.example.com/cat.png?token=secret", "cat.png");
+    let resolved =
+        match crate::attachment_send::resolve_attachment(root.path(), 0, &attachment, &fetcher)
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(failure) => panic!("preparing a photo failed: {}", failure.category),
+        };
+    assert_eq!(fetcher.calls(), 1);
+    assert_eq!(resolved.source, "delivery");
+    assert_eq!(resolved.filename, "cat.png");
+    assert_eq!(resolved.kind, MediaKind::Photo);
+    assert!(resolved.path.starts_with(root.path()));
+    assert_eq!(std::fs::read(&resolved.path).unwrap(), image);
+    assert_eq!(resolved.host.as_deref(), Some("cdn.example.com"));
+    assert_eq!(resolved.url_path.as_deref(), Some("/cat.png"));
+    assert_eq!(resolved.bytes, Some(image.len() as u64));
+}
+
+#[tokio::test]
+async fn throttled_photo_fails_without_leaving_a_file() {
+    let root = tempfile::tempdir().unwrap();
+    let fetcher = MockAttachmentFetcher::new();
+    fetcher.push(Err(FetchError {
+        category: FetchCategory::Http,
+        status: Some(429),
+        host: Some("cdn.example.com".to_owned()),
+        path: Some("/cat.jpg".to_owned()),
+        message: "слишком много запросов".to_owned(),
+    }));
+    let attachment = planned_attachment("https://cdn.example.com/cat.jpg", "cat.jpg");
+    let failure =
+        match crate::attachment_send::resolve_attachment(root.path(), 0, &attachment, &fetcher)
+            .await
+        {
+            Ok(_) => panic!("a throttled photo must not resolve to a file"),
+            Err(failure) => failure,
+        };
+    assert_eq!(fetcher.calls(), 1, "retry lives in bounded_fetch");
+    assert_eq!(failure.stage, "fetch");
+    assert_eq!(failure.category, "fetch");
+    assert_eq!(failure.status, Some(429));
+    assert!(!failure.reason.is_empty());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
 }

@@ -132,6 +132,7 @@ mod media_ingest;
 mod media_send;
 mod media_store;
 mod read_url;
+mod read_url_attachment;
 mod read_url_cache;
 mod read_url_html;
 mod read_url_sites;
@@ -160,6 +161,7 @@ mod caption;
 pub(crate) use caption::*;
 mod video_convert;
 pub(crate) use video_convert::*;
+mod attachment_image;
 mod attachment_send;
 mod bounded_fetch;
 mod delivery;
@@ -291,6 +293,10 @@ async fn callback_endpoint(
 #[cfg(test)]
 mod addressing_test;
 #[cfg(test)]
+mod attachment_image_test;
+#[cfg(test)]
+mod bounded_fetch_test;
+#[cfg(test)]
 mod browser_test;
 #[cfg(test)]
 mod caption_test;
@@ -358,6 +364,8 @@ mod memory_test;
 mod process_test;
 #[cfg(test)]
 mod qdrant_test;
+#[cfg(test)]
+mod read_url_attachment_test;
 #[cfg(test)]
 mod read_url_test;
 #[cfg(test)]

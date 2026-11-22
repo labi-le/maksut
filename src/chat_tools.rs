@@ -43,6 +43,9 @@ pub(crate) struct ToolState {
     pub(crate) usage_calls: usize,
     pub(crate) proposed_feature: bool,
     pub(crate) discovered_urls: Vec<Url>,
+    /// Remaining download time for attachments in this turn. LLM latency
+    /// between tool calls must not spend it; only `prepare` does.
+    pub(crate) attachment_budget: Option<Duration>,
     pub(crate) allow_sticker: bool,
     pub(crate) allow_feature: bool,
 }
@@ -74,8 +77,22 @@ impl ToolState {
             usage_calls: 0,
             proposed_feature: false,
             discovered_urls: Vec::new(),
+            attachment_budget: None,
             allow_sticker,
             allow_feature,
+        }
+    }
+}
+
+impl ToolState {
+    /// Removes files prepared by `read_url` when the turn ends without moving
+    /// them into a reply. The delivery path removes its own file after upload,
+    /// so this is only for the error and pass branches.
+    pub(crate) async fn cleanup_prepared(&mut self) {
+        for attachment in self.research.attachments.drain(..) {
+            if let Some(prepared) = attachment.prepared {
+                let _ = tokio::fs::remove_file(&prepared.path).await;
+            }
         }
     }
 }
@@ -99,6 +116,7 @@ pub(crate) async fn run_tool_call(
     ctx: &ToolContext<'_>,
     state: &mut ToolState,
 ) -> String {
+    let started = time::Instant::now();
     let name = call
         .pointer("/function/name")
         .and_then(Value::as_str)
@@ -124,7 +142,9 @@ pub(crate) async fn run_tool_call(
         .is_some_and(|kind| !kind.allowed_in_research(state.allow_sticker, state.allow_feature));
     if state.research.used && blocked_in_research {
         tracing::warn!(tool = name, reason = "research mode", "tool denied");
-        return "в режиме ресерча инструмент недоступен".to_string();
+        let denied = "в режиме ресерча инструмент недоступен".to_string();
+        crate::log_fields::tool_finished(name, denied.len(), crate::elapsed_ms(started), "denied");
+        return denied;
     }
     let outcome = match kind {
         None if !ctx.owner
@@ -384,18 +404,7 @@ pub(crate) async fn run_tool_call(
                 if limit == 0 || state.research.attachments.len() >= limit {
                     "лимит вложений на ответ".to_string()
                 } else {
-                    state.read_url_calls += 1;
-                    ack_lookup(ctx, state);
-                    let msg = format!(
-                        "файл {} будет отправлен в чат вместе с ответом",
-                        att.filename
-                    );
-                    let _ = crate::research_attachments::push_bounded(
-                        &mut state.research.attachments,
-                        att,
-                        limit,
-                    );
-                    msg
+                    crate::read_url_attachment::queue(ctx, state, att, limit).await
                 }
             } else {
                 state.read_url_calls += 1;
@@ -664,6 +673,11 @@ pub(crate) async fn run_tool_call(
             }
         }
     };
-    tool_result(name, outcome.len());
+    crate::log_fields::tool_finished(
+        name,
+        outcome.len(),
+        crate::elapsed_ms(started),
+        crate::log_fields::tool_outcome(&outcome),
+    );
     outcome
 }

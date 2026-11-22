@@ -13,6 +13,9 @@ const ATTACHMENT_EXTENSIONS: [&str; 10] = [
 pub(crate) struct ResearchAttachment {
     pub(crate) url: String,
     pub(crate) filename: String,
+    /// Filled in once the download pipeline has resolved the planned file;
+    /// selection only ever produces the plan, so everything here is unprepared.
+    pub(crate) prepared: Option<crate::attachment_image::PreparedAttachment>,
 }
 
 impl ResearchAttachment {
@@ -63,6 +66,7 @@ pub(crate) fn select(
             ResearchAttachment {
                 url: url.clone(),
                 filename: torrent_filename(hit),
+                prepared: None,
             },
             limit,
         ) && attachments.len() >= limit
@@ -129,6 +133,7 @@ pub(crate) fn source_attachment_url(url: &Url) -> Option<ResearchAttachment> {
     Some(ResearchAttachment {
         url: url.as_str().to_owned(),
         filename: format!("{stem}.{ext}"),
+        prepared: None,
     })
 }
 

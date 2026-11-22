@@ -345,15 +345,20 @@ pub(crate) async fn chat_reply_with_proposal(
             request = request.without_reasoning();
         }
         llm_round(round, max_tokens, request.reasoning, state.research.used);
+        let completion = if force_synthesis {
+            chat.complete_with(&request, false, false).await
+        } else {
+            chat.complete(&request).await
+        };
         let Completion {
             message: mut reply,
             usage,
-        } = if force_synthesis {
-            chat.complete_with(&request, false, false)
-                .await
-                .map_err(|e| e.reason())?
-        } else {
-            chat.complete(&request).await.map_err(|e| e.reason())?
+        } = match completion {
+            Ok(completion) => completion,
+            Err(error) => {
+                state.cleanup_prepared().await;
+                return Err(error.reason());
+            }
         };
         usage_site.record(pool, &chat.model, KIND_CHAT, usage).await;
         if request.reasoning && state.sticker.is_none() && reply_is_empty(&reply) {
@@ -409,7 +414,13 @@ pub(crate) async fn chat_reply_with_proposal(
             let text = if content.is_empty() && state.status_fallback.is_none() {
                 String::new()
             } else if state.research.used && !state.research.sources.is_empty() {
-                style_research_reply(&content, &state.research.sources)?
+                match style_research_reply(&content, &state.research.sources) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        state.cleanup_prepared().await;
+                        return Err(error);
+                    }
+                }
             } else {
                 let st = resolve_status_reply(
                     &ctx,
@@ -427,6 +438,7 @@ pub(crate) async fn chat_reply_with_proposal(
                     || (text.is_empty() && (!turn.followup || is_sticker_placeholder(raw_c))));
             let sticker = state
                 .sticker
+                .take()
                 .or_else(|| fallback_sticker.then(|| catalog.pick(q)).flatten())
                 .or_else(|| fallback_sticker.then(|| catalog.pick("")).flatten());
             let text = if turn.sticker_mode && sticker.is_none() && turn.followup {
@@ -440,6 +452,7 @@ pub(crate) async fn chat_reply_with_proposal(
             let empty = text.is_empty() && sticker.is_none() && !has_out;
             if !state.research.used && empty && !turn.followup && !bare_prompt && !turn.sticker_mode
             {
+                state.cleanup_prepared().await;
                 return Err("empty".into());
             }
             return Ok(ChatReply {
@@ -497,5 +510,6 @@ pub(crate) async fn chat_reply_with_proposal(
         }
     }
     tracing::warn!(rounds = config().chat.tool_rounds, "tool rounds exhausted");
+    state.cleanup_prepared().await;
     Err("tools".into())
 }

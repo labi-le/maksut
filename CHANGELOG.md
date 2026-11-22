@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- `read_url` no longer claims an image was attached before the file exists: the bot fetches the bytes first, accepts only a real JPEG, PNG or WebP, resolves an HTML file page through its `og:image`/`twitter:image`/`image_src` metadata, retries a transient fetch failure once, and tells the model to pick another search result in the same turn when a URL fails
 - Chat replies no longer show the model's raw provider tool-call tokens (`<｜｜DSML｜｜ …>`): such blocks are stripped before delivery instead of being sent as message text
 - Failed video uploads are retried once on a non-timeout network failure while the media deadline can still fit another attempt, and are then delivered as a document instead of being lost, so TikTok links that reach the download step no longer end with only a network error
 - TikTok short links no longer hang for minutes when the redirect host resolves to an unreachable Akamai address: DNS and the redirect request are bounded, and a failed hop is retried once
