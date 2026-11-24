@@ -176,6 +176,8 @@ fn followup_questions_and_requests_reply() {
         Decision::Reply,
         "Latin 'c' typo in 'cравни' must still trigger a reply"
     );
+    assert_eq!(decide_rules(&followup("а мышление")), Decision::Reply);
+    assert_eq!(decide_rules(&followup("и память")), Decision::Reply);
     assert_eq!(decide_rules(&followup("по факту")), Decision::Silent);
     assert_eq!(decide_rules(&followup("понял тебя")), Decision::Silent);
     assert_eq!(decide_rules(&followup("понятно")), Decision::Silent);
@@ -258,6 +260,8 @@ fn followup_questions_and_requests_reply() {
     assert!(!crate::chat_style::is_stop_followup("почему ты молчишь?"));
     assert!(!crate::chat_style::is_stop_followup("почему молчит"));
     assert!(!crate::chat_style::is_stop_followup("сделай потише"));
+    assert!(crate::chat_style::is_stop_followup("не пизди"));
+    assert!(!crate::chat_style::is_stop_followup("а ты не пиздишь"));
 }
 
 #[test]
@@ -612,8 +616,34 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
         Decision::Wait
     );
     assert!(
+        chat.followup_active(chat_id).await,
+        "cross-speaker reply to another human must keep the active speaker's followup window open"
+    );
+    let active_speaker_peer_reply = ResolvedChatInput {
+        prompt: "крышу срезал нахуй".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: Some("(в ответ Даня: «или ты что-то сделал?»)".into()),
+    };
+    let owner_peer_msg: Message = serde_json::from_value(serde_json::json!({
+        "message_id": 20,
+        "date": 1700000001,
+        "chat": { "id": 7, "type": "supergroup" },
+        "from": { "id": 1, "is_bot": false, "first_name": "Денис" },
+        "text": "крышу срезал нахуй"
+    }))
+    .unwrap();
+    assert_eq!(
+        jrouter
+            .gate(JEV, &chat, &owner_peer_msg, &active_speaker_peer_reply)
+            .await,
+        Decision::Wait
+    );
+    assert!(
         !chat.followup_active(chat_id).await,
-        "unaddressed reply to another human must close the followup window"
+        "active speaker's unaddressed reply to another human must close the followup window"
     );
     chat.note_reply(chat_id, Some(UserId(1))).await;
     let other_stop_followup = ResolvedChatInput {
@@ -674,6 +704,21 @@ async fn gate_closes_the_window_on_an_addressed_stop_phrase() {
     assert!(
         chat.followup_active(chat_id).await,
         "active speaker's followup window must survive a cross-speaker short reaction"
+    );
+    let cross_question_reaction = ResolvedChatInput {
+        prompt: "понятно?".into(),
+        followup: true,
+        address: AddressKind::None,
+        pending_media: None,
+        warn_missing_image: false,
+        reply_context: None,
+    };
+    let _ = jrouter
+        .gate(JEV, &chat, &other_msg, &cross_question_reaction)
+        .await;
+    assert!(
+        chat.followup_active(chat_id).await,
+        "cross-speaker short reaction with '?' must not clear the active speaker's followup window"
     );
     let yes_followup = ResolvedChatInput {
         prompt: "да".into(),

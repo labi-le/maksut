@@ -254,48 +254,25 @@ pub(crate) fn is_stop_followup(text: &str) -> bool {
     {
         return false;
     }
-    const PHRASE_STOPS: &[&str] = &[
-        "завали ебало",
-        "завали ебал",
-        "ебало завали",
-        "ебало на ноль",
-        "ебало закрой",
-        "закрой ебало",
-        "оффни ебало",
-        "ебало оффни",
-        "заткни ебало",
-        "ебало заткни",
-        "рот закрой",
-        "закрой рот",
-        "пасть закрой",
-        "закрой пасть",
-        "очко закрой",
-        "закрой очко",
-        "не пизди",
-        "хватит пиздеть",
-        "пошёл нахуй",
-        "пошел нахуй",
-        "иди нахуй",
-        "съеби",
-        "сьеби",
-    ];
-    const WORD_STOPS: &[&str] = &[
-        "оффнись",
-        "заткнись",
-        "помолчи",
-        "замолчи",
-        "молчи",
-        "тише",
-        "отъебись",
-        "отьебись",
-    ];
-    if PHRASE_STOPS.iter().any(|p| lower.contains(p)) {
+    const PHRASE_STOPS: &str = "завали ебало\nзавали ебал\nебало завали\nебало на ноль\n\
+        ебало закрой\nзакрой ебало\nоффни ебало\nебало оффни\nзаткни ебало\nебало заткни\n\
+        рот закрой\nзакрой рот\nпасть закрой\nзакрой пасть\nочко закрой\nзакрой очко\nне пизди\n\
+        хватит пиздеть\nпошёл нахуй\nпошел нахуй\nиди нахуй\nсъеби\nсьеби";
+    const WORD_STOPS: &str = "оффнись заткнись помолчи замолчи молчи тише отъебись отьебись";
+    if PHRASE_STOPS.lines().any(|p| {
+        lower.contains(p)
+            && (p != "не пизди"
+                || (!lower.contains("не пиздишь")
+                    && !lower.contains("не пиздит")
+                    && !lower.contains("не пиздим")
+                    && !lower.contains("не пиздят")))
+    }) {
         return true;
     }
     lower
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .any(|w| WORD_STOPS.contains(&w))
+        .any(|w| WORD_STOPS.split_ascii_whitespace().any(|s| s == w))
 }
 
 /// A stop-phrase turn that ends the conversation: the model is never called, so

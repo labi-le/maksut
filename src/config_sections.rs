@@ -549,7 +549,7 @@ defaults!(LlmSettings {
     model: "deepseek-v4.1-flash".into(),
     reasoning_effort: Some("auto".into()),
     reasoning: ReasoningSettings::default(),
-    request_timeout_secs: 40,
+    request_timeout_secs: 25,
     max_response_bytes: 64 * 1024,
 });
 

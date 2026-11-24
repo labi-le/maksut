@@ -128,8 +128,11 @@ impl Router {
             );
         }
         let unaddressed_peer_turn = input.address == AddressKind::None
+            && !cross_speaker_followup
             && (input.reply_context.is_some() || addresses_other(&input.prompt));
-        if decision == Decision::Silent || (decision == Decision::Wait && unaddressed_peer_turn) {
+        if (decision == Decision::Silent && (!cross_speaker_followup || stop))
+            || (decision == Decision::Wait && unaddressed_peer_turn)
+        {
             chat.clear_followup(message.chat.id).await;
         }
         decision
@@ -294,60 +297,38 @@ fn expects_answer(text: &str) -> bool {
         return true;
     }
     let lower = text.to_lowercase();
-    const FOLLOWUP_PREFIXES: &[&str] = &[
-        "а если ",
-        "а про ",
-        "а по ",
-        "а насчет ",
-        "а насчёт ",
-        "а без ",
-        "а с ",
-        "а не ",
-        "а давай",
-        "а может",
-        "а щас",
-        "а сейчас",
-        "а теперь",
-        "а тут",
-        "а там",
-        "а ты",
-        "а эту",
-        "а этот",
-        "а это",
-        "а вот ",
-        "а другой",
-        "а другая",
-        "а другое",
-        "а другие",
-        "а еще ",
-        "а ещё ",
-        "и эту",
-        "и этот",
-        "и это",
-        "и вот ",
-        "вот эту",
-        "вот этот",
-        "не хочешь",
-        "может ",
-        "давай ",
-    ];
-    const FOLLOWUP_PHRASES: &[&str] = &[
-        "твои мысли",
-        "че думаешь",
-        "чё думаешь",
-        "что думаешь",
-        "как думаешь",
-        "а не лучше",
-        "а не проще",
-        "а не хочешь",
-        "не лучше ли",
-    ];
-    if FOLLOWUP_PREFIXES.iter().any(|p| lower.starts_with(p))
-        || FOLLOWUP_PHRASES.iter().any(|p| lower.contains(p))
+    const FOLLOWUP_PREFIXES: &str = "а если \nа про \nа по \nа насчет \nа насчёт \nа без \nа с \n\
+        а не \nа давай\nа может\nа щас\nа сейчас\nа теперь\nа тут\nа там\nа ты\nа эту\nа этот\n\
+        а это\nа вот \nа другой\nа другая\nа другое\nа другие\nа еще \nа ещё \nи эту\nи этот\n\
+        и это\nи вот \nвот эту\nвот этот\nне хочешь\nможет \nдавай ";
+    const FOLLOWUP_PHRASES: &str = "твои мысли\nче думаешь\nчё думаешь\nчто думаешь\nкак думаешь\n\
+        а не лучше\nа не проще\nа не хочешь\nне лучше ли";
+    if FOLLOWUP_PREFIXES.lines().any(|p| lower.starts_with(p))
+        || FOLLOWUP_PHRASES.lines().any(|p| lower.contains(p))
+        || is_conjunction_followup(&lower)
     {
         return true;
     }
     has_question_or_request(&lower)
+}
+
+fn is_conjunction_followup(lower: &str) -> bool {
+    let Some(rest) = lower
+        .strip_prefix("а ")
+        .or_else(|| lower.strip_prefix("и "))
+    else {
+        return false;
+    };
+    let mut words = rest
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty());
+    let Some(first) = words.next() else {
+        return false;
+    };
+    !matches!(
+        first,
+        "я" | "мы" | "он" | "она" | "они" | "то" | "ну" | "да" | "нет"
+    ) && words.count() < 5
 }
 
 fn has_question_or_request(lower: &str) -> bool {
@@ -372,79 +353,13 @@ fn can_wake_ambient(input: &RouterInput<'_>, text: &str) -> bool {
                 .any(|w| ["бот", "нейронк", "иишк"].iter().any(|s| w.starts_with(s))))
 }
 
-const REACTIONS: &[&str] = &[
-    "спасибо",
-    "спс",
-    "сяп",
-    "благодарю",
-    "от души",
-    "не в бровь а в глаз",
-    "ахах",
-    "ахаха",
-    "хаха",
-    "хахаха",
-    "хех",
-    "лол",
-    "ржу",
-    "смешно",
-    "круто",
-    "класс",
-    "топ",
-    "ок",
-    "окей",
-    "оки",
-    "хорошо",
-    "понял",
-    "понял тебя",
-    "поняла",
-    "понятно",
-    "ясненько",
-    "принял",
-    "услышал",
-    "ясно",
-    "ладно",
-    "лан",
-    "угу",
-    "ага",
-    "ну да",
-    "молодец",
-    "браво",
-    "зачёт",
-    "зачет",
-    "пиздато",
-    "кайф",
-    "норм",
-    "нормально",
-    "по факту",
-    "по факту же",
-    "база",
-    "жиза",
-    "бывает",
-    "все верно",
-    "всё верно",
-    "логично",
-    "согласен",
-    "согласна",
-    "именно",
-    "точно",
-    "бля",
-    "блять",
-    "блядь",
-    "пизда",
-    "пиздец",
-    "пиздос",
-    "сука",
-    "ебать",
-    "ахуеть",
-    "охуеть",
-    "нихуя",
-    "нихера",
-    "жесть",
-    "капец",
-    "треш",
-    "трэш",
-    "кринж",
-];
+const REACTIONS: &str = "спасибо\nспс\nсяп\nблагодарю\nот души\nне в бровь а в глаз\nахах\nахаха\n\
+    хаха\nхахаха\nхех\nлол\nржу\nсмешно\nкруто\nкласс\nтоп\nок\nокей\nоки\nхорошо\nпонял\n\
+    понял тебя\nпоняла\nпонятно\nясненько\nпринял\nуслышал\nясно\nладно\nлан\nугу\nага\nну да\n\
+    молодец\nбраво\nзачёт\nзачет\nпиздато\nкайф\nнорм\nнормально\nпо факту\nпо факту же\nбаза\n\
+    жиза\nбывает\nвсе верно\nвсё верно\nлогично\nсогласен\nсогласна\nименно\nточно\nбля\nблять\n\
+    блядь\nпизда\nпиздец\nпиздос\nсука\nебать\nахуеть\nохуеть\nнихуя\nнихера\nжесть\nкапец\n\
+    треш\nтрэш\nкринж";
 fn is_short_reaction(text: &str) -> bool {
     if text.chars().count() > 48 {
         return false;
@@ -466,7 +381,7 @@ fn is_short_reaction(text: &str) -> bool {
     if count == 0 {
         return text.chars().all(|ch| !ch.is_alphanumeric());
     }
-    REACTIONS.contains(&normalized.as_str())
+    REACTIONS.lines().any(|r| r == normalized)
         || normalized.starts_with("ахах")
         || normalized.starts_with("хаха")
         || (count <= 5 && matches!(first, "спасибо" | "благодарю" | "спс") && !expects_answer(text))

@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Preserved the active speaker's group follow-up window across other participants' replies to each other, recognized short conjunction follow-up questions (`а мышление`, `и память`), stopped matching `а ты не пиздишь` as a stop command, and lowered `llm.request_timeout_secs` to 25 s so wedged upstream sessions fail over faster
 - `read_url` no longer claims an image was attached before the file exists: the bot fetches the bytes first, accepts only a real JPEG, PNG or WebP, resolves an HTML file page through its `og:image`/`twitter:image`/`image_src` metadata, retries a transient fetch failure once, and tells the model to pick another search result in the same turn when a URL fails
 - Chat replies no longer show the model's raw provider tool-call tokens (`<｜｜DSML｜｜ …>`): such blocks are stripped before delivery instead of being sent as message text
 - Failed video uploads are retried once on a non-timeout network failure while the media deadline can still fit another attempt, and are then delivered as a document instead of being lost, so TikTok links that reach the download step no longer end with only a network error
