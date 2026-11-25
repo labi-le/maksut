@@ -40,7 +40,7 @@ sha2 = "0.11"
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "http-1x"] }
 aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-ring"] }
 dom_smoothie = "0.19"
-dom_query = "0.29"
+dom_query = "0.30"
 encoding_rs = "0.8"
 chardetng = "1.0"
 
