@@ -13,12 +13,31 @@ pub(crate) static PINNED_CLIENTS: std::sync::LazyLock<
 
 // Pin resolved addresses and disable redirects for both photos and short links.
 pub(crate) async fn pinned_client(url: &Url) -> Result<reqwest::Client, String> {
+    pinned_client_with(url, false).await
+}
+
+/// The retry of a failed hop must not redial the address that just ate its
+/// connect budget: a DNS answer can list a blackholed address first.
+pub(crate) async fn pinned_client_rotated(url: &Url) -> Result<reqwest::Client, String> {
+    pinned_client_with(url, true).await
+}
+
+pub(crate) fn rotate_addresses(addresses: &mut [SocketAddr]) {
+    if addresses.len() > 1 {
+        addresses.rotate_left(1);
+    }
+}
+
+async fn pinned_client_with(url: &Url, rotate: bool) -> Result<reqwest::Client, String> {
     let host = url.host_str().ok_or("Отсутствует имя HTTPS-хоста")?;
-    let addresses: Vec<SocketAddr> = lookup_host((host, 443))
+    let mut addresses: Vec<SocketAddr> = lookup_host((host, 443))
         .await
         .map_err(|_| "Не удалось разрешить имя HTTPS-хоста")?
         .filter(|address| permitted_ipv4(address.ip()))
         .collect();
+    if rotate {
+        rotate_addresses(&mut addresses);
+    }
     let Some(first) = addresses.first() else {
         return Err("HTTPS-хост не имеет пригодного IPv4-адреса".into());
     };

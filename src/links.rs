@@ -204,21 +204,27 @@ enum Hop {
 
 /// One manual redirect hop with a single retry. `pinned_client` resolves the
 /// host on every call, so a retried `Failed` hop asks DNS again inside a fresh
-/// budget; a timed-out hop may already have connected and is not repeated.
+/// budget and rotates the pinned order; a timed-out hop may already have
+/// connected and is not repeated.
 async fn next_hop(current: &Url) -> Option<Url> {
-    match send_hop(current).await {
+    match send_hop(current, false).await {
         Hop::Redirect(next) => Some(next),
         Hop::NotRedirect | Hop::TimedOut => None,
-        Hop::Failed => match send_hop(current).await {
+        Hop::Failed => match send_hop(current, true).await {
             Hop::Redirect(next) => Some(next),
             Hop::NotRedirect | Hop::Failed | Hop::TimedOut => None,
         },
     }
 }
 
-async fn send_hop(current: &Url) -> Hop {
+async fn send_hop(current: &Url, rotate: bool) -> Hop {
     let request = async {
-        let client = pinned_client(current).await.map_err(|_| ())?;
+        let client = if rotate {
+            pinned_client_rotated(current).await
+        } else {
+            pinned_client(current).await
+        }
+        .map_err(|_| ())?;
         client.get(current.clone()).send().await.map_err(|_| ())
     };
     let response = match time::timeout(Duration::from_secs(10), request).await {

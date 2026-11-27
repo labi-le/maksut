@@ -135,3 +135,19 @@ async fn feature_photo_cdn_size_failure(with_length: bool, max_bytes: u64, total
         "a known CDN size rejection must expose its size/limit cause: {detail}"
     );
 }
+
+#[test]
+fn retry_rotation_moves_only_the_first_pinned_address() {
+    let first: SocketAddr = "192.0.2.1:443".parse().unwrap();
+    let second: SocketAddr = "198.51.100.2:443".parse().unwrap();
+    let third: SocketAddr = "203.0.113.3:443".parse().unwrap();
+    let mut two = vec![first, second];
+    rotate_addresses(&mut two);
+    assert_eq!(two, vec![second, first]);
+    let mut one = vec![first];
+    rotate_addresses(&mut one);
+    assert_eq!(one, vec![first]);
+    let mut three = vec![first, second, third];
+    rotate_addresses(&mut three);
+    assert_eq!(three, vec![second, third, first]);
+}

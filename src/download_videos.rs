@@ -63,6 +63,46 @@ pub(crate) async fn download_videos(
         finish(retried.selection.files.len());
         return Ok(retried);
     }
+    // `--max-filesize` rejects a video+audio pair whose total exceeds the cap
+    // mid-download; yt-dlp then keeps only the audio component and reports
+    // success. A size-bounded chain picks a smaller video that fits instead.
+    if first.selection.files.is_empty()
+        && first.process_ok
+        && !first.limited
+        && !interrupted
+        && time::Instant::now() < deadline
+        && disk_usage_async(dir).await.is_ok_and(|usage| usage > 0)
+        && retryable_output(dir, cfg.max_media_bytes).await
+    {
+        if let Err(reason) = clear_failed_attempt(dir).await {
+            return Err(DownloadFailure {
+                reason,
+                diagnostic: FailureDiagnostic::new("yt-dlp", "Download failed"),
+                events: first.events,
+            });
+        }
+        let bounded = size_bounded_formats(cfg.max_media_bytes);
+        match download_videos_attempt(url, cfg, dir, deadline, Some(&bounded)).await {
+            Ok((mut result, result_interrupted)) => {
+                if let Some(diagnostic) = result.diagnostic {
+                    trace_event(&mut first.events, diagnostic);
+                }
+                result.events = first.events;
+                if is_auth_retry_candidate(&result, result_interrupted) {
+                    result =
+                        retry_after_cookie_refresh(url, cfg, dir, deadline, None, result).await;
+                }
+                finish(result.selection.files.len());
+                return Ok(result);
+            }
+            Err(_) => {
+                trace_event(
+                    &mut first.events,
+                    FailureDiagnostic::new("format", "Size fallback failed"),
+                );
+            }
+        }
+    }
     let can_fallback_after_timeout = interrupted
         && deadline.saturating_duration_since(time::Instant::now()) >= Duration::from_secs(15);
     if selected_format.is_none()
@@ -115,6 +155,14 @@ pub(crate) async fn download_videos(
     }
     finish(fallback.selection.files.len());
     Ok(fallback)
+}
+
+/// A smaller video that fits the cap is better than the audio-only remnant
+/// left by a rejected video+audio pair.
+fn size_bounded_formats(max_bytes: u64) -> String {
+    format!(
+        "b[acodec!=none][filesize<={max_bytes}]/bv[filesize<={max_bytes}]+ba[filesize<={max_bytes}]/bv+ba/b[acodec!=none]"
+    )
 }
 
 fn is_auth_retry_candidate(result: &DownloadResult, interrupted: bool) -> bool {
@@ -247,10 +295,6 @@ pub(crate) async fn download_videos_attempt(
     }
     if let Some((_, path)) = &cookie {
         cmd.arg("--cookies").arg(path);
-        if filter_applied {
-            cmd.arg("--extractor-args")
-                .arg("youtube:player_client=default,web_embedded");
-        }
     }
     if let Some(format) = selected_format {
         cmd.arg("-f")

@@ -199,10 +199,7 @@ pub(crate) async fn probe_youtube_mp4(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     if let Some((_, path)) = &cookie {
-        cmd.arg("--cookies")
-            .arg(path)
-            .arg("--extractor-args")
-            .arg("youtube:player_client=default,web_embedded");
+        cmd.arg("--cookies").arg(path);
     }
     cmd.arg("--").arg(url.as_str());
     #[cfg(unix)]

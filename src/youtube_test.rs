@@ -185,14 +185,13 @@ printf '%s\n' "$dir/result.mp4" > "$manifest"
     );
     let probe_args = fs::read_to_string(root.path().join("probe-args")).unwrap();
     assert!(probe_args.contains("--dump-single-json\n"));
-    assert!(probe_args.contains("--extractor-args\nyoutube:player_client=default,web_embedded\n"));
+    // A forced web_embedded client leaves Shorts with SABR-only formats.
+    assert!(!probe_args.contains("player_client"));
     assert!(probe_args.contains("--cookies\n"));
     assert!(!probe_args.contains("-f\n"));
     let download_args = fs::read_to_string(root.path().join("download-args")).unwrap();
     assert!(download_args.contains("-f\n136+140\n--merge-output-format\nmp4\n"));
-    assert!(
-        download_args.contains("--extractor-args\nyoutube:player_client=default,web_embedded\n")
-    );
+    assert!(!download_args.contains("player_client"));
     assert!(download_args.contains("--match-filter\n!is_live & duration <= 1020\n"));
     let cookie_arg = |args: &str| {
         args.lines()
